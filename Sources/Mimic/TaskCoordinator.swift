@@ -164,7 +164,7 @@ final class TaskCoordinator: ObservableObject {
             return try await self.submitRemoteProfile(snapshot: snapshot, action: action, parameters: parameters, requestID: requestID, reviewed: contract, expected: project)
         }, client: self.jenkinsSettings.authenticatedClient, gitlab: self.ciSettings.authenticatedClient,
         project: { [weak self] in self?.project }, validate: { [weak self] project in
-            guard let self, self.project == project, !self.switchingBranch, !self.stoppingForExit else { throw CIError.invalidConfiguration }
+            guard let self, self.project == project, !self.switchingBranch, !self.admissionsClosed else { throw CIError.invalidConfiguration }
             let checked = try await Task.detached { try EnvironmentInspector.project(path: project.path, developerDirectory: project.developerDirectory, appleTarget: project.appleTarget) }.value
             guard checked == project, self.project == project else { throw CIError.invalidConfiguration }
         })
@@ -204,6 +204,20 @@ final class TaskCoordinator: ObservableObject {
     var stateChanged: (() -> Void)?
     var afterStopped: (() -> Void)?
     private var stoppingForExit = false
+    /// Reserved only after the shared lifecycle checks pass; it never cancels existing work.
+    @Published private(set) var updateOwner: UUID?
+    var updateReserved: Bool { self.updateOwner != nil }
+    var admissionsClosed: Bool { self.stoppingForExit || self.updateReserved }
+    @Published var updater: MimicUpdater?
+    var setupBusy = false
+    let supportDirectory: URL
+
+    func reserveUpdate(owner: UUID) -> Bool {
+        guard !self.updateReserved, self.developmentUpdateBlockers.isEmpty else { return false }
+        self.updateOwner = owner
+        return true
+    }
+    func releaseUpdate(owner: UUID) { if self.updateOwner == owner { self.updateOwner = nil } }
     private var subscriptions = Set<AnyCancellable>()
     private var stateChangeQueued = false
 
@@ -238,6 +252,7 @@ final class TaskCoordinator: ObservableObject {
         self.analysis = analysis ?? AnalysisCoordinator(makeRunner: { AIProcessRunner(helper: helper) }, makeProbeRunner: { AIProcessRunner(helper: helper, timeLimit: 8) })
         let directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mimic")
         self.history = HistoryStore(directory: directory)
+        self.supportDirectory = directory
         self.profileStore = ProfileStore(directory: directory.appendingPathComponent("Profiles"))
         self.activeProfile = try? self.profileStore.active()
         self.builds = buildCoordinator ?? BuildCoordinator(directory: directory, helper: helper, defaults: defaults)
@@ -300,10 +315,12 @@ final class TaskCoordinator: ObservableObject {
         self.profileRemote.resume()
         self.remoteTests.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
         self.jenkinsSettings.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
+        self.analysis.mayAdmit = { [weak self] in self?.admissionsClosed == false }
+        self.aiSettings.mayAdmit = { [weak self] in self?.admissionsClosed == false }
         self.builds.currentProject = { [weak self] in self?.project }
         self.builds.currentProfile = { [weak self] in self?.activeProfile }
         self.builds.acceptsProject = { [weak self] in self?.projects.contains($0) == true }
-        self.builds.mayAdmit = { [weak self] in self.map { !$0.stoppingForExit && !$0.switchingBranch && !$0.hasGitOperation } ?? false }
+        self.builds.mayAdmit = { [weak self] in self.map { !$0.admissionsClosed && !$0.switchingBranch && !$0.hasGitOperation } ?? false }
         self.builds.schedule = { [weak self] in self?.startNext(); self?.finishExitIfReady() }
         self.builds.showResult = { [weak self] in self?.showBuildResult($0) }
         self.builds.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
@@ -311,7 +328,7 @@ final class TaskCoordinator: ObservableObject {
         self.simulatorScreen.currentProject = { [weak self] in self?.project }
         self.simulatorScreen.currentProfile = { [weak self] in self?.activeProfile }
         self.simulatorScreen.acceptsProject = { [weak self] in self?.projects.contains($0) == true }
-        self.simulatorScreen.mayAdmit = { [weak self] in self.map { !$0.stoppingForExit && !$0.switchingBranch && !$0.hasGitOperation } ?? false }
+        self.simulatorScreen.mayAdmit = { [weak self] in self.map { !$0.admissionsClosed && !$0.switchingBranch && !$0.hasGitOperation } ?? false }
         self.simulatorScreen.schedule = { [weak self] in self?.startNext(); self?.finishExitIfReady() }
         self.simulatorScreen.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
         self.aiSettings.onIdle = { [weak self] in self?.finishExitIfReady() }
@@ -337,6 +354,8 @@ final class TaskCoordinator: ObservableObject {
         var blockers: [String] = []
         if self.stoppingForExit { blockers.append("shutdown") }
         if self.busy || self.pendingCount > 0 || self.session != nil { blockers.append("tasks") }
+        if self.importingProfile { blockers.append("profile") }
+        if self.setupBusy || self.ciSettings.checking || self.jenkinsSettings.checking { blockers.append("setup") }
         if self.requestingBootstrap || self.checkoutGate.admissions != 0 { blockers.append("admission") }
         // An external checkout's merge/rebase marker is not work owned by Mimic.
         if self.switchingBranch { blockers.append("git") }
@@ -348,7 +367,7 @@ final class TaskCoordinator: ObservableObject {
         return blockers
     }
     var canSwitchBranch: Bool {
-        !self.builds.hasPending && !self.simulatorScreen.hasPending && self.gitSummary.map { $0.changed == 0 && $0.untracked == 0 } == true && !self.hasGitOperation && !self.checking && self.checkoutGate.canSwitch(records: self.records, preparing: self.preparing)
+        !self.admissionsClosed && !self.builds.hasPending && !self.simulatorScreen.hasPending && self.gitSummary.map { $0.changed == 0 && $0.untracked == 0 } == true && !self.hasGitOperation && !self.checking && self.checkoutGate.canSwitch(records: self.records, preparing: self.preparing)
     }
 
     var orderedSimulators: [SimulatorDevice] {
@@ -605,7 +624,7 @@ final class TaskCoordinator: ObservableObject {
 
     // MARK: - Project discovery
 
-    var canSelectProject: Bool { !self.switchingBranch && !self.builds.hasPending && !self.simulatorScreen.hasPending }
+    var canSelectProject: Bool { !self.admissionsClosed && !self.switchingBranch && !self.builds.hasPending && !self.simulatorScreen.hasPending }
 
     func chooseProject() {
         guard self.canSelectProject else { return }
@@ -869,7 +888,7 @@ final class TaskCoordinator: ObservableObject {
     }
 
     var canRequestQuickCleanup: Bool {
-        self.hasCompatibleProfile && self.project != nil && !self.stoppingForExit && !self.switchingBranch && self.checkoutGate.admissions == 0 && self.pendingCount < 100
+        self.hasCompatibleProfile && self.project != nil && !self.admissionsClosed && !self.switchingBranch && self.checkoutGate.admissions == 0 && self.pendingCount < 100
     }
 
     func requestQuickCleanup(_ action: MimicAction) {
@@ -894,7 +913,7 @@ final class TaskCoordinator: ObservableObject {
             return
         }
         guard action == .simulatorBoot || action == .simulatorShutdown || action.isCleanup else { completion?(nil); self.message = text("profile.action.required"); return }
-        guard let current = project, !self.stoppingForExit, !self.switchingBranch else { completion?(nil); return }
+        guard let current = project, !self.admissionsClosed, !self.switchingBranch else { completion?(nil); return }
         guard self.pendingCount < 100 else { self.message = text("queue.full"); completion?(nil); return }
         guard expected == nil || expected == current else { completion?(nil); return }
         let options = options ?? (action == .bootstrap ? .standard(platform: self.bootstrapOptions.platform) : self.bootstrapOptions)
@@ -916,7 +935,7 @@ final class TaskCoordinator: ObservableObject {
             let checked: ProjectContext
             if action == .bootstrap {
                 let admission = await self.inspectBootstrapAdmission(current, options)
-                guard !self.stoppingForExit, self.quickBootstrapActivity?.request.status != .cancelled else { return }
+                guard !self.admissionsClosed, self.quickBootstrapActivity?.request.status != .cancelled else { return }
                 switch admission {
                 case let .ready(project):
                     guard project.path == current.path, project.developerDirectory == current.developerDirectory else { self.rejectRequest("checkout.changed", quick: quick); return }
@@ -929,7 +948,7 @@ final class TaskCoordinator: ObservableObject {
                 }
                 checked = project
             }
-            guard !self.stoppingForExit else { return }
+            guard !self.admissionsClosed else { return }
             guard expected == nil || (checked == expected && self.project == current) else { self.rejectRequest("checkout.changed", quick: quick); return }
             guard self.pendingCount < 100 else { self.rejectRequest("queue.full", quick: quick); return }
             // Refresh Git metadata before queueing; retain the original request ID and options.
@@ -984,7 +1003,7 @@ final class TaskCoordinator: ObservableObject {
     }
 
     private func startNext() {
-        guard !self.busy, !self.switchingBranch, !self.stoppingForExit else { return }
+        guard !self.busy, !self.switchingBranch, !self.admissionsClosed else { return }
         guard let choice = QueuePolicy.nextActivity(in: records, builds: builds.records, simulators: simulatorScreen.records) else { return }
         if case let .simulator(id) = choice, let record = simulatorScreen.records.first(where: { $0.id == id }) { simulatorScreen.start(record); return }
         if case let .build(id) = choice, let build = builds.records.first(where: { $0.id == id }) { builds.start(build); return }
@@ -1018,14 +1037,14 @@ final class TaskCoordinator: ObservableObject {
                 } catch { return .failed("project.invalid") }
             }.value
         }, launch: { [weak self] command in
-            guard let self, self.records.contains(where: { $0.id == next.id && $0.status == .queued }), !self.stoppingForExit else { return }
+            guard let self, self.records.contains(where: { $0.id == next.id && $0.status == .queued }), !self.admissionsClosed else { return }
             if let execution = next.profileExecution {
                 do { self.pipelineCommands[next.id] = Array(try execution.commands(project: next.executionProject).dropFirst()) }
                 catch { self.cancel(id: next.id); return }
             }
             self.launch(id: next.id, command: command)
         }, failure: { [weak self] error in
-            guard let self, let index = self.records.firstIndex(where: { $0.id == next.id && $0.status == .queued }), !self.stoppingForExit else { return }
+            guard let self, let index = self.records.firstIndex(where: { $0.id == next.id && $0.status == .queued }), !self.admissionsClosed else { return }
             self.records[index].status = .failed
             self.records[index].error = error.hasPrefix("missing:") ? text("tools.missing") + String(error.dropFirst(8)) : text(error)
             self.records[index].finishedAt = Date(); self.unreadFailure = true
@@ -1103,7 +1122,7 @@ final class TaskCoordinator: ObservableObject {
     private func finished(id: UUID, event: HostEvent?) {
         guard let index = records.firstIndex(where: { $0.id == id }) else { return }
         if event?.cancelled != true, event?.code == 0, event?.signal == 0, event?.launchError == 0,
-           var remaining = self.pipelineCommands[id], !remaining.isEmpty, !self.stoppingForExit {
+           var remaining = self.pipelineCommands[id], !remaining.isEmpty, !self.admissionsClosed {
             let next = remaining.removeFirst(); self.pipelineCommands[id] = remaining
             self.session = nil; self.launch(id: id, command: next); return
         }
@@ -1394,7 +1413,7 @@ final class TaskCoordinator: ObservableObject {
 
 extension TaskCoordinator {
     func importProfile(checkout: String? = nil) {
-        guard !self.importingProfile else { return }
+        guard !self.admissionsClosed, !self.importingProfile else { return }
         let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.canChooseFiles = true
         panel.allowedContentTypes = [.init(filenameExtension: "mimicprofile") ?? .data]
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -1433,7 +1452,7 @@ extension TaskCoordinator {
     func requestProfile(execution: ProfileExecution, expected: ProjectContext? = nil, recordID: UUID = UUID(), quick: Bool = false, reveal: Bool = true, navigate: Bool = true, completion: ((TaskRecord?) -> Void)? = nil) {
         guard expected != nil || execution.binding?.role != .bootstrap || !self.bootstrapLocked else { completion?(nil); return }
         guard let current = expected ?? self.project, let action = execution.action, action.remote == nil,
-              expected == nil || self.projects.contains(current), !self.stoppingForExit, !self.switchingBranch,
+              expected == nil || self.projects.contains(current), !self.admissionsClosed, !self.switchingBranch,
               self.pendingCount < 100, self.checkoutGate.admitTask() else { completion?(nil); return }
         if action.presentation == .generator, !execution.preview {
             guard let reviewed = self.profilePreviews[ProfilePreview.cacheKey(project: current, execution: execution)] ?? self.profilePreviews[action.id], reviewed.project == current,
@@ -1461,7 +1480,7 @@ extension TaskCoordinator {
                 let checked: ProjectContext
                 if bootstrap {
                     let result = await self.inspectBootstrapAdmission(current, execution.bootstrapOptions)
-                    guard !self.stoppingForExit, !reveal || self.quickBootstrapActivity?.request.status != .cancelled else { return }
+                    guard !self.admissionsClosed, !reveal || self.quickBootstrapActivity?.request.status != .cancelled else { return }
                     switch result {
                     case .ready(let project): checked = project
                     case .failed(let error): self.rejectRequest(error, quick: quick); return
@@ -1469,7 +1488,7 @@ extension TaskCoordinator {
                 } else {
                     checked = try await Task.detached { try EnvironmentInspector.project(path: current.path, developerDirectory: current.developerDirectory, appleTarget: current.appleTarget) }.value
                 }
-                guard !self.stoppingForExit, self.pendingCount < 100 else { return }
+                guard !self.admissionsClosed, self.pendingCount < 100 else { return }
                 guard checked.path == current.path, checked.developerDirectory == current.developerDirectory,
                       expected == nil || (checked == current && self.projects.contains(current)) else { throw MimicError.changedCheckout }
                 _ = try execution.commands(project: checked)
@@ -1535,7 +1554,7 @@ extension TaskCoordinator {
     func submitRemoteProfile(snapshot: ProfileSnapshot, action: ActionDefinition, parameters: [String: String], requestID: UUID = UUID(), reviewed: ProfileRemoteContract? = nil, expected: ProjectContext? = nil) async throws -> ProfileRemoteRun {
         guard let current = expected ?? self.project, expected == nil || self.projects.contains(current), let jenkins = self.jenkinsSettings.connection,
               snapshot.profile.services?.jenkinsURL == jenkins.baseURL.absoluteString,
-              !self.switchingBranch, !self.stoppingForExit else { throw CIError.invalidConfiguration }
+              !self.switchingBranch, !self.admissionsClosed else { throw CIError.invalidConfiguration }
         let gitlab = self.ciSettings.connection(forCheckout: current.path, services: snapshot.profile.services)
         if action.remote?.tracking == .gitLabPipeline {
             guard let gitlab, snapshot.profile.services?.gitLabURL == gitlab.baseURL.absoluteString,
@@ -1547,7 +1566,7 @@ extension TaskCoordinator {
             let checked = try await Task.detached { try EnvironmentInspector.project(path: current.path, developerDirectory: current.developerDirectory, appleTarget: current.appleTarget) }.value
             guard checked == current, self.projects.contains(current), self.activeProfile == snapshot,
                   self.jenkinsSettings.connection == jenkins, self.ciSettings.connection(forCheckout: current.path, services: snapshot.profile.services) == gitlab,
-                  !self.switchingBranch, !self.stoppingForExit else { throw ProfileError.revision }
+                  !self.switchingBranch, !self.admissionsClosed else { throw ProfileError.revision }
         }
     }
 }
@@ -1572,7 +1591,7 @@ extension TaskCoordinator {
     }
     /// Explicit local branch switching uses the same checkout gate as the native branch picker.
     func switchPanelBranch(_ name: String, project: ProjectContext) async throws {
-        guard !busy, pendingCount == 0, !builds.hasPending, !simulatorScreen.hasPending, !switchingBranch,
+        guard !admissionsClosed, !busy, pendingCount == 0, !builds.hasPending, !simulatorScreen.hasPending, !switchingBranch,
               checkoutGate.beginSwitch(records: records, preparing: preparing) else { throw MimicError.changedCheckout }
         switchingBranch = true
         defer { checkoutGate.finishSwitch(); switchingBranch = false; startNext() }
@@ -1582,6 +1601,7 @@ extension TaskCoordinator {
     }
     /// Setup uses native system dialogs and can complete with the main Mimic window closed.
     func panelSetup(_ operation: String, project: ProjectContext?) async throws {
+        guard !admissionsClosed else { throw MimicError.changedCheckout }
         if operation == "profile" { importProfile(checkout: project?.path); return }
         guard let project, let index = projects.firstIndex(of: project), !switchingBranch else { throw MimicError.changedCheckout }
         if operation == "xcode" {

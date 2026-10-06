@@ -148,15 +148,26 @@ private struct ActivityViewport: View {
                 if let summary = self.model.ciMonitor.overlay {
                     CIActivitySection(summary: summary, open: { self.model.showCI(summary) }, hide: { self.model.ciMonitor.hideCI() })
                 }
-            }.fixedSize(horizontal: false, vertical: true).modifier(MimicCardBackground())
-                .clipShape(RoundedRectangle(cornerRadius: MimicMetrics.surfaceRadius))
-                .background(GeometryReader { proxy in Color.clear.preference(key: BootstrapHeightKey.self, value: proxy.size.height) })
-        }.scrollIndicators(.hidden).frame(width: MimicMetrics.cardWidth).frame(maxHeight: .infinity)
-            .onPreferenceChange(BootstrapHeightKey.self) { height in self.measured(height, self.stamp) }
+            }.fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { proxy in Color.clear.preference(key: BootstrapHeightKey.self, value: BootstrapHeightMeasurement(height: proxy.size.height, stamp: self.stamp)) })
+        }.scrollIndicators(.hidden).frame(width: MimicMetrics.cardWidth).frame(maxHeight: .infinity, alignment: .top)
+            // The viewport keeps all four corners when content exceeds screen height.
+            .modifier(MimicCardBackground())
+            .clipShape(RoundedRectangle(cornerRadius: MimicMetrics.surfaceRadius))
+            .onPreferenceChange(BootstrapHeightKey.self) { value in self.measured(value.height, value.stamp) }
     }
 }
 
+/// Geometry carries its content identity so a section change cannot reuse an old callback stamp.
+private struct BootstrapHeightMeasurement: Equatable {
+    let height: CGFloat
+    let stamp: String
+}
+
 private struct BootstrapHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+    static let defaultValue = BootstrapHeightMeasurement(height: 0, stamp: "")
+    static func reduce(value: inout BootstrapHeightMeasurement, nextValue: () -> BootstrapHeightMeasurement) {
+        let next = nextValue()
+        if next.height > 0 { value = next }
+    }
 }

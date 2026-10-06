@@ -2,65 +2,102 @@
 import SwiftUI
 import MimicCore
 
-/// Four readable rows share formatting across the grid and floating activity section.
+/// Each run owns its status and evidence; compact layout never infers time or completion.
 struct CICompactBody: View {
     let summary: CICompactSummary
+    /// Only collapsed cards consume spare height; activity and details stay intrinsic.
+    var fillsAvailableHeight = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 4) {
+                Text(self.summary.displayID ?? text("ci.compact.launch")).foregroundStyle(.secondary)
+                    .lineLimit(1).help(self.summary.displayID ?? text("ci.compact.launch"))
+                Spacer(minLength: 2)
+                CIStatusBadge(status: self.summary.status).lineLimit(1)
+                    .help(text("ci.status." + self.summary.status))
+                if self.summary.stale {
+                    Image(systemName: "exclamationmark.circle").foregroundStyle(.secondary)
+                        .help(text("ci.compact.stale")).accessibilityLabel(text("ci.compact.stale"))
+                }
+            }
             Label(self.summary.branch, systemImage: "arrow.triangle.branch")
                 .lineLimit(1).truncationMode(.middle).help(self.summary.branch)
-            TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { self.start; Spacer(minLength: 0); self.elapsed(timeline.date) }
-                    VStack(alignment: .leading, spacing: 2) { self.start; self.elapsed(timeline.date) }
-                }.monospacedDigit().foregroundStyle(.secondary)
-            }.mimicImmediate()
-            Text(self.current).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                .help(self.summary.runningJobs.isEmpty ? self.current : self.summary.runningJobs.joined(separator: "\n"))
-            HStack(spacing: 4) {
-                Text(String(format: text("ci.compact.completed"), self.summary.completed.map(String.init) ?? "—", self.summary.complete ? self.summary.total.map(String.init) ?? "—" : "—"))
-                    .monospacedDigit().fixedSize()
-                Spacer(minLength: 0)
-                if self.summary.stale { Image(systemName: "exclamationmark.circle").help(text("ci.compact.stale")).accessibilityLabel(text("ci.compact.stale")) }
-            }.foregroundStyle(.secondary)
-        }.font(MimicMetrics.secondary).transaction { $0.animation = nil }
+            if self.fillsAvailableHeight { Spacer(minLength: 4) }
+            VStack(alignment: .leading, spacing: 4) {
+                if self.summary.active { CICompactProgress(summary: self.summary) }
+                TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                    HStack(spacing: 8) {
+                        Label(self.summary.startedAt.map { ciDate($0) } ?? "—", systemImage: "clock")
+                            .help(text("ci.time.begin") + " · " + (self.summary.startedAt?.formatted(date: .complete, time: .complete) ?? "—"))
+                            .accessibilityLabel(text("ci.time.begin"))
+                            .accessibilityValue(self.summary.startedAt.map { ciDate($0) } ?? "—")
+                        Spacer(minLength: 0)
+                        Label(self.elapsed(timeline.date), systemImage: "timer")
+                            .help(text("ci.time.duration")).accessibilityLabel(text("ci.time.duration"))
+                            .accessibilityValue(self.elapsed(timeline.date))
+                    }.monospacedDigit().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }.mimicImmediate()
+                if let current = self.current {
+                    Text(current).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        .help(self.summary.runningJobs.isEmpty ? current : self.summary.runningJobs.joined(separator: "\n"))
+                }
+            }
+        }.frame(maxHeight: self.fillsAvailableHeight ? .infinity : nil, alignment: .topLeading)
+            .font(MimicMetrics.secondary).transaction { $0.animation = nil }
     }
-    private var start: some View {
-        Text(text("ci.time.begin") + " " + (self.summary.startedAt.map { ciDate($0) } ?? "—")).fixedSize()
-            .help(self.summary.startedAt?.formatted(date: .complete, time: .complete) ?? "—")
-    }
-    private func elapsed(_ now: Date) -> some View {
+    private func elapsed(_ now: Date) -> String {
         let value = self.summary.status == "running" && !self.summary.stale
             ? self.summary.startedAt.map { now.timeIntervalSince($0) } : self.summary.duration
-        return Text(text("ci.time.duration") + " " + (value.map(ciElapsed) ?? "—")).fixedSize()
+        return value.map(ciElapsed) ?? "—"
     }
-    private var current: String {
-        if self.summary.runningJobs.count == 1 { return text("ci.checks.current") + " " + self.summary.runningJobs[0] }
+    private var current: String? {
+        if self.summary.status == "failed" { return self.summary.firstFailedJob.map { text("ci.checks.failed") + " " + $0 } }
+        guard self.summary.active else { return nil }
+        if self.summary.runningJobs.count == 1 { return self.summary.runningJobs[0] }
         if self.summary.runningJobs.count > 1 { return String(format: text("ci.checks.parallel"), self.summary.runningJobs.count) }
         if self.summary.waitingForManual { return text("ci.checks.manual") }
-        if self.summary.active { return text(self.summary.status == "running" ? "ci.progress.unavailable" : "ci.status." + self.summary.status) }
-        return text("ci.status." + self.summary.status)
+        return nil
     }
 }
 
-/// A bottom-edge line uses evidence-based completion. Unknown progress has only a neutral track.
+/// Completion belongs inside a run, rather than on the outside edge of its container.
 struct CICompactProgress: View {
     let summary: CICompactSummary
-    private var motion = MimicMotion()
     var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Rectangle().fill(Color.primary.opacity(0.10))
-                if let fraction = self.summary.fraction {
-                    Rectangle().fill(FooterCIStatus.pipelineColor(self.summary.status))
-                        .frame(width: proxy.size.width)
-                        .scaleEffect(x: fraction, y: 1, anchor: .leading)
-                        .animation(self.motion.policy(.automatic).animation(.progress), value: fraction)
-                }
+        VStack(alignment: .leading, spacing: 3) {
+            MimicProgressBar(value: self.summary.fraction, color: FooterCIStatus.pipelineColor(self.summary.status), label: text("ci.checks.progress"))
+            Text(self.summary.fraction == nil ? text("ci.compact.progress.unknown") : "\(self.summary.completed ?? 0)/\(self.summary.total ?? 0)")
+                .font(MimicMetrics.secondary).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+        }
+    }
+}
+
+struct CIProjectName: View {
+    let checkout: String
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("·")
+            Text(URL(fileURLWithPath: self.checkout).lastPathComponent).lineLimit(1).truncationMode(.middle)
+        }.font(MimicMetrics.secondary).foregroundStyle(.secondary).help(self.checkout)
+    }
+}
+
+/// Stable identities keep keyboard focus on its run when active priority changes their order.
+struct CICompactRuns: View {
+    let summaries: [CICompactSummary]
+    let open: (CICompactSummary) -> Void
+    var body: some View {
+        HStack(alignment: .top, spacing: 24) {
+            ForEach(self.summaries) { summary in
+                Button { self.open(summary) } label: {
+                    CICompactBody(summary: summary, fillsAvailableHeight: true).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).contentShape(Rectangle())
+                }.buttonStyle(.plain).background(PanelControlRegion())
+                    .accessibilityIdentifier("ci.compact.run." + summary.id)
+                    .accessibilityLabel((summary.displayID ?? text("ci.compact.launch")) + " · " + summary.branch)
             }
-        }.frame(height: 3).accessibilityElement()
-            .accessibilityLabel(text("ci.checks.progress"))
-            .accessibilityValue(self.summary.fraction.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? text("ci.progress.unavailable"))
+        }.frame(maxHeight: .infinity).overlay {
+            if self.summaries.count == 2 { Rectangle().fill(Color.primary.opacity(0.12)).frame(width: 0.5).allowsHitTesting(false) }
+        }
     }
 }
 
@@ -69,20 +106,17 @@ struct CIActivitySection: View {
     let open: () -> Void
     let hide: () -> Void
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.seal").foregroundStyle(PanelCardPalette.color(.ci))
                 Text(text("panel.block.ci")).font(MimicMetrics.heading)
+                CIProjectName(checkout: self.summary.checkout)
                 Spacer(minLength: 0)
-                CIStatusBadge(status: self.summary.status)
                 BootstrapIconButton(symbol: "xmark", label: text("ci.compact.hide"), action: self.hide, inControlBar: true)
             }
-            Text(URL(fileURLWithPath: self.summary.checkout).lastPathComponent).font(MimicMetrics.secondary).foregroundStyle(.secondary)
-                .lineLimit(1).truncationMode(.middle).help(self.summary.checkout)
             CICompactBody(summary: self.summary).allowsHitTesting(false)
-        }.padding(16).frame(width: MimicMetrics.cardWidth, alignment: .leading)
+        }.padding(MimicMetrics.cardInsets).frame(width: MimicMetrics.cardWidth, alignment: .leading)
             .background(CardMouseSurface(open: self.open, label: text("ci.compact.open")))
-            .overlay(alignment: .bottom) { CICompactProgress(summary: self.summary).allowsHitTesting(false) }
             .accessibilityIdentifier("ci.quick.activity")
     }
 }

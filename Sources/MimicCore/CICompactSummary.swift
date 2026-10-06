@@ -8,6 +8,9 @@ public struct CICompactSummary: Codable, Equatable, Sendable, Identifiable {
     public let scopeID: String
     public var checkout: String
     public let pipelineID: Int?
+    /// A stable pipeline/Jenkins label; nil lets each surface localize the pending launch label.
+    public let displayID: String?
+    public let firstFailedJob: String?
     public let branch: String
     public let status: String
     public let createdAt: Date?
@@ -37,6 +40,11 @@ public struct CICompactSummary: Codable, Equatable, Sendable, Identifiable {
         self.id = entry.id
         self.scopeID = context.connection.id.uuidString + ":" + String(context.connection.projectID) + ":" + (accountID.map(String.init) ?? "unknown")
         self.checkout = context.checkout; self.pipelineID = entry.pipeline?.id ?? entry.run?.pipelineID
+        if let id = self.pipelineID { self.displayID = "#\(id)" }
+        else if let number = entry.run?.buildURL?.lastPathComponent, Int(number) != nil { self.displayID = "Jenkins #\(number)" }
+        else if let number = entry.run?.queueURL?.lastPathComponent, Int(number) != nil { self.displayID = "Jenkins · #\(number)" }
+        else { self.displayID = nil }
+        self.firstFailedJob = checks?.failed.first?.name
         self.branch = entry.branch; self.status = entry.status; self.createdAt = entry.createdAt
         self.startedAt = entry.pipeline?.startedAt; self.finishedAt = entry.pipeline?.finishedAt
         let elapsed = entry.pipeline?.duration ?? entry.pipeline?.startedAt.flatMap { start in entry.pipeline?.finishedAt.map { $0.timeIntervalSince(start) } }

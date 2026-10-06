@@ -100,6 +100,7 @@ struct SettingsContent: View {
         VStack(alignment: .leading, spacing: MimicMetrics.large) {
             switch group {
             case .application:
+                if let updater = self.model.updater { MimicUpdateSettings(updater: updater); Divider() }
                 Button(text("setup.title")) { self.model.showSetup?() }.accessibilityIdentifier("setup.open")
                 Divider()
                 ProfileSection(model: self.model)

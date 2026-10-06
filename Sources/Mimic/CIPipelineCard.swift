@@ -161,8 +161,7 @@ struct CIPipelineCard: View {
                 }
             } else if summary.running.count > 1 { Text(String(format: text("ci.checks.parallel"), summary.running.count)).help(summary.running.map(\.name).joined(separator: "\n")) }
             if summary.complete, summary.total > 0 {
-                ProgressView(value: Double(summary.completed), total: Double(summary.total)).tint(FooterCIStatus.pipelineColor(self.entry.status))
-                    .accessibilityLabel(text("ci.checks.progress"))
+                MimicProgressBar(value: Double(summary.completed) / Double(summary.total), color: FooterCIStatus.pipelineColor(self.entry.status), label: text("ci.checks.progress"))
                     .accessibilityValue(String(format: text("ci.checks.completed"), summary.completed, summary.total))
                 Text(String(format: text("ci.checks.completed"), summary.completed, summary.total)).foregroundStyle(.secondary).monospacedDigit()
             } else { Text(text("ci.progress.unavailable")).foregroundStyle(.secondary) }

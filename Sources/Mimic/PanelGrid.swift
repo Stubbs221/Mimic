@@ -255,7 +255,7 @@ struct PanelGrid: View {
         let expanded = visibleExpansion == block
         let lifted = layout.dragging == block
         return VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 if block == .bootstrap, !layout.editing {
                     BootstrapCard(model: model, mode: expanded ? .expanded : layout.layout.size(of: block) == .full ? .full : .mini,
                                   header: AnyView(blockHeader(block, expanded: expanded)))
@@ -264,8 +264,12 @@ struct PanelGrid: View {
                     else {
                         blockHeader(block, expanded: expanded)
                         if !expanded, block == .ci {
-                            if let summary = model.ci.compactSummary { CICompactBody(summary: summary) }
+                            if !model.ci.compactSummaries.isEmpty {
+                                CICompactRuns(summaries: Array(model.ci.compactSummaries.prefix(layout.layout.size(of: block) == .full ? 2 : 1)), open: { model.showCI($0) })
+                            }
                             else { Text(text("ci.compact.empty")).font(MimicMetrics.secondary).foregroundStyle(.secondary) }
+                        } else if !expanded, block == .ai {
+                            AICompactProviders(usage: model.aiUsage, full: layout.layout.size(of: block) == .full, open: { open(.ai) })
                         } else if !expanded { Text(summary(block)).font(MimicMetrics.secondary).foregroundStyle(.secondary).lineLimit(2).help(summary(block)) }
                     }
                 }
@@ -273,13 +277,11 @@ struct PanelGrid: View {
                 MimicCollapse(expanded: expanded && block != .bootstrap, source: layout.dragging == nil ? model.navigationSource : .keyboard, retainsContent: true) {
                     VStack(alignment: .leading, spacing: 8) { content(block) }
                 }
-            }
-        }.padding(16).frame(maxWidth: .infinity, alignment: .topLeading)
+            }.frame(maxHeight: (block == .ci || block == .ai) && !expanded && !layout.editing ? .infinity : nil, alignment: .topLeading)
+        }.padding(MimicMetrics.cardInsets).frame(maxWidth: .infinity, alignment: .topLeading)
             .frame(height: expanded ? nil : MimicMetrics.collapsedCardHeight, alignment: .topLeading)
             .modifier(PanelCardBackground(block: block))
-            .overlay(alignment: .bottom) {
-                if block == .ci, !expanded, !layout.editing, let summary = model.ci.compactSummary { CICompactProgress(summary: summary).allowsHitTesting(false) }
-            }.clipShape(RoundedRectangle(cornerRadius: 14))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
             .environment(\.mimicInsideSurface, true)
             .background {
                 ZStack {
@@ -300,12 +302,11 @@ struct PanelGrid: View {
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: block.symbol).foregroundStyle(accessibility.increasedContrast ? Color.primary : PanelCardPalette.color(block))
                 Text(text(block.titleKey)).font(MimicMetrics.heading).lineLimit(2).help(text(block.titleKey))
+                if block == .ci, let checkout = expanded ? model.ciPresentedState.context?.checkout : model.project?.path { CIProjectName(checkout: checkout) }
                 Spacer(minLength: 0)
-                if block == .ci, !expanded, let summary = model.ci.compactSummary {
-                    CIStatusBadge(status: summary.status).lineLimit(1).help(text("ci.status." + summary.status))
-                }
-            }.frame(maxWidth: .infinity, minHeight: 28, alignment: .leading).contentShape(Rectangle())
-        }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).accessibilityValue(disclosureValue(expanded))
+
+            }.frame(maxWidth: .infinity, minHeight: 20, alignment: .leading).contentShape(Rectangle())
+        }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets(), showsHoverBackground: false)).accessibilityValue(disclosureValue(expanded))
     }
     private func editHeader(_ block: PanelBlockKind) -> some View {
         VStack(alignment: .leading, spacing: 6) {

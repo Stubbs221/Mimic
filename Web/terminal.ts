@@ -17,15 +17,31 @@ export class PrivateTerminal {
  private generation=0;private observer:ResizeObserver;
  private taskID:string|null=null;private finished=false;private status='running';private visible=true;
  private message=document.createElement('p');
+ private presentation='';
  constructor(private tool:Tool,private onError:(error:unknown)=>void,private labels={waiting:'Waiting for output…',unavailable:'Output unavailable'}){
   this.host.className='terminal-host';this.terminal.options.disableStdin=true;this.terminal.loadAddon(this.fit);this.terminal.open(this.host);this.message.className='terminal-message';this.host.append(this.message);
   this.subscription=this.terminal.onData(input=>this.enqueue({input}));
-  this.observer=new ResizeObserver(()=>{if(this.host.getBoundingClientRect().width>20){this.fit.fit();this.enqueue({columns:this.terminal.cols,rows:this.terminal.rows});}});this.observer.observe(this.host);
+  this.observer=new ResizeObserver(()=>this.refit());this.observer.observe(this.host);
   this.timer=setInterval(()=>{if(this.channel&&!this.finished)void this.poll();},700);
  }
  private aad(direction:string,sequence:number){const c=this.channel!;return utf8.encode(`${c.channelID}|${c.taskID}|${c.threadID}|${direction}|${sequence}`);}
  private enqueue(payload:Record<string,unknown>){const channel=this.channel;if(!channel||!this.canInput||!this.visible||this.status!=='running')return;this.inputQueue=this.inputQueue.then(()=>this.channel===channel?this.send(payload):undefined).catch(this.onError);}
- setVisibility(visible:boolean){this.visible=visible;this.host.inert=!visible;this.updateInput();if(!visible&&this.host.contains(document.activeElement))(document.activeElement as HTMLElement)?.blur();}
+ /** Bootstrap opts in to its own palette; history terminals retain their default styling. */
+ setBootstrapPresentation(fontSize:number,dark:boolean,increasedContrast=false){
+  const signature=`${fontSize}-${dark}-${increasedContrast}`;if(signature===this.presentation)return;this.presentation=signature;
+  const buffer=this.terminal.buffer.active,row=buffer.viewportY,following=row===buffer.baseY;
+  const foreground=increasedContrast?(dark?'#ffffff':'#000000'):(dark?'#DCE3ED':'#263445');
+  const ansi=dark?['#202833','#F08D91','#9EC89B','#E3C182','#91B5E0','#C9A4DA','#8ECACE','#DCE3ED','#A6B3C5','#FFADB0','#B8DCAF','#F3D6A0','#B1CEF2','#DABCE8','#B1E1E3','#FFFFFF']
+   :['#263445','#A42D36','#386B3C','#795717','#355F96','#79438D','#286970','#546274','#5C6879','#B2343F','#356C39','#7A5610','#315F9B','#814593','#216B72','#263445'];
+  const keys=['black','red','green','yellow','blue','magenta','cyan','white','brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightMagenta','brightCyan','brightWhite'];
+  this.terminal.options.fontSize=fontSize;this.terminal.options.theme={background:dark?'#202833':'#F0F3F7',foreground,cursor:foreground,selectionBackground:dark?'#3D4C63':'#CCD8E8',...Object.fromEntries(keys.map((key,i)=>[key,ansi[i]]))};
+  this.host.dataset.fontSize=String(fontSize);
+  this.refit(row,following);
+ }
+ private refit(row=this.terminal.buffer.active.viewportY,following=row===this.terminal.buffer.active.baseY){
+  if(this.visible&&this.host.getBoundingClientRect().width>20){this.fit.fit();if(following)this.terminal.scrollToBottom();else this.terminal.scrollToLine(Math.min(row,this.terminal.buffer.active.baseY));this.enqueue({columns:this.terminal.cols,rows:this.terminal.rows});}
+ }
+ setVisibility(visible:boolean){this.visible=visible;this.host.inert=!visible;this.updateInput();if(visible)this.refit();if(!visible&&this.host.contains(document.activeElement))(document.activeElement as HTMLElement)?.blur();}
  setTaskStatus(status:string){this.status=status;this.updateInput();}
  private updateInput(){this.terminal.options.disableStdin=!this.visible||!this.canInput||this.status!=='running';}
  async attach(taskID:string){if(this.taskID===taskID)return;const closing=this.detach(),generation=this.generation;this.taskID=taskID;this.finished=false;this.message.hidden=false;this.message.textContent='';await closing;

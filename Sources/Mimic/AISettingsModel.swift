@@ -29,6 +29,7 @@ final class AISettingsModel: ObservableObject {
     private var runner: AIProcessRunner?
     private var stopping = false
     var onIdle: (() -> Void)?
+    var mayAdmit: () -> Bool = { true }
 
     init(defaults: UserDefaults, helper: URL) {
         self.defaults = defaults; self.helper = helper
@@ -41,7 +42,7 @@ final class AISettingsModel: ObservableObject {
     }
 
     func check(_ provider: AIProvider) {
-        guard self.checking == nil, !self.stopping else { return }
+        guard self.mayAdmit(), self.checking == nil, !self.stopping else { return }
         let settings = self.settings
         self.checking = provider; self.errors[provider] = nil; self.capabilities[provider] = nil
         let runner = AIProcessRunner(helper: self.helper, timeLimit: 8)

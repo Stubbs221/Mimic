@@ -75,14 +75,19 @@ import Foundation
 
     /// A get_state heartbeat adds no cross-chat data; its response is remapped to this checkout.
     public func heartbeat(threadID: String, context: CIContext?) -> CICompactSummary? {
-        guard !self.stopped else { return nil }
-        guard let context else { self.leases[threadID] = nil; self.reconcile(); return nil }
+        self.heartbeatSummaries(threadID: threadID, context: context).first
+    }
+
+    /// Both summaries carry the requesting checkout even when a remote cache is shared.
+    public func heartbeatSummaries(threadID: String, context: CIContext?) -> [CICompactSummary] {
+        guard !self.stopped else { return [] }
+        guard let context else { self.leases[threadID] = nil; self.reconcile(); return [] }
         let state = self.register(context)
         self.leases[threadID] = Lease(key: self.key(context), checkout: context.checkout, date: self.now())
         self.reconcile()
-        var summary = state.compactSummary
-        summary?.checkout = context.checkout
-        return summary
+        return state.compactSummaries.map { value in
+            var summary = value; summary.checkout = context.checkout; return summary
+        }
     }
 
     public func updateRuns(_ runs: [RemoteTestRun], jenkins: JenkinsConnection?) {
@@ -157,7 +162,9 @@ import Foundation
     }
 
     private static func newest(_ left: CICompactSummary, _ right: CICompactSummary) -> Bool {
-        if left.createdAt != right.createdAt { return (left.createdAt ?? .distantPast) > (right.createdAt ?? .distantPast) }
+        let leftDate = left.startedAt ?? left.createdAt ?? .distantPast
+        let rightDate = right.startedAt ?? right.createdAt ?? .distantPast
+        if leftDate != rightDate { return leftDate > rightDate }
         if left.pipelineID != right.pipelineID { return (left.pipelineID ?? 0) > (right.pipelineID ?? 0) }
         return left.identity > right.identity
     }

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Created by Василий Маслов on 06.10.2026. Public release configuration; no private signing material. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>repository</key><string>Stubbs221/Mimic</string>
+<key>feedURL</key><string>https://stubbs221.github.io/Mimic/appcast.xml</string>
+<key>publicKey</key><string>7qLGIS/u91PgWwTO/CxJ4lzSRBHe7NTXuALvzBTYzkM=</string>
+<key>keyAccount</key><string>local.vmaslov.Mimic</string>
+</dict></plist>

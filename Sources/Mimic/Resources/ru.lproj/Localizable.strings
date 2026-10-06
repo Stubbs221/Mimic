@@ -674,6 +674,19 @@
 "usage.lastUsed" = "Последний агент";
 "usage.refreshing" = "Обновление лимитов";
 "usage.unavailable" = "Нет данных";
+"usage.compact.today" = "Сегодня";
+"usage.compact.todayTokens" = "Сегодня · %@ ток.";
+"usage.compact.paceMarker" = "Серая отметка — остаток при равномерном расходе до сброса.";
+"usage.compact.error.authentication" = "Требуется вход";
+"usage.compact.error.keychainAccess" = "Нужен доступ к Связке ключей";
+"usage.compact.error.missingCLI" = "CLI не найден";
+"usage.compact.error.unsupported" = "Чтение лимитов не поддерживается";
+"usage.compact.error.invalidResponse" = "Ошибка ответа с лимитами";
+"usage.compact.error.network" = "Не удалось обновить лимиты";
+"usage.compact.error.timeout" = "Время ожидания истекло";
+"usage.compact.error.cancelled" = "Обновление отменено";
+"usage.compact.error.accountChanged" = "Аккаунт изменился";
+"usage.compact.error.rateLimited" = "Обновление временно ограничено";
 "usage.retry" = "Повтор после";
 "usage.error.authentication" = "Войдите в аккаунт через Codex или Claude Code и обновите лимиты.";
 "usage.error.keychainAccess" = "Нажмите «Обновить», чтобы разрешить чтение входа из Связки ключей.";
@@ -930,3 +943,35 @@
 "ci.compact.stale" = "Данные устарели";
 "ci.activity.title" = "Активность Mimic";
 "ci.status.blocked" = "Ожидает ручного шага";
+
+/* Automatic updates */
+"update.title" = "Обновления Mimic";
+"update.automatic" = "Обновлять автоматически";
+"update.explanation" = "Mimic скачивает новые версии и перезапускается после завершения локальных задач.";
+"update.check" = "Проверить обновления";
+"update.install" = "Установить обновление";
+"update.state.unavailable" = "Источник обновлений ещё не настроен";
+"update.state.idle" = "Автоматическая проверка каждый час";
+"update.state.checking" = "Проверяем обновления…";
+"update.state.current" = "Установлена актуальная версия";
+"update.state.available" = "Доступна новая версия";
+"update.state.downloading" = "Скачиваем обновление…";
+"update.state.extracting" = "Проверяем пакет обновления…";
+"update.state.waiting" = "Обновление готово. Ждём завершения локальной работы";
+"update.state.preparing" = "Сохраняем резервную копию…";
+"update.state.installing" = "Устанавливаем обновление и перезапускаем Mimic…";
+"update.state.failed" = "Не удалось обновить Mimic. Текущая версия сохранена";
+"mcp.error.updating" = "Mimic готовится к обновлению. Повторите действие после перезапуска.";
+"update.plugin.ready" = "Плагин Codex обновлён. Если панель показывает старую версию, переоткройте её или перезапустите Codex.";
+"update.defer" = "Отложить обновление";
+"update.quit.deferred" = "Обновление отложено. Для обычного выхода выберите «Выйти» ещё раз.";
+
+"update.state.disabled" = "Автоматические обновления отключены";
+
+"ci.compact.launch" = "Запуск CI";
+"ci.compact.progress.unknown" = "Прогресс пока недоступен";
+
+"bootstrap.xcode.launch.notice" = "Запуск закроет Xcode";
+"bootstrap.xcode.blocked.compact" = "Xcode не закрыт";
+"bootstrap.preparation.description" = "Полная подготовка зависимостей, UI-тестов и проекта. Перед запуском Mimic закроет все экземпляры Xcode; обработайте диалоги сохранения несохранённых изменений в Xcode.";
+"bootstrap.cancel" = "Отменить";

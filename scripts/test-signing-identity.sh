@@ -9,7 +9,7 @@ INVENTORY="  1) $CERT \"Developer ID Application: Fixture (TEAM)\""
 PREF="$FIXTURE/preference"
 expect_choice() { mimic_resolve_signing_identity "$PREF"; [ "$MIMIC_SELECTED_IDENTITY" = "$1" ]; mimic_validate_signing_identity "$INVENTORY"; }
 unset MIMIC_SIGNING_IDENTITY
-expect_choice '-'
+if mimic_resolve_signing_identity "$PREF" 2>/dev/null; then exit 1; fi
 printf '%s\n' "$CERT" > "$PREF"
 expect_choice "$CERT"
 MIMIC_SIGNING_IDENTITY='-'; expect_choice '-'

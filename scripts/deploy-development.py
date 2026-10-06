@@ -93,7 +93,9 @@ def deploy(app, destination, wait_seconds):
     # The installer repeats inventory immediately before replacing and restores the backup on move failure.
     subprocess.run(installer + ['--destination', str(destination), '--yes', '--background'], check=True)
     verify_launch(destination)
-    if (SUPPORT / 'CodexPlugin/plugins/mimic/.mcp.json').is_file():
+    with (destination / 'Contents/Info.plist').open('rb') as info_file:
+        refreshes_on_launch = plistlib.load(info_file).get('MimicRefreshPluginOnLaunch', False)
+    if not refreshes_on_launch and (SUPPORT / 'CodexPlugin/plugins/mimic/.mcp.json').is_file():
         subprocess.run([str(destination / 'Contents/MacOS/Mimic'), '--refresh-codex-plugin'], check=True, timeout=180)
         print(MESSAGES['development.plugin'], flush=True)
     print(MESSAGES['development.updated'].format(destination=destination), flush=True)

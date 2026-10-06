@@ -68,6 +68,33 @@ final class TerminalDelegate: NSObject, TerminalViewDelegate {
 
 // MARK: - Bootstrap terminal presentation
 
+/// Bootstrap-only colors keep retained screens and empty states on the same surface.
+enum BootstrapTerminalTheme {
+    static var background: NSColor { NSColor(name: nil) { appearance in
+        Self.color(appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? 0x202833 : 0xF0F3F7)
+    } }
+    static var foreground: NSColor { NSColor(name: nil) { appearance in
+        Self.color(appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? 0xDCE3ED : 0x263445)
+    } }
+    static func color(_ hex: Int) -> NSColor {
+        NSColor(srgbRed: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255, blue: CGFloat(hex & 255) / 255, alpha: 1)
+    }
+    @MainActor static func apply(to view: TerminalView, dark: Bool, increasedContrast: Bool) {
+        view.nativeBackgroundColor = Self.color(dark ? 0x202833 : 0xF0F3F7)
+        view.nativeForegroundColor = increasedContrast ? (dark ? .white : .black) : Self.color(dark ? 0xDCE3ED : 0x263445)
+        view.caretColor = view.nativeForegroundColor
+        view.selectedTextBackgroundColor = Self.color(dark ? 0x3D4C63 : 0xCCD8E8)
+        view.selectedTextForegroundColor = view.nativeForegroundColor
+        view.backgroundOpacity = 1
+        let palette = dark
+            ? [0x202833, 0xF08D91, 0x9EC89B, 0xE3C182, 0x91B5E0, 0xC9A4DA, 0x8ECACE, 0xDCE3ED,
+               0xA6B3C5, 0xFFADB0, 0xB8DCAF, 0xF3D6A0, 0xB1CEF2, 0xDABCE8, 0xB1E1E3, 0xFFFFFF]
+            : [0x263445, 0xA42D36, 0x386B3C, 0x795717, 0x355F96, 0x79438D, 0x286970, 0x546274,
+               0x5C6879, 0xB2343F, 0x356C39, 0x7A5610, 0x315F9B, 0x814593, 0x216B72, 0x263445]
+        view.installColors(palette.map { SwiftTerm.Color(red8: UInt16(($0 >> 16) & 255), green8: UInt16(($0 >> 8) & 255), blue8: UInt16($0 & 255)) })
+    }
+}
+
 /// A bounded, task-owned screen survives hidden mini cards and completion. Never serialized.
 @MainActor final class BootstrapTerminalSession {
     private weak var model: TaskCoordinator?
@@ -77,6 +104,7 @@ final class TerminalDelegate: NSObject, TerminalViewDelegate {
     private(set) var hasOutput: Bool
     private var screen: TerminalView?
     private var delegate: TerminalDelegate?
+    private var presentation: String?
     init(model: TaskCoordinator, record: TaskRecord) {
         self.model = model; self.id = record.id
         self.snapshot = Data(model.replay(id: record.id).suffix(128 * 1024)); self.hasOutput = !self.snapshot.isEmpty
@@ -95,7 +123,7 @@ final class TerminalDelegate: NSObject, TerminalViewDelegate {
     func view() -> TerminalView {
         if let screen { return screen }
         let view = TerminalView(frame: .zero)
-        view.nativeBackgroundColor = .textBackgroundColor; view.nativeForegroundColor = .textColor
+        BootstrapTerminalTheme.apply(to: view, dark: false, increasedContrast: false)
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         view.getTerminal().changeScrollback(1500)
         view.setAccessibilityLabel(text("terminal"))
@@ -106,13 +134,21 @@ final class TerminalDelegate: NSObject, TerminalViewDelegate {
         view.feed(byteArray: Array(self.snapshot)[...]); self.screen = view
         return view
     }
+    /// Updating the existing renderer never clears task output or its replay snapshot.
+    func configure(fontSize: CGFloat, dark: Bool, increasedContrast: Bool) {
+        let view = self.view(), signature = "\(fontSize)-\(dark)-\(increasedContrast)"
+        guard self.presentation != signature else { return }
+        self.presentation = signature
+        if view.font.pointSize != fontSize { view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
+        BootstrapTerminalTheme.apply(to: view, dark: dark, increasedContrast: increasedContrast)
+    }
     /// A mounted screen may keep its scrollback, but echoed input cannot become replay data.
     func discardReplayAfterPrivateInput() { self.snapshot = Data(); if self.screen == nil { self.hasOutput = false } }
     func setInputEnabled(_ enabled: Bool) { self.screen?.terminalDelegate = enabled ? self.delegate : nil }
     func stop() {
         self.model?.detachTerminal(owner: self.owner)
         self.screen?.terminalDelegate = nil; self.delegate = nil
-        self.screen = nil; self.snapshot = Data(); self.hasOutput = false
+        self.screen = nil; self.presentation = nil; self.snapshot = Data(); self.hasOutput = false
     }
 }
 
@@ -121,19 +157,26 @@ struct BootstrapTerminalContainer: NSViewRepresentable {
     let model: TaskCoordinator
     let record: TaskRecord
     var visible = true
+    var fontSize: CGFloat = 12
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
     func makeNSView(context: Context) -> NSView { NSView() }
     func updateNSView(_ host: NSView, context: Context) {
         let terminal = self.model.bootstrapTerminal(for: self.record).view()
+        let previousRow = terminal.getTerminal().buffer.yDisp
+        let followingOutput = !terminal.canScroll || terminal.scrollPosition >= 1
         if terminal.superview !== host {
             host.subviews.forEach { $0.removeFromSuperview() }
             terminal.removeFromSuperview(); host.addSubview(terminal)
             terminal.autoresizingMask = [.width, .height]
         }
         let session = self.model.bootstrapTerminal(for: self.record)
-        // Resolve dynamic AppKit colors after reparenting, including theme changes on a retained screen.
-        terminal.effectiveAppearance.performAsCurrentDrawingAppearance { terminal.configureNativeColors() }
+        session.configure(fontSize: self.fontSize, dark: self.colorScheme == .dark, increasedContrast: self.contrast == .increased)
         session.setInputEnabled(false)
-        terminal.frame = host.bounds; terminal.isHidden = !self.visible
+        if self.visible { terminal.frame = host.bounds }
+        terminal.isHidden = !self.visible
+        if followingOutput { terminal.scrollTo(row: Int.max, notifyAccessibility: false) }
+        else { terminal.scrollTo(row: previousRow, notifyAccessibility: false) }
         session.setInputEnabled(self.visible && self.record.status == .running)
         if self.visible, self.record.status == .running, host.bounds.width > 0, host.bounds.height > 0 {
             self.model.resize(id: self.record.id, columns: terminal.getTerminal().cols, rows: terminal.getTerminal().rows)

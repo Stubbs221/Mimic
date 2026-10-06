@@ -76,6 +76,8 @@ public final class AnalysisCoordinator: ObservableObject {
     private var stopError: AIError?
     private var clearedForExit = false
     public var onIdle: (() -> Void)?
+    /// The native lifecycle owner closes admission while preparing an app replacement.
+    public var mayAdmit: () -> Bool = { true }
     /// Ephemeral requests have no session log; the app records their provider at inference admission.
     public var onInferenceStarted: ((AIProvider, Date) -> Void)?
 
@@ -107,7 +109,7 @@ public final class AnalysisCoordinator: ObservableObject {
     }
 
     public func submit(id: UUID, settings: AISettings) {
-        guard !self.isActive, var value = self.sessions[id], !self.clearedForExit else { return }
+        guard self.mayAdmit(), !self.isActive, var value = self.sessions[id], !self.clearedForExit else { return }
         let requestID = UUID()
         value.state = .preparing; value.requestID = requestID; value.startedAt = Date(); value.finishedAt = nil; value.error = nil; value.result = ""
         self.sessions[id] = value; self.activeTaskID = id; self.cancelRequested = false; self.stopError = nil

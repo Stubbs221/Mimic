@@ -58,6 +58,9 @@ class DevelopmentDeployTests(unittest.TestCase):
             manifest.parent.mkdir(parents=True); manifest.write_text('{}')
             app = root / 'Source/Mimic.app'
             destination = root / 'Installed/Mimic.app'
+            (destination / 'Contents').mkdir(parents=True)
+            with (destination / 'Contents/Info.plist').open('wb') as file:
+                deploy.plistlib.dump({}, file)
             events = []
             with patch.object(deploy, 'SUPPORT', root), \
                  patch.object(deploy.subprocess, 'run', side_effect=lambda command, **kwargs: events.append(command)), \

@@ -16,8 +16,10 @@ import MimicCore
         let store = BuildHistoryStore(directory: root); try store.save([record]); try Data("Compile /fixture/Frameworks/ProfileWebView/SubscriptionNavigationController.swift\nerror: намеренная ошибка приёмки 🙂\nTarget/Class/testMethod\nСохранён ограниченный журнал\nПоследняя строка\n".utf8).write(to: store.logURL(record.id))
         let model = TaskCoordinator(directory: root, defaults: defaults)
         for dark in [false, true] {
-            let view = NSHostingView(rootView: BuildOverlayView(builds: model.builds, hide: {}).environment(\.colorScheme, dark ? .dark : .light).frame(width: 360, height: 302))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 302), styleMask: [.borderless], backing: .buffered, defer: false); window.isReleasedWhenClosed = false
+            let view = NSHostingView(rootView: BuildOverlayView(builds: model.builds, hide: {}).environment(\.colorScheme, dark ? .dark : .light).frame(width: 360))
+            let height = view.fittingSize.height
+            #expect(height > 180 && height < 302)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: height), styleMask: [.borderless], backing: .buffered, defer: false); window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: dark ? .accessibilityHighContrastDarkAqua : .aqua); window.contentView = view; view.frame = window.contentView!.bounds
             view.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(20))
             #expect(view.fittingSize.width <= 361)

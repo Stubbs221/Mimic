@@ -57,6 +57,14 @@ import MimicCore
         #expect(String(decoding: terminal.snapshot, as: UTF8.self) == "first line\r\nfinal line\r\n")
         #expect(subscription.snapshot == terminal.snapshot)
         #expect(String(decoding: historyOutput, as: UTF8.self) == "first line\r\n")
+        let snapshot = terminal.snapshot
+        terminal.configure(fontSize: 10, dark: false, increasedContrast: false)
+        #expect(originalView.font.pointSize == 10)
+        #expect(originalView.nativeBackgroundColor == BootstrapTerminalTheme.color(0xF0F3F7))
+        terminal.configure(fontSize: 12, dark: true, increasedContrast: false)
+        #expect(originalView.font.pointSize == 12)
+        #expect(originalView.nativeForegroundColor == BootstrapTerminalTheme.color(0xDCE3ED))
+        #expect(terminal.snapshot == snapshot)
         #expect(model.bootstrapTerminal(for: model.records[0]).view() === originalView)
         model.terminalOutput?(record.id, Data(repeating: 65, count: 150 * 1024))
         #expect(terminal.snapshot.count == 128 * 1024); #expect(subscription.snapshot.count == 128 * 1024)
@@ -72,6 +80,24 @@ import MimicCore
         let restarted = TaskCoordinator(directory: root, defaults: defaults)
         #expect(restarted.terminalSnapshot(id: record.id).isEmpty)
         restarted.stopAndExit()
+    }
+
+    @Test func bridgeStagesFollowObservedProgressAndSuccessfulExit() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BootstrapStages-" + UUID().uuidString)
+        let defaults = try #require(UserDefaults(suiteName: root.lastPathComponent))
+        let model = TaskCoordinator(directory: root, defaults: defaults)
+        defer { model.records = []; model.stopAndExit(); defaults.removePersistentDomain(forName: root.lastPathComponent); try? FileManager.default.removeItem(at: root) }
+        var record = TaskRecord(action: .bootstrap, project: ProjectContext(path: root.path), options: .standard())
+        record.status = .running; model.records = [record]
+        let integration = MimicIntegration(model: model, defaults: defaults)
+        let running = integration.task(record)["bootstrap"]
+        #expect(running["stages"] == .array([.string("dependencies"), .string("uiTests"), .string("setup")]))
+        #expect(running["completedStages"] == .array([]))
+        #expect(running["currentStage"] == .null)
+        record.status = .failed
+        #expect(integration.task(record)["bootstrap"]["completedStages"] == .array([]))
+        record.status = .succeeded
+        #expect(integration.task(record)["bootstrap"]["completedStages"] == running["stages"])
     }
 
     @Test func inlineDiagnosticDoesNotNavigateOrSubmitAndKeepsEdits() throws {

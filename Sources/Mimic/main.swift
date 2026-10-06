@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var keyMonitor: Any?
     private var clickMonitor: Any?
     private var allowExit = false
+    private var updateLifecycle: MimicUpdateLifecycle?
 
     init(model: TaskCoordinator = TaskCoordinator()) {
         self.model = model
@@ -98,6 +99,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let integration = MimicIntegration(model: self.model)
         integration.developmentExit = { NSApp.terminate(nil) }
         self.model.integration = integration
+        let lifecycle = MimicUpdateLifecycle(model: self.model)
+        self.updateLifecycle = lifecycle
+        integration.prepareUpdateBackup = { try await lifecycle.prepareBackup() }
+        let updater = MimicUpdater(integration: integration, lifecycle: lifecycle)
+        self.model.updater = updater
+        updater.showSettings = { [weak self] in self?.model.openSettings(group: .application); self?.showMainPanel(source: .current) }
+        updater.willRelaunch = { [weak self] in
+            UserDefaults.standard.set(self?.panel.isVisible == true, forKey: "mimic.reopenAfterUpdate")
+        }
         self.launchObserver = DistributedNotificationCenter.default().addObserver(forName: MimicApplicationLaunch.notification, object: nil, queue: .main) { [weak self] notification in
             guard let value = notification.object as? String, let request = MimicApplicationLaunch(rawValue: value) else { return }
             Task { @MainActor in self?.handleLaunch(request) }
@@ -111,6 +121,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.model.aiUsage.start()
         self.updateStatus()
         self.handleLaunch(MimicApplicationLaunch(arguments: CommandLine.arguments))
+        if UserDefaults.standard.bool(forKey: "mimic.reopenAfterUpdate") {
+            UserDefaults.standard.removeObject(forKey: "mimic.reopenAfterUpdate")
+            self.showMainPanel(source: .current)
+        }
+        integration.refreshInstalledPluginIfNeeded()
+        updater.start()
         // These development flags never execute a project command.
     }
 
@@ -267,6 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Setup is a separately authorized window; a repeated request reuses it.
     private func showSetup(uninstall: Bool = false) {
+        guard !self.model.admissionsClosed else { return }
         if self.setupWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 600), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.title = text("setup.title"); window.contentMinSize = NSSize(width: 560, height: 520); window.center()
@@ -285,6 +302,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showTasks() { self.model.showHistory(source: .current) }
 
     func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
+        if self.model.updateReserved {
+            return self.model.integration?.developmentUpdateReady == true ? .terminateNow : .terminateCancel
+        }
+        if self.model.updater?.hasPendingInstallation == true {
+            self.model.updater?.deferInstallation()
+            self.model.message = text("update.quit.deferred")
+            return .terminateCancel
+        }
         if self.allowExit { return .terminateNow }
         if !self.model.busy && !self.model.requestingBootstrap && self.model.pendingCount == 0 && !self.model.switchingBranch && !self.model.analysis.isActive && self.model.aiSettings.checking == nil {
             if self.model.simulatorScreen.canExit { return .terminateNow }
@@ -331,6 +356,11 @@ if CommandLine.arguments.contains("--check-resources") {
     exit(checks.values.allSatisfy { $0 } ? 0 : 1)
 }
 
+#if DEBUG
+if Bundle.main.bundleIdentifier == "local.vmaslov.MimicUpdateFixture" {
+    MimicUpdateAcceptance.run(); exit(0)
+}
+#endif
 let application = NSApplication.shared
 // Development deployment refreshes the existing plugin without creating a task owner or UI.
 if CommandLine.arguments.contains("--refresh-codex-plugin") {

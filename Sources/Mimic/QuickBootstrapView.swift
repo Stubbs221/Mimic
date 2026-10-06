@@ -31,7 +31,7 @@ struct QuickBootstrapView: View {
     let showMimic: () -> Void
     var framed = true
     var body: some View {
-        VStack(alignment: .leading, spacing: MimicMetrics.medium) {
+        VStack(alignment: .leading, spacing: 6) {
             if let activity = model.quickBootstrapActivity {
                 let record = activity.record(in: self.model.records)
                 MimicChrome { HStack(spacing: MimicMetrics.medium) {
@@ -42,7 +42,7 @@ struct QuickBootstrapView: View {
                     if activity.error == nil, record.status == .queued || record.status == .running {
                         BootstrapIconButton(symbol: "stop.fill", label: text("stop"), action: { self.model.cancelQuickBootstrap(id: record.id) }, inControlBar: true)
                     }
-                }.padding(.horizontal, MimicMetrics.small).padding(.vertical, MimicMetrics.small) }
+                } }
                 HStack {
                     BootstrapStateText(model: self.model, record: record)
                     Spacer(minLength: 4)
@@ -63,7 +63,7 @@ struct QuickBootstrapView: View {
                     Text(error).font(MimicMetrics.secondary).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).mimicStatus(error).allowsHitTesting(false)
                 }
             }
-        }.padding(MimicMetrics.large).frame(width: MimicMetrics.cardWidth).fixedSize(horizontal: false, vertical: true)
+        }.padding(MimicMetrics.cardInsets).frame(width: MimicMetrics.cardWidth).fixedSize(horizontal: false, vertical: true)
             .font(MimicMetrics.body).tint(.indigo).buttonStyle(MimicButtonStyle())
             .background(CardMouseSurface(open: self.showMimic))
             .modifier(QuickBootstrapFrame(framed: self.framed))
@@ -104,20 +104,31 @@ struct CardMouseSurface: NSViewRepresentable {
 /// Equal, evidence-based segments; zero has no visible fill and only real progress values are interpolated.
 struct BootstrapFillBar: View {
     let value: Double
+    var color: Color = .indigo
+    var body: some View {
+        MimicProgressBar(value: self.value, color: self.color, label: text("bootstrap.progress"))
+    }
+}
+
+/// Shared internal track: unknown evidence stays neutral, and progress changes only the fill transform.
+struct MimicProgressBar: View {
+    let value: Double?
+    let color: Color
+    let label: String
     @Environment(\.colorSchemeContrast)
     private var contrast
     private var motion = MimicMotion()
-    init(value: Double) { self.value = value }
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.primary.opacity(0.06))
-                Capsule().fill(Color.indigo).frame(width: proxy.size.width * min(1, max(0, self.value)))
-                    .animation(self.motion.policy().animation(.progress), value: self.value)
+                Capsule().fill(self.color).frame(width: proxy.size.width)
+                    .scaleEffect(x: min(1, max(0, self.value ?? 0)), y: 1, anchor: .leading)
+                    .animation(self.motion.policy(.automatic).animation(.progress), value: self.value)
                 Capsule().stroke(Color.primary.opacity(self.contrast == .increased ? 0.6 : 0.15), lineWidth: 0.5)
             }
-        }.frame(height: 6).accessibilityElement().accessibilityLabel(text("bootstrap.progress"))
-            .accessibilityValue(self.value.formatted(.percent.precision(.fractionLength(0))))
+        }.frame(height: 6).accessibilityElement().accessibilityLabel(self.label)
+            .accessibilityValue(self.value.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? text("ci.progress.unavailable"))
 
     }
 }

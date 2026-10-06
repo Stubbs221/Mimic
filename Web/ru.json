@@ -204,7 +204,7 @@
   "bootstrap.terminal.waiting": "Ожидание вывода…",
   "bootstrap.error.agent": "Передать ошибку агенту",
   "bootstrap.xcode.notice": "Перед запуском Xcode закроется",
-  "bootstrap.retry": "Проверить снова",
+  "bootstrap.retry": "Повторить проверку",
   "bootstrap.activateXcode": "Открыть Xcode",
   "bootstrap.phase.blocked": "Xcode не закрыт",
   "bootstrap.phase.closing": "Закрытие Xcode…",
@@ -333,5 +333,14 @@
   "ci.compact.currentProject": "Текущий проект",
   "ci.compact.stale": "Данные устарели",
   "ci.activity.title": "Активность Mimic",
-  "ci.status.blocked": "Ожидает ручного шага"
+  "ci.status.blocked": "Ожидает ручного шага",
+  "ci.compact.launch": "Запуск CI",
+  "ci.compact.progress.unknown": "Прогресс пока недоступен",
+  "bootstrap.xcode.launch.notice": "Запуск закроет Xcode",
+  "bootstrap.preparation.description": "Полная подготовка зависимостей, UI-тестов и проекта. Перед запуском Mimic закроет все экземпляры Xcode; обработайте диалоги сохранения несохранённых изменений в Xcode.",
+  "stage.short.dependencies": "Зависимости",
+  "stage.short.uiTests": "UI-тесты",
+  "stage.short.setup": "Настройка",
+  "stop": "Остановить",
+  "bootstrap.cancel": "Отменить"
 }

@@ -46,7 +46,7 @@ struct MimicBridgeTests {
         try iconData.write(to: icon)
         let export = try MimicPluginExporter.export(app: app, directory: directory.appendingPathComponent("plugin"), readme: "Fixture instructions")
         let manifest = try JSONDecoder().decode(BridgeValue.self, from: Data(contentsOf: export.appendingPathComponent("plugins/mimic/.codex-plugin/plugin.json")))
-        #expect(manifest["version"].string == "1.2.0")
+        #expect(manifest["version"].string == MimicVersion.version)
         let marketplace = try JSONDecoder().decode(BridgeValue.self, from: Data(contentsOf: export.appendingPathComponent(".agents/plugins/marketplace.json")))
         #expect(marketplace["name"].string == "mimic-desktop")
         #expect(manifest["interface"]["composerIcon"].string == "./assets/icon.png")
@@ -62,4 +62,20 @@ struct MimicBridgeTests {
         #expect(config["mcpServers"]["mimic"]["args"].array == [])
         #expect(try String(contentsOf: export.appendingPathComponent("README.md"), encoding: .utf8) == "Fixture instructions")
     }
+    @Test func pluginRevisionDetectsSameVersionHelperAndPanelChanges() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("MimicPluginRevision-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let helper = root.appendingPathComponent("Contents/Helpers/MimicMCP")
+        let panel = root.appendingPathComponent("Contents/Resources/Mimic_MimicMCP.bundle/panel.html")
+        for file in [helper, panel] { try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true) }
+        try Data("helper-a".utf8).write(to: helper); try Data("panel-a".utf8).write(to: panel)
+        let original = try MimicPluginExporter.installationRevision(app: root)
+        #expect(try MimicPluginExporter.installationRevision(app: root) == original)
+        try Data("helper-b".utf8).write(to: helper)
+        let changedHelper = try MimicPluginExporter.installationRevision(app: root)
+        #expect(changedHelper != original)
+        try Data("panel-b".utf8).write(to: panel)
+        #expect(try MimicPluginExporter.installationRevision(app: root) != changedHelper)
+    }
+
 }

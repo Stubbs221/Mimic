@@ -49,6 +49,11 @@ public final class CIState: ObservableObject {
     private var childDetails: [String: CIPipelineDetails] = [:]
     public private(set) var feedPresented = false
     private var rootDetails: [Int: CIPipelineDetails] = [:]
+    private struct Inspection {
+        let entry: CIFeedEntry
+        let date: Date
+    }
+    private var inspections: [String: Inspection] = [:]
     private var summaryDates: [Int: Date] = [:]
     private var enrichmentTask: Task<Void, Never>?
     private var enrichmentTimer: Task<Void, Never>?
@@ -203,9 +208,27 @@ public final class CIState: ObservableObject {
         let ownIDs = Set(self.pipelines.map(\.id))
         return self.feedEntries.filter { $0.run != nil || $0.pipeline.map { ownIDs.contains($0.id) } == true }
     }
-    /// Prefer the newest active personal entry, then the newest terminal entry.
+    /// Active runs precede terminal runs; unknown start times affect ordering only, never displayed timing.
+    public var compactEntries: [CIFeedEntry] {
+        Array(self.personalEntries.sorted {
+            let leftActive = CICompactSummary.isActive($0.status), rightActive = CICompactSummary.isActive($1.status)
+            if leftActive != rightActive { return leftActive }
+            let left = $0.pipeline?.startedAt ?? $0.createdAt ?? .distantPast
+            let right = $1.pipeline?.startedAt ?? $1.createdAt ?? .distantPast
+            if left != right { return left > right }
+            let leftID = $0.pipeline?.id ?? $0.run?.pipelineID ?? 0
+            let rightID = $1.pipeline?.id ?? $1.run?.pipelineID ?? 0
+            return leftID == rightID ? $0.id > $1.id : leftID > rightID
+        }.prefix(2))
+    }
+
+    /// Compatibility projection for floating activity and older bridge clients.
     public var compactEntry: CIFeedEntry? {
-        self.personalEntries.first(where: { CICompactSummary.isActive($0.status) }) ?? self.personalEntries.first
+        self.compactEntries.first
+    }
+    /// Up to two personal presentations in the same order used by native and Codex cards.
+    public var compactSummaries: [CICompactSummary] {
+        self.compactEntries.compactMap { self.compactSummary(for: $0) }
     }
     public var compactSummary: CICompactSummary? {
         guard let entry = self.compactEntry, let context else { return nil }
@@ -219,6 +242,27 @@ public final class CIState: ObservableObject {
         let stale = self.error != nil || id.map { self.checkStates[$0] == .failed || self.metadataStates[$0] == .failed } == true || updated.map { Date().timeIntervalSince($0) > 45 } == true
         return CICompactSummary(entry: entry, context: context, accountID: self.user?.id, checks: id.flatMap { self.summaries[$0] }, updatedAt: updated, stale: stale)
     }
+
+    /// Retains one personal run per live panel without changing native detail selection.
+    /// The caller must verify account scope and checkout before registering an interest.
+    public func inspectPersonalEntry(_ entryID: String, viewer: String, refresh: Bool = false) -> CIFeedEntry? {
+        self.inspections = self.inspections.filter { Date().timeIntervalSince($0.value.date) < 30 }
+        guard let retained = self.personalEntries.first(where: { $0.id == entryID }) ?? self.inspections[viewer].flatMap({ $0.entry.id == entryID ? $0.entry : nil }) else { return nil }
+        let id = retained.pipeline?.id ?? retained.run?.pipelineID
+        let entry = CIFeedEntry(pipeline: id.flatMap { self.enrichedPipelines[$0] } ?? retained.pipeline, run: retained.run, participant: retained.participant)
+        self.inspections[viewer] = Inspection(entry: entry, date: Date())
+        if let id {
+            self.expandedLoads.insert(id)
+            if refresh, self.retryAt.map({ $0 <= Date() }) ?? true {
+                self.invalidateDetails(id, sha: entry.sha)
+            }
+        }
+        self.enrichVisible()
+        return entry
+    }
+
+    /// Cached root and child checks are shared with panels, without selecting a native pipeline.
+    public func rootChecks(for id: Int) -> CIPipelineDetails? { self.rootDetails[id] }
 
     public var visibleEntries: [CIFeedEntry] { Array(self.feedEntries.prefix(self.historyLimit)) }
     public var canShowMore: Bool {
@@ -502,16 +546,21 @@ public final class CIState: ObservableObject {
         self.enrichmentTimer?.cancel(); self.enrichmentTimer = nil
     }
     private func resetEnrichmentCache() {
+        self.inspections = [:]
         self.compactTracked = []; self.compactFinalized = []; self.metadataStates = [:]; self.checkStates = [:]; self.metadataDates = [:]
         self.commitTitles = [:]; self.commitFailures = []; self.expandedLoads = []; self.fullyLoadedChecks = []; self.childDetails = [:]
     }
 
     public func retryDetails(_ id: Int) {
         guard self.retryAt.map({ $0 <= Date() }) ?? true else { return }
+        self.invalidateDetails(id, sha: self.visibleEntries.first(where: { $0.pipeline?.id == id })?.sha)
+        self.loadDetails(id)
+    }
+
+    private func invalidateDetails(_ id: Int, sha: String?) {
         self.compactFinalized.remove(id); self.metadataDates[id] = nil; self.summaryDates[id] = nil; self.enrichmentErrors[id] = nil
         self.metadataStates[id] = nil; self.checkStates[id] = nil; self.rootDetails[id] = nil; self.fullyLoadedChecks.remove(id); self.childDetails = [:]
-        if let sha = self.visibleEntries.first(where: { $0.pipeline?.id == id })?.sha { self.commitFailures.remove(sha) }
-        self.loadDetails(id)
+        if let sha { self.commitFailures.remove(sha) }
     }
 
     /// One worker coalesces feed, timer and disclosure requests for the current connection generation.
@@ -520,9 +569,14 @@ public final class CIState: ObservableObject {
               self.retryAt.map({ $0 <= Date() }) ?? true else { return }
         self.startEnrichmentTimer()
         var entries = self.visible && self.feedPresented ? self.visibleEntries : []
-        if self.monitoring, let compact = self.compactEntry, !entries.contains(where: { $0.id == compact.id }) { entries.insert(compact, at: 0) }
-        let compactID = self.monitoring ? self.compactEntry.flatMap { $0.pipeline?.id ?? $0.run?.pipelineID } : nil
-        if let compactID { self.compactTracked.insert(compactID) }
+        self.inspections = self.inspections.filter { Date().timeIntervalSince($0.value.date) < 30 }
+        let compact = self.monitoring ? self.compactEntries : []
+        for entry in compact + self.inspections.values.map(\.entry) {
+            if !entries.contains(where: { $0.id == entry.id }) { entries.append(entry) }
+        }
+        for entry in compact {
+            if let id = entry.pipeline?.id ?? entry.run?.pipelineID { self.compactTracked.insert(id) }
+        }
         if self.monitoring {
             for entry in self.personalEntries {
                 guard let id = entry.pipeline?.id ?? entry.run?.pipelineID, self.compactTracked.contains(id), !self.compactFinalized.contains(id),
@@ -536,7 +590,11 @@ public final class CIState: ObservableObject {
             defer {
                 if self.enrichmentRevision == revision {
                     self.enrichmentTask = nil
-                    if let id = self.selectedPipelineID, self.checkStates[id] == nil, entries.contains(where: { $0.pipeline?.id == id || $0.run?.pipelineID == id }) { self.enrichVisible() }
+                    let pending = (self.monitoring ? self.compactEntries : []) + self.inspections.values.map(\.entry)
+                    if pending.contains(where: { entry in
+                        guard let id = entry.pipeline?.id ?? entry.run?.pipelineID else { return false }
+                        return self.checkStates[id] == nil && !entries.contains(where: { $0.id == entry.id })
+                    }) || self.selectedPipelineID.map({ id in self.checkStates[id] == nil && entries.contains(where: { $0.pipeline?.id == id || $0.run?.pipelineID == id }) }) == true { self.enrichVisible() }
                 }
             }
             for entry in entries {

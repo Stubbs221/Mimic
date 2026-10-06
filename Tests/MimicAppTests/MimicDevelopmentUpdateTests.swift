@@ -47,6 +47,12 @@ struct MimicDevelopmentUpdateTests {
         try await Task.sleep(for: .milliseconds(20))
         #expect(exits == 1)
         #expect(model.profileRemote.runs.first?.id == id)
+        model.profileRemote.stop()
+        let restored = TaskCoordinator(directory: directory, defaults: defaults)
+        defer { restored.profileRemote.stop() }
+        #expect(restored.profileRemote.runs.first?.id == id)
+        #expect(restored.profileRemote.runs.first?.status == status)
+        #expect(restored.profileRemote.runs.first?.queueURL?.absoluteString == "https://jenkins.example.invalid/queue/item/7/")
     }
 
     private func fixture() throws -> (TaskCoordinator, URL, UserDefaults, String) {

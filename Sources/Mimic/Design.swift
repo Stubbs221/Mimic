@@ -93,7 +93,8 @@ enum MimicMetrics {
     static let panelWidth: CGFloat = 520
     static let cardWidth: CGFloat = 320
     /// Width is configurable; every collapsed grid card shares one vertical rhythm.
-    static let collapsedCardHeight: CGFloat = 170
+    static let collapsedCardHeight: CGFloat = 160
+    static let cardInsets = EdgeInsets(top: 10, leading: 12, bottom: 12, trailing: 12)
     static let surfaceRadius: CGFloat = 10
     static let footerRow: CGFloat = 28
     static let footerHeight: CGFloat = 76
@@ -147,6 +148,7 @@ struct Surface<Content: View>: View {
 /// Semantic press/focus state is immediate; pointer feedback has a short visual transition.
 struct RowButtonStyle: ButtonStyle {
     private let contentInsets: EdgeInsets
+    private let showsHoverBackground: Bool
     private var accessibility = MimicAccessibility()
     private var motion = MimicMotion()
     @Environment(\.isEnabled) private var enabled
@@ -155,15 +157,16 @@ struct RowButtonStyle: ButtonStyle {
     private var hovered = false
 
     /// Pre-sized labels pass empty insets; other labels share padding in every interaction state.
-    init(contentInsets: EdgeInsets = EdgeInsets(top: MimicMetrics.small, leading: MimicMetrics.medium, bottom: MimicMetrics.small, trailing: MimicMetrics.medium)) {
+    init(contentInsets: EdgeInsets = EdgeInsets(top: MimicMetrics.small, leading: MimicMetrics.medium, bottom: MimicMetrics.small, trailing: MimicMetrics.medium), showsHoverBackground: Bool = true) {
         self.contentInsets = contentInsets
+        self.showsHoverBackground = showsHoverBackground
     }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.padding(self.contentInsets).foregroundStyle(Color.primary)
             .opacity(!self.enabled ? 0.45 : configuration.isPressed ? 0.75 : 1)
             .scaleEffect(configuration.isPressed && !self.accessibility.reduceMotion ? 0.99 : 1)
-            .background(.primary.opacity(self.enabled && self.hovered ? self.accessibility.increasedContrast ? 0.12 : 0.06 : 0), in: RoundedRectangle(cornerRadius: 8))
+            .background(.primary.opacity(self.showsHoverBackground && self.enabled && self.hovered ? self.accessibility.increasedContrast ? 0.12 : 0.06 : 0), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(self.focused ? 0.8 : 0), lineWidth: 2))
             .contentShape(RoundedRectangle(cornerRadius: 8))
             .animation(self.motion.policy(.current).animation(.feedback), value: configuration.isPressed)

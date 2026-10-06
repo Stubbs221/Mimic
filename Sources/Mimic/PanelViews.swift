@@ -21,6 +21,7 @@ struct MimicPanel: View {
                     .padding(.horizontal, MimicMetrics.documentInset).padding(.vertical, MimicMetrics.medium)
             }
             MimicPanelSeparator()
+            if let updater = self.model.updater { MimicUpdateNotice(updater: updater) }
             GeometryReader { bounds in
                 ZStack(alignment: .topLeading) {
                     self.homeDocument
@@ -49,6 +50,7 @@ struct MimicPanel: View {
             .background(Color(nsColor: .windowBackgroundColor)).clipShape(RoundedRectangle(cornerRadius: 12))
             .environment(\.mimicMotionSettings, self.model.motionSettings)
             .accessibilityIdentifier("toolbox.panel")
+            .disabled(self.model.updateReserved)
     }
 
     private var homeDocument: some View {

@@ -15,6 +15,7 @@ import MimicCore
     private var timer: Task<Void, Never>?
     private var observer: NSObjectProtocol?
     private var updating = false
+    private var naturalHeight: CGFloat = 302
     var anchor: () -> NSRect? = { nil }
     init(model: TaskCoordinator, defaults: UserDefaults = .standard) {
         self.model = model; self.defaults = defaults
@@ -25,7 +26,15 @@ import MimicCore
         window.isMovableByWindowBackground = true; window.delegate = self
         motion = MimicWindowMotion(window: window, settings: model.motionSettings)
         window.beginDrag = { [weak self] in self?.motion.beginDrag() }
-        window.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: motion.presentation, settings: model.motionSettings) { BuildOverlayView(builds: model.builds, hide: { [weak self] in self?.hide() }) })
+        window.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: motion.presentation, settings: model.motionSettings) {
+            BuildOverlayView(builds: model.builds, hide: { [weak self] in self?.hide() }, measured: { [weak self] height in
+                DispatchQueue.main.async {
+                    guard let self, height > 0, abs(self.naturalHeight - height) > 0.5 else { return }
+                    self.naturalHeight = height
+                    if self.motion.desiredVisible { self.update() }
+                }
+            })
+        })
         observer = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.screenChanged() } }
     }
     var isPresented: Bool { motion.desiredVisible }
@@ -34,13 +43,15 @@ import MimicCore
         if currentID != record.id { timer?.cancel(); timer = nil; deadlineID = nil; hiddenID = nil; currentID = record.id }
         if model.builds.pinned { timer?.cancel(); timer = nil; deadlineID = nil }
         guard hiddenID != record.id else { return }
-        if !window.isVisible {
-            let visible = anchor() ?? NSScreen.main?.visibleFrame ?? .zero
-            let origin = defaults.string(forKey: "build.card.origin").map(NSPointFromString) ?? NSPoint(x: visible.maxX - 360 - 16, y: visible.minY + 16)
-            let screen = NSScreen.screens.first { $0.visibleFrame.contains(origin) }?.visibleFrame ?? visible
-            updating = true; motion.setFrame(BootstrapActivityPanel.clamped(NSRect(origin: origin, size: .init(width: 360, height: min(302, screen.height))), to: screen), immediate: true); updating = false
-            motion.setVisible(true)
-        }
+        let visible = anchor() ?? NSScreen.main?.visibleFrame ?? .zero
+        var origin = window.isVisible ? window.frame.origin : defaults.string(forKey: "build.card.origin").map(NSPointFromString) ?? NSPoint(x: visible.maxX - 360 - 16, y: visible.minY + 16)
+        let screen = NSScreen.screens.first { $0.visibleFrame.contains(origin) }?.visibleFrame ?? visible
+        let height = min(self.naturalHeight, screen.height)
+        if window.isVisible { origin.y = window.frame.maxY - height }
+        updating = true
+        motion.setFrame(BootstrapActivityPanel.clamped(NSRect(origin: origin, size: .init(width: 360, height: height)), to: screen), immediate: !window.isVisible)
+        updating = false
+        motion.setVisible(true)
         if !model.builds.pinned, deadlineID == nil, record.status == .succeeded || record.status == .cancelled {
             deadlineID = record.id
             timer = Task { [weak self] in
@@ -69,11 +80,12 @@ final class BuildFloatingPanel: NSPanel {
 struct BuildOverlayView: View {
     @ObservedObject var builds: BuildCoordinator
     let hide: () -> Void
+    var measured: (CGFloat) -> Void = { _ in }
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     var body: some View {
         if let record = builds.overlayActivity {
-            VStack(alignment: .leading, spacing: 9) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack { Text(buildTitle(record)).font(.system(size: 13, weight: .semibold)); Spacer(); Button { builds.pinned.toggle() } label: { Image(systemName: builds.pinned ? "pin.fill" : "pin") }.buttonStyle(.plain).accessibilityLabel(text("build.pin")).accessibilityValue(text(builds.pinned ? "build.pinned" : "build.unpinned")); Button(action: hide) { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel(text("build.hide")) }
                 Text(URL(fileURLWithPath: record.project.path).lastPathComponent + " · " + record.project.branch).font(.system(size: 11)).lineLimit(1).truncationMode(.middle).help(record.project.path)
                 Text(record.parameters.backend == .cli ? record.parameters.scheme + " · " + record.parameters.destinationID : record.parameters.workspaceTab + " · " + text("build.xcode.settings")).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
@@ -85,10 +97,17 @@ struct BuildOverlayView: View {
                     Spacer(minLength: 0)
                 }.font(.system(size: 10, design: .monospaced)).padding(8).frame(maxWidth: .infinity, minHeight: 88, maxHeight: 88, alignment: .topLeading).background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6)).transaction { $0.animation = nil }.accessibilityIdentifier("build.overlay.log")
                 HStack { Button(text("build.output")) { builds.showResult(record.id) }; Spacer(); if record.canCancel { Button(text("build.stop")) { builds.cancel(record.id) } }; Button(text("build.hide"), action: hide) }.controlSize(.small)
-            }.padding(14).frame(width: 360).frame(maxHeight: .infinity, alignment: .top)
+            }.padding(MimicMetrics.cardInsets).frame(width: 360).fixedSize(horizontal: false, vertical: true)
                 .background { if reduceTransparency || contrast == .increased { Color(nsColor: .windowBackgroundColor) } else if #available(macOS 26.0, *) { Rectangle().fill(.clear).glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12)) } else { Rectangle().fill(.regularMaterial) } }
                 .clipShape(RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(.primary.opacity(contrast == .increased ? 0.5 : 0.12)))
                 .accessibilityIdentifier("build.overlay")
+                .background(GeometryReader { proxy in Color.clear.preference(key: BuildOverlayHeight.self, value: proxy.size.height) })
+                .onPreferenceChange(BuildOverlayHeight.self) { self.measured($0) }
         }
     }
+}
+
+private struct BuildOverlayHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

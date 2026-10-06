@@ -21,28 +21,37 @@ try{
  await page.evaluate(()=>window.mimicBootstrapFixture.empty());await setMode('full');
  assert.equal(await block.locator('.bootstrap-launchers button').count(),2);
  assert.equal(await block.locator('select,details').count(),0);
- assert(await block.getByText('Выберите iOS или tvOS для запуска.',{exact:true}).isVisible());
+ assert(await block.locator('.bootstrap-overview').getByText('Зависимости',{exact:false}).isVisible());
+ assert(await block.getByText('Запуск закроет Xcode',{exact:true}).isVisible());
+ const iosBox=await block.getByRole('button',{name:'iOS',exact:true}).boundingBox(),tvBox=await block.getByRole('button',{name:'tvOS',exact:true}).boundingBox();assert(tvBox.y>=iosBox.y+iosBox.height,'platform buttons stack vertically');assert.equal(iosBox.height,28);assert.equal(iosBox.width,104,'short platform names use compact controls');assert.equal(await block.locator('.bootstrap-platform-icon').count(),2);
  const controls=await block.locator('.bootstrap-controls').boundingBox(),terminal=await block.locator('.bootstrap-terminal-region').boundingBox();
  assert(terminal.x>=controls.x+controls.width,'full terminal occupies the right half');
- assert(Math.abs(terminal.width-controls.width)<1,'full columns have equal widths');
+ assert(Math.abs(terminal.width/controls.width-1.5)<.02,'full columns allocate 40/60');
  await block.getByRole('button',{name:'iOS',exact:true}).evaluate(node=>{node.click();node.click();});
- assert(await block.getByRole('button',{name:'iOS',exact:true}).isDisabled());
+ assert(!await block.getByRole('button',{name:'iOS',exact:true}).isVisible());
+ assert(await block.getByRole('button',{name:'Отменить',exact:true}).isVisible());
  assert(!await block.evaluate(node=>node.classList.contains('expanded')),'launch preserves disclosure');
  const launches=await page.evaluate(()=>window.mimicBootstrapFixture.launches);
  assert.equal(launches.length,1);assert.deepEqual(launches[0].parameters,{device:'true',match:'true',full:'true',dependencies:'true',uiDependencies:'false',setup:'true',platform:'ios'});
  await block.locator('.terminal-host').waitFor();await block.locator('.terminal-host').evaluate(node=>window.bootstrapTerminalIdentity=node);
- await setMode('mini');assert(!await block.locator('.bootstrap-terminal-region').isVisible());assert(!await block.locator('.bootstrap-state').isVisible());
- assert.equal(await block.getByRole('button').count(),3,'mini exposes only header and platform buttons');
+ await setMode('mini');assert(!await block.locator('.bootstrap-terminal-region').isVisible());assert(await block.locator('.bootstrap-state').isVisible());
+ assert(await block.getByRole('button',{name:'Отменить',exact:true}).isVisible());
  await title.click();assert(await block.locator('.bootstrap-terminal-region').isVisible());
- const expandedTerminal=await block.locator('.bootstrap-terminal-region').boundingBox(),launchers=await block.locator('.bootstrap-launchers').boundingBox();assert(expandedTerminal.y>=launchers.y+launchers.height);
+ const expandedTerminal=await block.locator('.bootstrap-terminal-region').boundingBox(),controlsBox=await block.locator('.bootstrap-controls').boundingBox();assert(expandedTerminal.y>=controlsBox.y+controlsBox.height);
  assert(await block.locator('.terminal-host').evaluate(node=>node===window.bootstrapTerminalIdentity));
  const id=await setTask('running','ios',true);await page.waitForTimeout(900);
+ assert(await block.getByRole('button',{name:'Остановить',exact:true}).isVisible());
+ assert.equal(await block.locator('.terminal-host').getAttribute('data-font-size'),'12');
+ assert.equal(await block.locator('.bootstrap-stages [data-state=complete]').count(),1);
  const input=block.locator('.xterm-helper-textarea');await input.focus();await input.press('a');await page.waitForTimeout(200);
  assert((await page.evaluate(()=>window.mimicBootstrapFixture.inputCount))>0,'live encrypted input is delivered');
  await page.evaluate(id=>window.mimicBootstrapFixture.output(id,'FINAL BOOTSTRAP LINE\r\n'),id);await setTask('succeeded','ios',true);await page.waitForTimeout(900);
  assert((await block.locator('.xterm-screen').innerText()).includes('FINAL BOOTSTRAP LINE'),'final output survives completion');
  const sentInputs=await page.evaluate(()=>window.mimicBootstrapFixture.inputCount);await input.press('b');await page.waitForTimeout(150);assert.equal(await page.evaluate(()=>window.mimicBootstrapFixture.inputCount),sentInputs);
- await setMode('mini');await title.click();assert((await block.locator('.xterm-screen').innerText()).includes('FINAL BOOTSTRAP LINE'));assert(await block.locator('.terminal-host').evaluate(node=>node===window.bootstrapTerminalIdentity));
+ await setMode('full');assert.equal(await block.locator('.terminal-host').getAttribute('data-font-size'),'10');
+ await page.emulateMedia({colorScheme:'dark'});assert(await block.locator('.terminal-host').evaluate(node=>getComputedStyle(node).backgroundColor==='rgb(32, 40, 51)'));
+ await page.emulateMedia({colorScheme:'light'});
+ await setMode('mini');await title.click();await page.waitForTimeout(150);assert((await block.locator('.xterm-screen').innerText()).includes('FINAL BOOTSTRAP LINE'));assert(await block.locator('.terminal-host').evaluate(node=>node===window.bootstrapTerminalIdentity));
  await page.evaluate(()=>window.mimicBootstrapFixture.refreshContext());await page.waitForTimeout(800);assert((await block.locator('.xterm-screen').innerText()).includes('FINAL BOOTSTRAP LINE'),'Git metadata refresh preserves the completed task screen');
  const failedID=await setTask('running','tvos');await page.waitForTimeout(800);await setTask('failed','tvos',true,'Не удалось загрузить InfrastructureDependencyRegistryConfiguration из registry.example.invalid');
  const overlay=block.getByRole('button',{name:'Передать ошибку агенту',exact:true});assert(await overlay.isVisible());
@@ -55,14 +64,22 @@ try{
  const sent=await page.evaluate(()=>window.mimicBootstrapFixture.sent);assert(sent.includes('Edited dependency error')&&sent.includes('Original bootstrap task')&&sent.includes(failedID));
  await page.evaluate(()=>window.mimicBootstrapFixture.disconnected(true));assert(await block.getByRole('button',{name:'tvOS',exact:true}).isDisabled());await page.evaluate(()=>window.mimicBootstrapFixture.disconnected(false));
  await page.evaluate(()=>window.mimicBootstrapFixture.missingContext(true));assert(await block.getByRole('button',{name:'iOS',exact:true}).isDisabled());await page.evaluate(()=>window.mimicBootstrapFixture.missingContext(false));
- for(const width of [360,440,480,520])for(const colorScheme of ['light','dark'])for(const reducedMotion of ['reduce','no-preference'])for(const mode of ['mini','full','expanded']){
+ for(const width of [320,360,440,480,520])for(const colorScheme of ['light','dark'])for(const reducedMotion of ['reduce','no-preference'])for(const mode of ['mini','full','expanded']){
   await page.setViewportSize({width,height:1100});await page.emulateMedia({colorScheme,reducedMotion});await setMode(mode);
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'no horizontal document overflow');
   for(const button of await block.locator('.bootstrap-launchers button').all()){const box=await button.boundingBox();const bounds=await block.boundingBox();assert(box.x>=bounds.x&&box.x+box.width<=bounds.x+bounds.width,'platform action remains reachable');}
   if(mode==='mini')assert(!await block.locator('.bootstrap-terminal-region').isVisible());
   else{const region=await block.locator('.bootstrap-terminal-region').boundingBox(),bounds=await block.boundingBox();assert(region.x>=bounds.x&&region.x+region.width<=bounds.x+bounds.width);}
+  if(mode!=='expanded'){const bounds=await block.boundingBox();for(const node of await block.locator('.bootstrap-controls > :visible').all()){const box=await node.boundingBox();assert(box.y+box.height<=bounds.y+bounds.height-8,'collapsed content fits the card');}}
   await block.screenshot({path:`${output}/bootstrap-${mode}-${width}-${colorScheme}-${reducedMotion}.png`});
  }
+ for(const state of ['queued','blocked','running','succeeded','cancelled','failed']){
+  await setTask(state);await setMode('mini');
+  const bounds=await block.boundingBox();for(const node of await block.locator('.bootstrap-controls > :visible').all()){const box=await node.boundingBox();assert(box.y+box.height<=bounds.y+bounds.height-8,`${state} fits 160px`);}
+  if(state==='blocked')assert(await block.getByRole('button',{name:'Повторить проверку',exact:true}).isVisible());
+  if(state==='running'){await block.getByRole('button',{name:'Остановить',exact:true}).click();assert(await block.getByRole('button',{name:'iOS',exact:true}).isVisible());}
+ }
+ await setTask('succeeded');
  await page.emulateMedia({forcedColors:'active'});await setMode('expanded');await block.screenshot({path:`${output}/bootstrap-contrast.png`});
  await page.emulateMedia({forcedColors:'none'});await setMode('mini');await title.focus();await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'iOS');await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement?.textContent),'tvOS');await page.keyboard.press('Tab');assert(!await page.evaluate(()=>document.activeElement?.closest('.bootstrap-terminal-region')),'hidden terminal is outside keyboard navigation');
  await page.evaluate(()=>window.mimicBootstrapFixture.empty());
@@ -75,5 +92,5 @@ try{
  await page.evaluate(()=>window.mimicBootstrapFixture.rejectNext());await block.getByRole('button',{name:'iOS',exact:true}).click();
  assert(await block.locator('.bootstrap-error').getByText('Fixture admission refused',{exact:true}).isVisible());
  await block.getByRole('button',{name:'Передать ошибку агенту',exact:true}).click();assert.equal(await block.getByRole('textbox',{name:'Диагностика локальной задачи',exact:true}).inputValue(),'Fixture admission refused');
- assert.deepEqual(errors,[]);console.log('PASS: platform defaults, no auto expansion, mini/full/expanded, equal columns, encrypted input, final output, identity, diagnostics preview/send/focus, offline/no checkout, widths/themes/Reduce Motion/contrast/keyboard');
+ assert.deepEqual(errors,[]);console.log('PASS: platform defaults, no auto expansion, mini/full/expanded, 40/60 columns, vertical launchers, adaptive palette/font, compact state, encrypted input, final output, identity, diagnostics preview/send/focus, offline/no checkout, widths/themes/Reduce Motion/contrast/keyboard');
 }finally{await browser.close();server.close();}

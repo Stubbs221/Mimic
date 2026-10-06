@@ -1,6 +1,6 @@
 #!/bin/bash
 # Created by Василий Маслов on 05.10.2026.
-# Explicit choices fail closed; an absent choice preserves the ad hoc development fallback.
+# Personal identity stays outside the repository. Ad hoc signing requires an explicit choice.
 mimic_resolve_signing_identity() {
   local preference="$1"
   if [ "${MIMIC_SIGNING_IDENTITY+x}" = x ]; then
@@ -9,7 +9,8 @@ mimic_resolve_signing_identity() {
     [ -f "$preference" ] && [ -r "$preference" ] || { echo 'Signing preference is unavailable.' >&2; return 64; }
     MIMIC_SELECTED_IDENTITY=$(cat "$preference")
   else
-    MIMIC_SELECTED_IDENTITY='-'
+    echo 'Configure a signing identity or explicitly select ad hoc signing for a disposable fixture.' >&2
+    return 64
   fi
   [ -n "$MIMIC_SELECTED_IDENTITY" ] || { echo 'Signing identity is empty.' >&2; return 64; }
   case "$MIMIC_SELECTED_IDENTITY" in *$'\n'*|*$'\r'*) echo 'Signing identity must be one line.' >&2; return 64 ;; esac

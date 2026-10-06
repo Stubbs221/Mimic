@@ -42,7 +42,7 @@ import UserNotifications
     @Published var autoOpen = true
     @Published var login = true
     @Published var notify = true
-    @Published private(set) var working = false
+    @Published private(set) var working = false { didSet { self.model.setupBusy = self.working } }
     @Published private(set) var statuses: [String: String] = [:]
     @Published private(set) var finished = false
     let model: TaskCoordinator
@@ -62,7 +62,7 @@ import UserNotifications
         self.autoOpen = choices[self.model.selectedProjectPath] ?? true
     }
     var canContinue: Bool {
-        guard !self.working, !self.model.ciSettings.checking, !self.model.jenkinsSettings.checking else { return false }
+        guard !self.model.admissionsClosed, !self.working, !self.model.ciSettings.checking, !self.model.jenkinsSettings.checking else { return false }
         switch self.step {
         case 0: return self.model.hasCompatibleProfile && self.model.project != nil && !self.model.checking && !self.model.switchingBranch
         case 2: return self.model.ciSettings.connection != nil && self.model.ciSettings.enteredToken.isEmpty && self.model.ciSettings.error == nil && !self.model.ciSettings.verified && self.model.ciSettings.address == self.model.ciSettings.connection?.baseURL.absoluteString && self.model.ciSettings.projectPath == self.model.ciSettings.connection?.projectPath
@@ -78,7 +78,7 @@ import UserNotifications
         self.step = min(self.step + 1, 5)
     }
     func connect() async {
-        guard !self.working else { return }; self.working = true; defer { self.working = false }
+        guard !self.model.admissionsClosed, !self.working else { return }; self.working = true; defer { self.working = false }
         guard let codex else { self.statuses["setup.codex"] = "setup.codex.missing"; return }
         do {
             let root = try MimicPluginExporter.export(app: self.app, readme: text("mcp.install.instructions"), description: text("mcp.plugin.description"), shortDescription: text("mcp.plugin.shortDescription"))
@@ -87,7 +87,7 @@ import UserNotifications
         } catch { self.statuses["setup.codex"] = "setup.codex.failed" }
     }
     func apply() async {
-        guard !self.working, let path = self.model.project?.path else { return }
+        guard !self.model.admissionsClosed, !self.working, let path = self.model.project?.path else { return }
         self.working = true; defer { self.working = false }
         do {
             try MimicSetupRules.update(project: path, enabled: self.autoOpen, home: self.home)
@@ -112,7 +112,7 @@ import UserNotifications
     }
     /// Keeps credentials and history; partial failures remain visible and retryable.
     func uninstall() async {
-        guard !self.working else { return }; self.working = true; defer { self.working = false }
+        guard !self.model.admissionsClosed, !self.working else { return }; self.working = true; defer { self.working = false }
         if let codex {
             do { try await MimicPluginInstaller.uninstall(codex: codex); self.statuses["setup.codex"] = "setup.disabled" }
             catch { self.statuses["setup.codex"] = "setup.codex.removeFailed" }
@@ -200,7 +200,7 @@ struct MimicSetupView: View {
                     }.disabled(!self.setup.canContinue).keyboardShortcut(.defaultAction).accessibilityIdentifier("setup.next")
                 }
             }
-        }.padding(24).frame(minWidth: 560, minHeight: 520)
+        }.padding(24).frame(minWidth: 560, minHeight: 520).disabled(self.model.updateReserved)
             .onChange(of: self.model.selectedProjectPath) { _, _ in self.setup.selectionChanged() }
             .confirmationDialog(text("setup.uninstall"), isPresented: self.$confirming) {
                 Button(text("setup.uninstall"), role: .destructive) { Task { await self.setup.uninstall() } }

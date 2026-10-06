@@ -10,12 +10,14 @@ extension MimicIntegration {
         guard let threadID = request.threadID else { throw failure("context") }
         let p = request.parameters
         let keys: [String: Set<String>] = [
+            "panel_get_ci_details": ["identity", "refresh"],
             "panel_get_workspace": [], "panel_save_workspace": ["workspace"], "panel_save_layout": ["layout", "expectedRevision"],
             "panel_setup": ["operation"], "panel_branches": [], "panel_switch_branch": ["branch", "context"],
             "panel_preview_generator": ["actionID", "parameters", "context", "requestID"], "panel_generate": ["actionID", "parameters", "context", "requestID"], "panel_get_preview": ["taskID"],
             "panel_terminal_open": ["taskID", "publicKey"], "panel_terminal_poll": ["channelID"], "panel_terminal_send": ["channelID", "packet"], "panel_terminal_close": ["channelID"], "panel_secret_input": ["taskID"], "panel_bootstrap_control": ["taskID", "operation"]]
         guard let allowed = keys[request.method], Set(p.keys) == allowed else { throw failure("arguments") }
         switch request.method {
+        case "panel_get_ci_details": return try self.panelCIDetails(threadID: threadID, parameters: p)
         case "panel_get_workspace": return try BridgeValue.encode(workspaceStore.load(threadID))
         case "panel_save_workspace":
             var workspace = try JSONDecoder().decode(PanelWorkspace.self, from: JSONEncoder().encode(p["workspace"]!))
@@ -72,8 +74,9 @@ extension MimicIntegration {
 
     /// Credentials enter Keychain directly from secure native fields, never HTML/MCP arguments.
     private func panelCredentials(project: ProjectContext?) {
-        guard let project else { return }
+        guard !model.admissionsClosed, self.credentialSettings?.checking != true, let project else { return }
         let settings = CISettingsModel(store: DefaultsCIConfigurationStore(defaults: defaults))
+        self.credentialSettings = settings
         settings.selectCheckout(project.path)
         settings.address = model.activeProfile?.profile.services?.gitLabURL ?? settings.address
         settings.projectPath = model.activeProfile?.profile.services?.gitLabProject ?? settings.projectPath

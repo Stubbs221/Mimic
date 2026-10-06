@@ -9,9 +9,10 @@ struct BootstrapControlStyle: PrimitiveButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         if self.fillsWidth {
             Button(role: configuration.role, action: configuration.trigger) {
-                configuration.label.font(MimicMetrics.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 24)
-            }.buttonStyle(.borderedProminent).tint(.indigo).controlSize(.regular)
+                configuration.label.font(MimicMetrics.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 16)
+            }.buttonStyle(.borderedProminent).tint(Color(red: 65 / 255, green: 108 / 255, blue: 155 / 255)).controlSize(.small)
                 .buttonBorderShape(.roundedRectangle(radius: 8))
+                .frame(height: 28)
         } else {
             Button(configuration).buttonStyle(MimicButtonStyle(primary: self.primary, selected: self.selected, height: 32))
         }

@@ -11,6 +11,7 @@ The pinned source licenses were compared with the local dependency checkouts dur
 
 | Package | Version | License text |
 | --- | --- | --- |
+| Sparkle | 2.10.0 | [Original MIT and bundled component notices](Sparkle-LICENSE.txt) |
 | SwiftTerm | 1.20.0 | [MIT](SwiftTerm-LICENSE.txt) |
 | ZIPFoundation | 0.9.20 | [MIT](ZIPFoundation.md) |
 | MCP Swift SDK | 0.12.1 | [Original transition notices: Apache 2.0/MIT](mcp-swift-sdk-LICENSE.txt) |

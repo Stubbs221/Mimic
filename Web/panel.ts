@@ -2,7 +2,8 @@
 import { App, applyDocumentTheme, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps';
 import { OpenAIExtensions } from '@openai/mcp-extensions/app';
 import ru from './ru.json';
-import {renderCompactCI,renderCIProgress,type CICompactSummary} from './ci-compact';
+import {renderCompactRuns,middleText,ciIdentity,type CICompactSummary} from './ci-compact';
+import {PanelCIView,type CIInspection} from './ci-details';
 import {catalog,standard,validate,change,remove,add,move,resize,replace,insert,type InsertionTarget,type Block,type Layout} from './layout';
 import {applyRemoteDefaults} from './remote-parameters';
 import {PrivateTerminal} from './terminal';
@@ -14,7 +15,7 @@ type Action={id:string;title:string;presentation:string;remote:boolean;parameter
 function stableJSON(value:unknown):string{return JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item)??'';}
 const actionValues=new Map<string,Record<string,string>>();
 const remoteFields=new Map<string,Record<string,{defaultValue:string;choices:string[]}>>();
-type LocalTask={id:string;actionID?:string;title:string;status:string;createdAt:string;context:Context;diagnosticAvailable:boolean;canCancel:boolean;needsInput?:boolean;progress?:string|null;startedAt?:string|null;finishedAt?:string|null;error?:string|null;bootstrap?:{platform:'ios'|'tvos';phase:string;fraction:number}};
+type LocalTask={id:string;actionID?:string;title:string;status:string;createdAt:string;context:Context;diagnosticAvailable:boolean;canCancel:boolean;needsInput?:boolean;progress?:string|null;startedAt?:string|null;finishedAt?:string|null;error?:string|null;bootstrap?:{platform:'ios'|'tvos';phase:string;fraction:number;stages?:string[];currentStage?:string|null;completedStages?:string[]}};
 type Build=LocalTask&{tracking:string;phase:string;source:string;duration?:number;parameters:{operation:string;backend:string;scheme:string;configuration:string;destinationID:string;workspaceTab:string};errorCount?:number;warningCount?:number};
 type Run={id:string;actionID?:string;branch:string;plan:string;status:string;createdAt:string;updatedAt?:string;error?:string;jenkinsURL?:string;gitlabURL?:string;allureURL?:string;pipelineID?:number;sha?:string;jobs:{name:string;status:string;allowFailure:boolean;url:string}[]};
 type SimulatorSession={id:string;deviceID:string;context:Context;revision:number|null;ready:boolean};
@@ -22,7 +23,7 @@ type SimulatorActivity={id:string;kind:string;status:string;errorCode?:string;qu
 type SimulatorState={session:SimulatorSession|null;activities:SimulatorActivity[];busy:boolean};
 type UIBinding={role:string;actionID:string;fields:Record<string,string>};
 type UIInterface={version:number;bindings:UIBinding[]};
-type State={ciSummary?:CICompactSummary|null;notices?:{id:string;taskID:string;title:string;body:string}[];layout?:Layout;workspace?:{expanded?:Block;selection?:string;drafts?:Record<string,Record<string,string>>};needsBinding?:boolean;queue?:LocalTask[];interface?:UIInterface|null;simulator?:SimulatorState;context:Context|null;actions:Action[];tasks:LocalTask[];builds?:Build[];runs:Run[];jenkinsConfigured:boolean;progress?:string};
+type State={ciSummaries?:CICompactSummary[];ciSummary?:CICompactSummary|null;notices?:{id:string;taskID:string;title:string;body:string}[];layout?:Layout;workspace?:{expanded?:Block;selection?:string;drafts?:Record<string,Record<string,string>>};needsBinding?:boolean;queue?:LocalTask[];interface?:UIInterface|null;simulator?:SimulatorState;context:Context|null;actions:Action[];tasks:LocalTask[];builds?:Build[];runs:Run[];jenkinsConfigured:boolean;progress?:string};
 type Diagnostic={task:LocalTask;text:string;truncated:boolean;outputUnavailable:boolean;analysisPrompt:string};
 const t=(key:string)=>(ru as Record<string,string>)[key]??key;
 const shell=document.querySelector<HTMLElement>('#app')!;
@@ -89,6 +90,9 @@ const banner=element('div'),contextBar=element('div','','context-bar'),contextDe
 root.append(banner,contextBar,contextDetail,toolbar,catalogHost,gridHost,queueHost,historyHost,detailHost);
 let savedLayout:Layout=standard(),editLayout:Layout|null=null,expanded:Block|null=null,catalogOpen=false,historyOpen=false,settingsOpen=false,workspaceLoaded=false,saveTimer:ReturnType<typeof setTimeout>|undefined;
 let layoutOrigin:Layout|null=null;
+const ciView=new PanelCIView(tool,t,link);
+function ciSummaries(){return state?.ciSummaries??(state?.ciSummary?[state.ciSummary]:[]);}
+function openCI(summary:CICompactSummary){if(editLayout||blockDrag||layoutSaving)return;ciView.select(summary);if(expanded!=='ci')animateGrid(()=>{expanded='ci';catalogOpen=false;renderGrid();});scheduleWorkspace();}
 const blockNodes=new Map<Block,{node:HTMLElement;title:HTMLButtonElement;summary:HTMLElement;content:HTMLElement;editor:HTMLElement}>();
 const formNodes=new Map<string,{signature:string;node:HTMLElement;update:()=>void}>();
 const previews=new Map<string,{taskID:string;fingerprint:string;plan?:{files:{path:string;exists:boolean}[];digest:string;canGenerate?:boolean}}>();
@@ -104,7 +108,7 @@ function installWorkspace(next:State){
  if(!workspaceLoaded&&next.context&&next.workspace!==undefined){workspaceLoaded=true;for(const form of formNodes.values())form.signature='';const workspace=next.workspace;expanded=workspace?.expanded??null;for(const [id,values]of Object.entries(workspace?.drafts??{})){if(id==='builds')buildValues={...buildValues,...values};else if(next.actions.some(a=>a.id===id))actionValues.set(id,Object.fromEntries(Object.entries(values).filter(([field])=>next.actions.find(a=>a.id===id)!.parameters.some(p=>p.id===field))));}if(workspace?.selection){const [type,...parts]=workspace.selection.split(':');if(['task','run','build'].includes(type))selection={type:type as 'task'|'run'|'build',id:parts.join(':')};}}
 }
 function edit(operation:(layout:Layout)=>void){if(!editLayout)return;try{animateGrid(()=>{editLayout=change(editLayout!,operation);renderGrid();});}catch(e){showError(e instanceof Error?new Error(t(e.message)):e);}}
-function openBlock(block:Block){if(editLayout||blockDrag||layoutSaving)return;animateGrid(()=>{expanded=expanded===block?null:block;catalogOpen=false;renderGrid();});scheduleWorkspace();}
+function openBlock(block:Block){if(editLayout||blockDrag||layoutSaving)return;if(block==='ci'&&expanded!=='ci'&&ciSummaries()[0])ciView.select(ciSummaries()[0]);animateGrid(()=>{expanded=expanded===block?null:block;catalogOpen=false;renderGrid();});scheduleWorkspace();}
 function beginEdit(){if(blockDrag||layoutSaving)return;for(const view of blockNodes.values())view.editor.dataset.layout='';layoutOrigin=structuredClone(savedLayout);editLayout=structuredClone(savedLayout);expanded=null;catalogOpen=false;render();}
 async function finishEdit(){if(!editLayout)return;await perform(async()=>{const layout=await tool('panel_save_layout',{layout:editLayout,expectedRevision:layoutOrigin!.revision});savedLayout=validate(layout);editLayout=null;layoutOrigin=null;scheduleWorkspace();});}
 function cancelEdit(){cancelBlockDrag();editLayout=null;layoutOrigin=null;render();}
@@ -137,11 +141,12 @@ function renderGrid(){
   const isExpanded=visualExpanded===block&&!editLayout;const showFullBootstrap=block==='bootstrap'&&row.slots.length===1&&!editLayout;view.node.style.gridRow=isExpanded&&narrow&&row.slots.length===2?`${visualRow(rowIndex)} / span 2`:String(visualRow(rowIndex,row.slots.indexOf(block)));view.node.style.gridColumn=narrow||isExpanded||row.slots.length===1?'1 / -1':String(row.slots.indexOf(block)+1);view.node.classList.toggle('full-bootstrap',showFullBootstrap);view.node.style.setProperty('--block-accent',blockAccent(block));view.node.classList.toggle('expanded',isExpanded);view.node.classList.toggle('mini',row.slots.length===2&&!isExpanded);
   view.title.setAttribute('aria-expanded',String(isExpanded));view.title.disabled=!!editLayout;view.content.hidden=block==='bootstrap'?!!editLayout:!isExpanded&&!showFullBootstrap;view.content.inert=view.content.hidden;view.summary.hidden=block==='bootstrap'||isExpanded||showFullBootstrap||!!editLayout;view.editor.hidden=!editLayout;
   if(block==='ci'){
-   renderCompactCI(view.summary,state?.ciSummary,t);
-   renderCIProgress(view.node,state?.ciSummary,t,!isExpanded&&!editLayout);
-   let status=view.title.querySelector<HTMLElement>('.ci-compact-status');if(!status){status=element('span','','ci-compact-status');view.title.append(status);}
-   status.hidden=!state?.ciSummary||isExpanded||!!editLayout;
-   status.textContent=state?.ciSummary?t('ci.status.'+state.ciSummary.status):'';status.title=status.textContent;status.dataset.status=state?.ciSummary?.status??'';
+   const summaries=ciSummaries();
+   ciView.update(summaries,state?.context?.checkoutId,isExpanded);
+   renderCompactRuns(view.summary,summaries.slice(0,row.slots.length===1&&!narrow?2:1),t,openCI);
+   let project=view.title.querySelector<HTMLElement>('.ci-project');if(!project){project=element('span','','ci-project');view.title.append(project);}
+   const checkout=state?.context?.checkoutId??summaries[0]?.checkout;
+   project.hidden=!checkout;if(checkout){middleText(project,'· '+checkout.split('/').filter(Boolean).at(-1));project.title=checkout;}
   }else{view.summary.textContent=blockStatus(block);view.summary.title=view.summary.textContent;}view.title.title=blockTitle(block)+'\n'+t('layout.drag.hint');
   if(editLayout&&view.editor.dataset.layout!==stableJSON(layout)){view.editor.dataset.layout=stableJSON(layout);const grip=button(t('layout.drag'),()=>{},false,'drag-handle');grip.setAttribute('aria-label',t('layout.drag')+' '+blockTitle(block));grip.onkeydown=event=>{if(event.key==='ArrowUp'||event.key==='ArrowDown'){event.preventDefault();const index=editLayout!.rows.findIndex(r=>r.slots.includes(block));if(event.key==='ArrowUp'&&index>0)edit(l=>move(l,block,l.rows[index-1].id));if(event.key==='ArrowDown')edit(l=>move(l,block,l.rows[index+2]?.id));}};view.editor.replaceChildren(grip,editMenu(block));}
   if(block==='bootstrap'){ensureBootstrapContent(view.content);updateBootstrap(isExpanded? 'expanded':row.slots.length===1?'full':'mini',!!editLayout||view.node.hidden);}else if(isExpanded||showFullBootstrap)ensureBlockContent(block,view.content);
@@ -265,10 +270,10 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelBlock
 window.addEventListener('click',event=>{if(suppressDragClick){suppressDragClick=false;event.preventDefault();event.stopImmediatePropagation();}},true);
 window.addEventListener('keydown',event=>{if(event.key==='Escape'){if(blockDrag){suppressDragClick=true;cancelBlockDrag();event.preventDefault();event.stopImmediatePropagation();}else if(editLayout)cancelEdit();else if(expanded){expanded=null;renderGrid();scheduleWorkspace();}}});
 // MARK: - Bootstrap card
-let bootstrapView:{host:HTMLElement;controls:HTMLElement;buttons:HTMLButtonElement[];state:HTMLElement;time:HTMLElement;progress:HTMLProgressElement;actions:HTMLElement;error:HTMLElement;region:HTMLElement;overlay:HTMLButtonElement;diagnostic:HTMLElement}|null=null;
+let bootstrapView:{host:HTMLElement;controls:HTMLElement;buttons:HTMLButtonElement[];launchers:HTMLElement;platform:HTMLElement;notice:HTMLElement;stages:HTMLElement;description:HTMLElement;state:HTMLElement;time:HTMLElement;progress:HTMLProgressElement;actions:HTMLElement;error:HTMLElement;region:HTMLElement;overlay:HTMLButtonElement;diagnostic:HTMLElement}|null=null;
 let bootstrapTerminal:PrivateTerminal|null=null;
 let bootstrapTerminalTask:string|null=null;
-let bootstrapMode='full',bootstrapHidden=false,bootstrapLaunching=false,bootstrapLaunchError='';
+let bootstrapMode='full',bootstrapHidden=false,bootstrapLaunching=false,bootstrapLaunchError='',bootstrapLaunchPlatform:'ios'|'tvos'='ios';
 let bootstrapFailedAttempt:LocalTask|null=null;
 let diagnosticNode:HTMLElement|null=null,diagnosticNodeID:string|null=null;
 function diagnosticEditor(){
@@ -284,41 +289,54 @@ function ensureBootstrapContent(host:HTMLElement){
  if(bootstrapView){if(bootstrapView.host!==host){host.append(...Array.from(bootstrapView.host.children));bootstrapView.host=host;}return;}
  host.classList.add('bootstrap-content');const controls=element('div','','bootstrap-controls'),launchers=element('div','','bootstrap-launchers');
  const buttons=(['ios','tvos'] as const).map(platform=>button(platform==='ios'?'iOS':'tvOS',()=>void launchBootstrap(platform),false,'primary'));
- for(const [i,b]of buttons.entries()){b.dataset.platform=i===0?'ios':'tvos';b.title=t(i===0?'bootstrap_ios':'bootstrap_tvos');launchers.append(b);}
+ for(const [i,b]of buttons.entries()){b.dataset.platform=i===0?'ios':'tvos';b.title=t(i===0?'bootstrap_ios':'bootstrap_tvos');const icon=element('span','','bootstrap-platform-icon');icon.setAttribute('aria-hidden','true');icon.innerHTML=i===0?'<svg viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5"/><path d="M7 3h2M7.5 12.5h1"/></svg>':'<svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/><path d="M5 14h6M8 11.5V14"/></svg>';b.prepend(icon);launchers.append(b);}
+ const platform=element('span','','bootstrap-platform'),notice=element('p',t('bootstrap.xcode.launch.notice'),'bootstrap-notice'),stages=element('div','','bootstrap-stages'),description=element('p',t('bootstrap.preparation.description'),'bootstrap-description');
  const stateLabel=element('p','','bootstrap-state'),time=element('span','','bootstrap-time'),progress=element('progress','','bootstrap-progress');progress.max=1;
  const actions=element('div','','bootstrap-actions'),failure=element('p','','error bootstrap-error');
- controls.append(launchers,stateLabel,time,progress,actions,failure,element('p',t('bootstrap.xcode.notice'),'bootstrap-notice'));
+ controls.append(launchers,platform,actions,stateLabel,time,progress,notice,stages,failure,description);
  const region=element('div','','bootstrap-terminal-region'),overlay=button(t('bootstrap.error.agent'),()=>{const task=currentBootstrap();if(task){if(expanded!=='bootstrap')openBlock('bootstrap');void analyze(task.id,true);}},false,'bootstrap-agent-overlay');
- region.append(element('p',t('bootstrap.terminal.choose'),'bootstrap-placeholder'),overlay);
+ region.append(bootstrapPlaceholder(),overlay);
  const diagnosticHost=element('div','','bootstrap-diagnostic-host');host.append(controls,region,diagnosticHost);
- bootstrapView={host,controls,buttons,state:stateLabel,time,progress,actions,error:failure,region,overlay,diagnostic:diagnosticHost};
+ bootstrapView={host,controls,buttons,launchers,platform,notice,stages,description,state:stateLabel,time,progress,actions,error:failure,region,overlay,diagnostic:diagnosticHost};
 }
 async function launchBootstrap(platform:'ios'|'tvos'){
  const context=state?.context,action=uiAction('bootstrap');if(busy||stale||!context||!action||currentBootstrap()?.canCancel)return;
- bootstrapLaunching=true;bootstrapLaunchError='';bootstrapFailedAttempt=null;let attempt:LocalTask|null=null;
+ bootstrapLaunchPlatform=platform;bootstrapLaunching=true;bootstrapLaunchError='';bootstrapFailedAttempt=null;let attempt:LocalTask|null=null;
  try{await runRole('bootstrap',{platform,device:'true',match:'true',full:'true',dependencies:'true',uiDependencies:'false',setup:'true'},true,id=>{attempt={id,actionID:action.id,title:t(platform==='ios'?'bootstrap_ios':'bootstrap_tvos'),status:'failed',createdAt:new Date().toISOString(),context:structuredClone(context),diagnosticAvailable:true,canCancel:false,bootstrap:{platform,phase:'failed',fraction:0}};});}
  finally{bootstrapLaunching=false;bootstrapLaunchError=cleanFragment(error,8192);if(attempt&&error)bootstrapFailedAttempt={...(attempt as LocalTask),error:bootstrapLaunchError};updateBootstrap();}
 }
 function currentBootstrap(){if(!state?.context)return undefined;if(bootstrapFailedAttempt?.context.checkoutId===state.context.checkoutId)return bootstrapFailedAttempt;return state?.tasks.find(task=>task.bootstrap&&['queued','running'].includes(task.status))??state?.tasks.find(task=>task.bootstrap);}
+function bootstrapPlaceholder(){
+ const placeholder=element('div','','bootstrap-placeholder'),overview=element('div','','bootstrap-overview');
+ for(const stage of ['dependencies','uiTests','setup'])overview.append(element('span','○ '+t('stage.short.'+stage)));
+ placeholder.append(overview);return placeholder;
+}
+function bootstrapDarkTheme(){const theme=document.documentElement.dataset.theme;return theme==='dark'||theme!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches;}
 function updateBootstrap(mode=bootstrapMode,hidden=bootstrapHidden){
  bootstrapMode=mode;bootstrapHidden=hidden;const view=bootstrapView;if(!view)return;
- const task=currentBootstrap(),live=!!task&&['queued','running'].includes(task.status);
- for(const b of view.buttons)b.disabled=busy||stale||!state?.context||!uiAction('bootstrap')||live;
- for(const child of Array.from(view.controls.children))if(!(child as HTMLElement).classList.contains('bootstrap-launchers'))(child as HTMLElement).hidden=mode!=='expanded';
+ const task=currentBootstrap(),live=!!task&&['queued','running'].includes(task.status),active=live||bootstrapLaunching;
+ for(const b of view.buttons)b.disabled=busy||stale||!state?.context||!uiAction('bootstrap')||active;
+ view.launchers.hidden=active;view.platform.hidden=!active;view.platform.textContent=(bootstrapLaunching?bootstrapLaunchPlatform:task?.bootstrap?.platform)==='tvos'?'tvOS':'iOS';
+ view.notice.hidden=active;view.description.hidden=mode!=='expanded';view.stages.hidden=mode!=='expanded';
  view.region.hidden=mode==='mini';view.region.inert=mode==='mini'||hidden;
  const phaseKey='bootstrap.phase.'+task?.bootstrap?.phase;
  view.state.textContent=bootstrapLaunching?t('bootstrap.phase.checking'):task?(task.status==='running'&&task.progress?task.progress:phaseKey in ru?t(phaseKey):t(task.status)):'';
- view.state.className='bootstrap-state status '+(task?.status??'idle');
- view.state.hidden=mode==='mini'||!view.state.textContent;view.state.title=view.state.textContent;
+ view.state.className='bootstrap-state status '+(task?.status??'idle');view.state.classList.toggle('bootstrap-live-state',active);
+ view.state.hidden=!view.state.textContent;view.state.title=view.state.textContent;
  const seconds=task?.startedAt?Math.max(0,Math.floor(((task.finishedAt?Date.parse(task.finishedAt):Date.now())-Date.parse(task.startedAt))/1000)):0;
- view.time.textContent=task?.startedAt?task.bootstrap!.platform.toUpperCase().replace('TVOS','tvOS')+' · '+String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0'):'';
- view.progress.value=task?.bootstrap?.fraction??0;view.progress.hidden=mode!=='expanded'||!live;
+ const duration=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');
+ view.time.textContent=task?(active?'':(task.bootstrap!.platform==='tvos'?'tvOS':'iOS'))+(task.startedAt?(active?'':' · ')+duration:''):'';view.time.hidden=!view.time.textContent||task?.bootstrap?.phase==='blocked';
+ view.progress.value=task?.bootstrap?.fraction??0;view.progress.hidden=!active||task?.bootstrap?.phase==='blocked';
  view.error.textContent=bootstrapLaunchError||task?.error||'';view.error.hidden=mode!=='expanded'||!view.error.textContent;
- const actionSignature=stableJSON([task?.id,task?.status,task?.bootstrap?.phase,busy]);
+ const stages=task?.bootstrap?.stages??['dependencies','uiTests','setup'],completed=task?.bootstrap?.completedStages??[];
+ view.stages.replaceChildren(...stages.map(stage=>{const done=completed.includes(stage),current=live&&task?.status==='running'&&task.bootstrap?.currentStage===stage,node=element('span',(done?'✓ ':current?'◉ ':'○ ')+t('stage.short.'+stage));node.dataset.state=done?'complete':current?'running':'pending';return node;}));
+ const actionSignature=stableJSON([task?.id,task?.status,task?.bootstrap?.phase,busy,mode,bootstrapLaunching]);
  if(view.actions.dataset.signature!==actionSignature){view.actions.dataset.signature=actionSignature;view.actions.replaceChildren();
-  if(task&&live)view.actions.append(button(t('cancel'),()=>void perform(async()=>{await tool('cancel_local_task',{taskID:task.id});await refresh();}),busy||!task.canCancel));
-  if(task?.bootstrap?.phase==='blocked')for(const operation of ['retry','activateXcode'])view.actions.append(button(t('bootstrap.'+operation),()=>void perform(async()=>{await tool('panel_bootstrap_control',{taskID:task.id,operation});await refresh();}),busy));
+  if(task?.bootstrap?.phase==='blocked')view.actions.append(button(t('bootstrap.retry'),()=>void perform(async()=>{await tool('panel_bootstrap_control',{taskID:task.id,operation:'retry'});await refresh();}),busy));
+  if(active)view.actions.append(button(t(task?.status==='running'?'stop':'bootstrap.cancel'),()=>void perform(async()=>{if(task){await tool('cancel_local_task',{taskID:task.id});await refresh();}}),busy||!task?.canCancel));
+  if(task?.bootstrap?.phase==='blocked'&&mode==='expanded')view.actions.append(button(t('bootstrap.activateXcode'),()=>void perform(async()=>{await tool('panel_bootstrap_control',{taskID:task.id,operation:'activateXcode'});await refresh();}),busy));
  }
+ view.actions.hidden=!active;
  view.overlay.hidden=!task||!['failed','interrupted'].includes(task.status);view.overlay.disabled=busy;
  view.region.classList.toggle('has-error',!view.overlay.hidden);
  const failedAdmission=!!task&&task.id===bootstrapFailedAttempt?.id;
@@ -326,22 +344,22 @@ function updateBootstrap(mode=bootstrapMode,hidden=bootstrapHidden){
   if(!bootstrapTerminal){bootstrapTerminal=new PrivateTerminal(tool,showError,{waiting:t('bootstrap.terminal.waiting'),unavailable:t('noOutput')});view.region.prepend(bootstrapTerminal.host);view.region.querySelector('.bootstrap-placeholder')?.remove();}
   bootstrapTerminal.host.hidden=false;view.region.querySelector('.bootstrap-placeholder')?.remove();
   if(bootstrapTerminalTask!==task.id){bootstrapTerminalTask=task.id;void bootstrapTerminal.attach(task.id).catch(showError);}
+  bootstrapTerminal.setBootstrapPresentation(mode==='expanded'?12:10,bootstrapDarkTheme(),matchMedia('(prefers-contrast: more)').matches);
   bootstrapTerminal.setVisibility(mode!=='mini'&&!hidden);bootstrapTerminal.setTaskStatus(task.status);
- }else {if(bootstrapTerminalTask){bootstrapTerminalTask=null;void bootstrapTerminal?.detach();}if(bootstrapTerminal)bootstrapTerminal.host.hidden=true;let placeholder=view.region.querySelector<HTMLElement>('.bootstrap-placeholder');if(!placeholder){placeholder=element('p','','bootstrap-placeholder');view.region.prepend(placeholder);}placeholder.textContent=t(failedAdmission?'noOutput':'bootstrap.terminal.choose');}
+ }else {if(bootstrapTerminalTask){bootstrapTerminalTask=null;void bootstrapTerminal?.detach();}if(bootstrapTerminal)bootstrapTerminal.host.hidden=true;let placeholder=view.region.querySelector<HTMLElement>('.bootstrap-placeholder');if(!placeholder){placeholder=element('div','','bootstrap-placeholder');view.region.prepend(placeholder);}if(failedAdmission)placeholder.textContent=t('noOutput');else if(!placeholder.querySelector('.bootstrap-overview'))placeholder.replaceChildren(...Array.from(bootstrapPlaceholder().childNodes));}
  if(diagnostic&&diagnosticSource==='bootstrap'&&diagnostic.task.id===task?.id){const editor=diagnosticEditor();if(editor.parentElement!==view.diagnostic)view.diagnostic.append(editor);view.diagnostic.hidden=mode!=='expanded';}
  else{view.diagnostic.replaceChildren();view.diagnostic.hidden=true;}
  const sendButton=diagnosticNode?.querySelector<HTMLButtonElement>('[data-action=diagnostic-send]');if(sendButton)sendButton.disabled=busy||!preview&&!extensions.message;
 }
 setInterval(()=>{
- const view=blockNodes.get('ci');if(!view||!state?.ciSummary)return;
- if(!view.summary.hidden)renderCompactCI(view.summary,state.ciSummary,t);
- const expandedSummary=view.content.querySelector<HTMLElement>('.ci-expanded-summary');
- if(expandedSummary&&!view.content.hidden)renderCompactCI(expandedSummary,state.ciSummary,t);
+ const view=blockNodes.get('ci');if(!view)return;
+ if(!view.summary.hidden){const row=currentLayout().rows.find(row=>row.slots.includes('ci'));renderCompactRuns(view.summary,ciSummaries().slice(0,row?.slots.length===1&&!compactMedia.matches?2:1),t,openCI);}
+ ciView.tick();
 },1000);
 const bootstrapClock=setInterval(()=>{if(currentBootstrap()?.status==='running')updateBootstrap();},1000);
 
 function ensureBlockContent(block:Block,host:HTMLElement){if(block==='bootstrap'){ensureBootstrapContent(host);return;}if(block==='simulators'){if(simulatorHost.parentElement!==host)host.append(simulatorHost);return;}if(block==='builds'){ensureBuildForm(host);return;}
- if(block==='utils'||block==='ci'){if(!host.querySelector('.tool-choice')){const choices=block==='utils'?['localization','protocols','format','generateUI','generateSicilia','generateGalera','fullCleanup','derivedDataCleanup']:['uiTests','qualityGates','beta'];for(const kind of choices)host.append(button(blockTitle(kind as Block),()=>openBlock(kind as Block),!uiAction(kind),'tool-choice'));}if(block==='ci'){let summary=host.querySelector<HTMLElement>('.ci-expanded-summary');if(!summary){summary=element('div','','ci-expanded-summary');host.prepend(summary);}renderCompactCI(summary,state?.ciSummary,t);}return;}
+ if(block==='utils'||block==='ci'){if(!host.querySelector('.tool-choice')){const choices=block==='utils'?['localization','protocols','format','generateUI','generateSicilia','generateGalera','fullCleanup','derivedDataCleanup']:['uiTests','qualityGates','beta'];for(const kind of choices)host.append(button(blockTitle(kind as Block),()=>openBlock(kind as Block),!uiAction(kind),'tool-choice'));}if(block==='ci'&&ciView.host.parentElement!==host)host.prepend(ciView.host);return;}
  const action=uiAction(block);if(!action){host.replaceChildren(element('p',t('noActions')));return;}ensureActionForm(action,block,host);
 }
 function ensureActionForm(action:Action,block:Block,host:HTMLElement){
@@ -519,6 +537,12 @@ let fixtureSimulator:SimulatorState={session:null,activities:[],busy:false};
 let fixtureScreenText='Тестовый экран',fixtureCounter=0;
 function fixtureFrame():Frame{const canvas=document.createElement('canvas');canvas.width=402;canvas.height=874;const context=canvas.getContext('2d')!;context.fillStyle='#f2f2f7';context.fillRect(0,0,402,874);context.fillStyle='#202024';context.font='bold 24px system-ui';context.fillText('Mimic · Simulator',24,120);context.font='18px system-ui';context.fillText(fixtureScreenText,24,235);context.fillText('Счётчик: '+fixtureCounter,24,340);return{sessionID:fixtureSimulator.session!.id,revision:fixtureSimulator.session!.revision!,width:402,height:874,image:canvas.toDataURL('image/jpeg').split(',')[1],mimeType:'image/jpeg',targets:[{x:24,y:200,width:350,height:60,hitX:200,hitY:230},{x:24,y:300,width:350,height:60,hitX:200,hitY:330}]};}
 async function fixtureTool(name:string,args:Record<string,unknown>){
+ if(name==='panel_get_ci_details'){
+  const identity=String(args.identity),configured=fixtureCIDetails.get(identity);if(configured){if(configured.delay)await new Promise(resolve=>setTimeout(resolve,configured.delay));return structuredClone(configured.value);}
+  const summary=(fixtureState.ciSummaries??[]).find(summary=>ciIdentity(summary)===identity);if(!summary)throw new ToolFailure('Fixture run unavailable','notFound');
+  return{summary,loadState:'loaded',jobs:[{id:1,name:'fixture-check',status:summary.status,url:'https://ci.example/jobs/1',allowFailure:false}],bridges:[],sha:'fixture-sha',commitTitle:'Fixture commit',gitlabURL:'https://ci.example/pipelines/'+summary.pipelineID};
+ }
+
 
  if(name==='panel_get_workspace')return fixtureWorkspace;
  if(name==='panel_save_workspace'){fixtureWorkspace=args.workspace as any;return{saved:true};}
@@ -551,7 +575,8 @@ async function fixtureTool(name:string,args:Record<string,unknown>){
   fixtureState.simulator=fixtureSimulator;return activity;
  }
 if(name==='get_action_configuration'){const action=fixtureState.actions.find(x=>x.id===args.actionID)!;return{context:Object.fromEntries(Object.entries(fixtureContext).reverse()),fields:Object.fromEntries(action.parameters.map(p=>[p.id,{defaultValue:p.defaultValue,choices:p.kind==='boolean'?['true','false']:p.kind==='choice'?['yes','no']:p.choices??[]}]))};}if(name==='get_build_diagnostic')return{task:fixtureState.builds![0],analysisPrompt:'Fixture context\n<diagnostic-data>\nFixture: compilation failed\n</diagnostic-data>',truncated:false};if(name==='get_task_diagnostic')return{task:fixtureState.tasks.find(task=>task.id===args.taskID)!,text:'Fixture: dependency unavailable\nExit status: 1',truncated:false,outputUnavailable:false,analysisPrompt:''};if(name==='list_remote_branches')return{branches:['develop','feature/mcp','feature/very-long-branch-name-for-layout-testing']};if(name==='run_local_action'){if(args.actionID==='prepare'&&fixtureRejectBootstrap){fixtureRejectBootstrap=false;throw new ToolFailure('Fixture admission refused','context');}if(args.actionID==='prepare')fixtureBootstrapLaunches.push(structuredClone(args));const task:LocalTask={id:String(args.requestID),actionID:String(args.actionID),...(args.actionID==='prepare'?{bootstrap:{platform:((args.parameters as Record<string,string>)?.platform??'ios') as 'ios'|'tvos',phase:'queued',fraction:0}}:{}),title:t(String(args.actionID)),status:'queued',createdAt:new Date().toISOString(),context:fixtureContext,diagnosticAvailable:false,canCancel:true};fixtureState.tasks.unshift(task);return task;}if(name==='run_remote_action'){const run:Run={id:String(args.requestID),branch:String(((args.parameters as Record<string,string>)?.ref??fixtureContext.branch)),plan:String((args.parameters as Record<string,string>)?.plan),status:'running',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),pipelineID:123,sha:'fixture-sha',jenkinsURL:'https://jenkins.example/job/fixture/1',gitlabURL:'https://gitlab.example/pipelines/123',allureURL:'https://allure.example/launch/456',jobs:[{name:'UI tests',status:'running',allowFailure:false,url:'https://gitlab.example/jobs/1'}]};fixtureState.runs.unshift(run);return run;}if(name==='cancel_local_task'){const task=fixtureState.tasks.find(x=>x.id===args.taskID);if(task){task.status='cancelled';task.canCancel=false;}}return fixtureState;}
-if(preview){(window as any).mimicCIFixture={set:(summary:CICompactSummary|null)=>{fixtureState.ciSummary=summary;state=fixtureState;render();},mode:(mode:'mini'|'expanded')=>{expanded=mode==='expanded'?'ci':null;render();},current:()=>fixtureState.ciSummary};}
+if(preview){(window as any).mimicCIFixture={set:(summary:CICompactSummary|null)=>{fixtureState.ciSummary=summary;fixtureState.ciSummaries=summary?[summary]:[];state=fixtureState;render();},setRuns:(summaries:CICompactSummary[])=>{fixtureState.ciSummary=summaries[0];fixtureState.ciSummaries=summaries;state=fixtureState;render();},details:(identity:string,value:CIInspection,delay=0)=>fixtureCIDetails.set(identity,{value,delay}),mode:(mode:'mini'|'full'|'expanded')=>{savedLayout=standard();if(mode==='full')resize(savedLayout,'ci','full');fixtureState.layout=savedLayout;expanded=mode==='expanded'?'ci':null;render();},current:()=>fixtureState.ciSummary};}
+const fixtureCIDetails=new Map<string,{value:CIInspection;delay:number}>();
 // MARK: - Quiet status notifications
 const notificationNode=element('p','','banner');notificationNode.setAttribute('role','status');notificationNode.setAttribute('aria-live','polite');root.prepend(notificationNode);
 const observedStatuses=new Map<string,string>();
@@ -577,7 +602,7 @@ if(preview)(window as any).mimicBootstrapFixture={
  },
  task(status:string,platform:'ios'|'tvos'='ios',reuse=false,error=''){
   const previous=fixtureState.tasks.find(task=>task.bootstrap),id=reuse&&previous?previous.id:crypto.randomUUID();
-  const task:LocalTask={id,actionID:'prepare',title:t('bootstrap_'+platform),bootstrap:{platform,phase:status,fraction:status==='succeeded'?1:.4},status,context:fixtureContext,createdAt:new Date().toISOString(),startedAt:new Date(Date.now()-41000).toISOString(),finishedAt:['queued','running','blocked'].includes(status)?null:new Date().toISOString(),canCancel:['queued','running','blocked'].includes(status),diagnosticAvailable:['failed','interrupted'].includes(status),error};
+  const task:LocalTask={id,actionID:'prepare',title:t('bootstrap_'+platform),bootstrap:{platform,phase:status,fraction:status==='succeeded'?1:.4,stages:['dependencies','uiTests','setup'],currentStage:status==='running'?'uiTests':null,completedStages:status==='succeeded'?['dependencies','uiTests','setup']:status==='running'?['dependencies']:[]},status,context:fixtureContext,createdAt:new Date().toISOString(),startedAt:new Date(Date.now()-41000).toISOString(),finishedAt:['queued','running','blocked'].includes(status)?null:new Date().toISOString(),canCancel:['queued','running','blocked'].includes(status),diagnosticAvailable:['failed','interrupted'].includes(status),error};
   if(status==='blocked'){task.status='queued';task.bootstrap!.phase='blocked';}
   fixtureState.tasks=fixtureState.tasks.filter(task=>!task.bootstrap);fixtureState.tasks.unshift(task);
   if(!fixtureTranscripts.has(id))fixtureTranscripts.set(id,'Mimic fixture terminal\r\n');accept(fixtureState);render();return id;
@@ -603,7 +628,8 @@ async function fixtureTerminalSend(args:Record<string,unknown>){const c=fixtureC
 initializeSimulator();
 app.onteardown=async()=>{clearInterval(bootstrapClock);cancelBlockDrag();await detailsTerminal?.dispose();await bootstrapTerminal?.dispose();if(state?.simulator?.session){const session=state.simulator.session;try{await tool('close_simulator_session',{context:session.context,sessionID:session.id,requestID:crypto.randomUUID()});}catch{/* Native lease closes an abandoned panel; unknown operations remain blocked. */}}return {};};
 app.ontoolresult=params=>{if(params.structuredContent){accept({...params.structuredContent,...(params._meta?.['mimic/workspace'] as object??{})} as State);render();}};
-function hostStyle(context:ReturnType<App['getHostContext']>){if(context?.theme)applyDocumentTheme(context.theme);if(context?.styles?.variables)applyHostStyleVariables(context.styles.variables);}
+function hostStyle(context:ReturnType<App['getHostContext']>){if(context?.theme)applyDocumentTheme(context.theme);if(context?.styles?.variables)applyHostStyleVariables(context.styles.variables);updateBootstrap();}
+for(const query of ['(prefers-color-scheme: dark)','(prefers-contrast: more)'])matchMedia(query).addEventListener('change',()=>updateBootstrap());
 app.onhostcontextchanged=context=>hostStyle(context);
 render();
 if(preview){accept(fixtureState);render();}else{void app.connect().then(()=>{hostStyle(app.getHostContext());return refresh();}).catch(()=>{error=t('connecting');render();});}

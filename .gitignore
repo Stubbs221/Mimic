@@ -35,3 +35,22 @@ __pycache__/
 coverage/
 playwright-report/
 test-results/
+
+# Internal materials and personal agent configuration are maintained externally.
+.codex/
+.agents/
+Mimic-Private/
+private/
+internal/
+skills/
+docs/Requirements.md
+docs/Architecture.md
+docs/Development.md
+docs/GitHubPreparation.md
+docs/Updates.md
+docs/*Report.md
+Web/README.md
+Artwork/README.md
+Artwork/Concepts/
+Artwork/Versions/
+AGENTS.md

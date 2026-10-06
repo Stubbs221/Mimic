@@ -3,10 +3,10 @@ import Foundation
 import Testing
 @testable import MimicCore
 
-private func compactPipeline(_ id: Int, status: String = "running", branch: String = "feature/me/check", created: Date = Date(timeIntervalSince1970: 1_790_000_000)) throws -> CIPipeline {
+private func compactPipeline(_ id: Int, status: String = "running", branch: String = "feature/me/check", created: Date = Date(timeIntervalSince1970: 1_790_000_000), started: Date? = nil) throws -> CIPipeline {
     let body: [String: Any] = ["id": id, "project_id": 272, "status": status, "sha": "sha-\(id)", "ref": branch,
         "web_url": "https://ci.example.invalid/team/mobile/-/pipelines/\(id)", "created_at": created.ISO8601Format(),
-        "started_at": created.ISO8601Format(), "duration": 120]
+        "started_at": (started ?? created).ISO8601Format(), "duration": 120]
     let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
     return try decoder.decode(CIPipeline.self, from: JSONSerialization.data(withJSONObject: body))
 }
@@ -64,6 +64,52 @@ private actor CompactClient: GitLabService {
     private func wait(_ condition: () -> Bool) async throws {
         for _ in 0..<400 { if condition() { return }; try await Task.sleep(for: .milliseconds(5)) }
         try #require(condition())
+    }
+
+    @Test func twoRunsPreferActivityThenActualStartAndLoadChecksOnce() async throws {
+        let base = Date(timeIntervalSince1970: 1_790_000_000)
+        let client = CompactClient(own: [
+            try compactPipeline(4, status: "success", created: base.addingTimeInterval(400)),
+            try compactPipeline(3, created: base.addingTimeInterval(300), started: base),
+            try compactPipeline(2, created: base, started: base.addingTimeInterval(200))
+        ])
+        let state = self.state(client); state.setMonitoring(true)
+        defer { state.setMonitoring(false) }
+        try await self.wait { state.compactSummaries.count == 2 && state.compactSummaries.allSatisfy { $0.completed == 1 } }
+        #expect(state.compactSummaries.map(\.pipelineID) == [2, 3])
+        #expect(await client.detailRequests == [2, 3])
+        state.refresh(); try await self.wait { !state.loading }
+        #expect(await client.detailRequests == [2, 3])
+        try await client.finish(2); state.refresh()
+        try await self.wait { state.compactSummaries.first?.pipelineID == 3 && state.compactSummaries.last?.pipelineID == 4 }
+    }
+
+    @Test func panelInspectionSharesCacheAndRetainsAnEntryWithoutNativeSelection() async throws {
+        let client = CompactClient(own: [try compactPipeline(3), try compactPipeline(2, status: "success")])
+        let state = self.state(client); state.setMonitoring(true)
+        defer { state.setMonitoring(false) }
+        try await self.wait { state.compactSummaries.count == 2 && state.compactSummaries.allSatisfy { $0.completed != nil } }
+        let entry = try #require(state.inspectPersonalEntry("pipeline.2", viewer: "a"))
+        #expect(entry.pipeline?.id == 2 && state.selectedPipelineID == nil)
+        #expect(state.inspectPersonalEntry("pipeline.3", viewer: "b")?.pipeline?.id == 3)
+        try await client.add(compactPipeline(5)); state.refresh()
+        try await self.wait { state.compactSummaries.map(\.pipelineID) == [5, 3] }
+        #expect(state.inspectPersonalEntry("pipeline.2", viewer: "a")?.pipeline?.id == 2)
+        #expect(state.selectedPipelineID == nil)
+        #expect(state.rootChecks(for: 2)?.jobs.count == 3)
+        #expect(state.inspectPersonalEntry("pipeline.999", viewer: "a") == nil)
+        #expect(await client.detailRequests.filter { $0 == 2 }.count == 1)
+    }
+
+    @Test func failedSummaryIdentifiesFirstMandatoryFailure() throws {
+        let pipeline = try compactPipeline(7, status: "failed")
+        let jobs = [
+            CIJob(id: 1, name: "optional", stage: "test", status: "failed", webURL: self.connection.baseURL, allowFailure: true),
+            CIJob(id: 3, name: "required-second", stage: "test", status: "failed", webURL: self.connection.baseURL, allowFailure: false),
+            CIJob(id: 2, name: "required-first", stage: "test", status: "failed", webURL: self.connection.baseURL, allowFailure: false)
+        ]
+        let summary = CICompactSummary(entry: CIFeedEntry(pipeline: pipeline), context: self.context(), accountID: 1, checks: CIProgressSummary(jobs: jobs), updatedAt: nil, stale: false)
+        #expect(summary.displayID == "#7" && summary.firstFailedJob == "required-first")
     }
 
     @Test func compactSelectionExcludesSubscriptionsAndPrefersAnOlderActiveRun() async throws {

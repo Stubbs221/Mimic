@@ -19,22 +19,37 @@ import MimicCore
     let layoutStore: PanelLayoutStore
     var terminalChannels: [UUID: PanelTerminalSubscription] = [:]
     var credentialsWindow: NSWindow?
+    var credentialSettings: CISettingsModel?
     let notifications: PanelNotifications
     private var admissions: [UUID: Task<BridgeValue, Error>] = [:]
     private var ledger: [String: BridgeValue] = [:]
     private var activeRequests = 0
     /// Private development hook; deliberately absent from the public MCP tool catalog.
+    private let developmentUpdateID = UUID()
     var developmentExit: (() -> Void)?
+    var prepareUpdateBackup: (() async throws -> Void)?
     var developmentUpdateReady: Bool {
         self.developmentUpdateBlockers.isEmpty
     }
-    private var developmentUpdateBlockers: [String] {
+    var developmentUpdateBlockers: [String] {
         var blockers = self.model.developmentUpdateBlockers
         if self.connecting { blockers.append("plugin") }
+        if NSApp?.modalWindow != nil || self.credentialsWindow?.isVisible == true { blockers.append("dialog") }
+        if self.credentialSettings?.checking == true { blockers.append("credentials") }
         if !self.admissions.isEmpty || self.activeRequests != 0 { blockers.append("requests") }
         if self.developmentExit == nil { blockers.append("owner") }
         return blockers
     }
+    /// A single reservation covers native, CLI and MCP admission throughout backup and replacement.
+    func prepareUpdate(owner: UUID) async throws -> Bool {
+        guard self.developmentUpdateReady, self.model.reserveUpdate(owner: owner) else { return false }
+        do {
+            try await self.prepareUpdateBackup?()
+            guard self.developmentUpdateReady else { self.model.releaseUpdate(owner: owner); return false }
+            return true
+        } catch { self.model.releaseUpdate(owner: owner); throw error }
+    }
+    func releaseUpdate(owner: UUID) { self.model.releaseUpdate(owner: owner) }
     init(model: TaskCoordinator, defaults: UserDefaults = .standard) {
         self.model = model; self.defaults = defaults
         self.notifications = PanelNotifications(model: model, defaults: defaults)
@@ -76,8 +91,15 @@ import MimicCore
             case .checking(record.id): phase = "checking"
             default: phase = record.status.rawValue
             }
+            // Additive presentation metadata uses the same observed stages as the native card.
+            var progress = self.model.bootstrapProgressID == record.id ? self.model.bootstrapProgress
+                : self.model.quickBootstrapActivity.flatMap { $0.request.id == record.id ? $0.progress : nil } ?? BootstrapProgress(options: record.options)
+            if record.status == .succeeded { progress.finish(succeeded: true) }
             result["bootstrap"] = .object(["platform": .string(record.options.platform.rawValue), "phase": .string(phase),
-                "fraction": .number(self.model.bootstrapProgressID == record.id ? self.model.bootstrapProgress.fraction : record.status == .succeeded ? 1 : 0)])
+                "fraction": .number(progress.fraction),
+                "stages": .array(progress.stages.map { .string($0.rawValue) }),
+                "currentStage": progress.stage.map { .string($0.rawValue) } ?? .null,
+                "completedStages": .array(progress.stages.filter { progress.completed.contains($0) }.map { .string($0.rawValue) })])
             result["startedAt"] = record.startedAt.map { .string($0.ISO8601Format()) } ?? .null
             result["finishedAt"] = record.finishedAt.map { .string($0.ISO8601Format()) } ?? .null
             result["error"] = record.error.map(BridgeValue.string) ?? .null
@@ -91,7 +113,7 @@ import MimicCore
         guard let threadID else { return model.project }
         return model.projects.first { $0.path == workspaceStore.load(threadID).checkout }
     }
-    private static func compactCI(_ summary: CICompactSummary?) -> BridgeValue {
+    static func compactCI(_ summary: CICompactSummary?) -> BridgeValue {
         guard let summary else { return .null }
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         return (try? JSONDecoder().decode(BridgeValue.self, from: encoder.encode(summary))) ?? .null
@@ -100,7 +122,8 @@ import MimicCore
     private func state(threadID: String? = nil) -> BridgeValue {
         let current = project(threadID)
         let ciContext = current.flatMap { project in self.model.ciSettings.connection(forCheckout: project.path, services: self.model.activeProfile?.profile.services).map { CIContext(project: project, connection: $0) } }
-        let ciSummary = threadID.map { self.model.ciMonitor.heartbeat(threadID: $0, context: ciContext) } ?? self.model.ci.compactSummary
+        let ciSummaries = threadID.map { self.model.ciMonitor.heartbeatSummaries(threadID: $0, context: ciContext) } ?? self.model.ci.compactSummaries
+        let ciSummary = ciSummaries.first
         let definitions = self.model.activeProfile?.profile.actions.filter { $0.allowsMCP } ?? []
         let actions: [BridgeValue] = definitions.map { .object(["id": .string($0.id), "title": .string($0.title), "presentation": .string($0.presentation.rawValue), "remote": .bool($0.remote != nil), "parameters": (try? BridgeValue.encode($0.parameters)) ?? .array([])]) }
         let simulatorQueue = model.simulatorScreen.records.filter { $0.status.isPending || $0.holdsQueue }.map { record -> BridgeValue in
@@ -109,7 +132,7 @@ import MimicCore
             item["title"] = .string(text("panel.block.simulators"))
             return .object(item)
         }
-        return .object(["ciSummary": Self.compactCI(ciSummary), "notices": .array(current.map { notifications.poll(checkout: $0.path) } ?? []), "layout": (try? BridgeValue.encode(layoutStore.load(.codex))) ?? .null, "workspace": threadID.flatMap { try? BridgeValue.encode(workspaceStore.load($0)) } ?? .null, "needsBinding": .bool(threadID != nil && current == nil), "queue": .array(self.model.records.filter { $0.status == .running || $0.status == .queued }.map(self.task) + self.model.builds.records.filter { $0.status == .running || $0.status == .queued || $0.status == .preparing }.map(BuildBridge.summary) + simulatorQueue), "simulator": current == self.model.simulatorScreen.ownerProject ? self.model.simulatorScreen.metadata : .null, "context": current.map { Self.context($0, profile: self.model.activeProfile) } ?? .null, "version": .number(3), "profile": (try? BridgeValue.encode(self.model.activeProfile.map { ["id": $0.id, "revision": $0.revision, "title": $0.profile.title] })) ?? .null, "interface": (try? BridgeValue.encode(self.model.activeProfile?.profile.interface.map { interface in ProfileInterface(version: interface.version, bindings: interface.bindings.filter { binding in definitions.contains { $0.id == binding.actionID } }) })) ?? .null, "actions": .array(actions), "builds": .array(self.model.builds.records.filter { current == nil ? threadID == nil : $0.project.path == current?.path }.suffix(100).reversed().map(BuildBridge.summary)), "tasks": .array(self.model.records.filter { current == nil ? threadID == nil : $0.project.path == current?.path }.suffix(100).reversed().map(self.task)), "runs": .array(self.model.profileRemote.runs.filter { current == nil ? threadID == nil : $0.checkout.path == current?.path }.prefix(100).map(self.profileRemoteSummary)), "jenkinsConfigured": .bool(self.model.jenkinsSettings.connection != nil), "progress": .string(self.model.bootstrapIsBlocked ? text("bootstrap.xcode.waiting") : self.model.busy ? text("status.running") : text("status.idle"))])
+        return .object(["ciSummaries": .array(ciSummaries.map { Self.compactCI($0) }), "ciSummary": Self.compactCI(ciSummary), "notices": .array(current.map { notifications.poll(checkout: $0.path) } ?? []), "layout": (try? BridgeValue.encode(layoutStore.load(.codex))) ?? .null, "workspace": threadID.flatMap { try? BridgeValue.encode(workspaceStore.load($0)) } ?? .null, "needsBinding": .bool(threadID != nil && current == nil), "queue": .array(self.model.records.filter { $0.status == .running || $0.status == .queued }.map(self.task) + self.model.builds.records.filter { $0.status == .running || $0.status == .queued || $0.status == .preparing }.map(BuildBridge.summary) + simulatorQueue), "simulator": current == self.model.simulatorScreen.ownerProject ? self.model.simulatorScreen.metadata : .null, "context": current.map { Self.context($0, profile: self.model.activeProfile) } ?? .null, "version": .number(3), "profile": (try? BridgeValue.encode(self.model.activeProfile.map { ["id": $0.id, "revision": $0.revision, "title": $0.profile.title] })) ?? .null, "interface": (try? BridgeValue.encode(self.model.activeProfile?.profile.interface.map { interface in ProfileInterface(version: interface.version, bindings: interface.bindings.filter { binding in definitions.contains { $0.id == binding.actionID } }) })) ?? .null, "actions": .array(actions), "builds": .array(self.model.builds.records.filter { current == nil ? threadID == nil : $0.project.path == current?.path }.suffix(100).reversed().map(BuildBridge.summary)), "tasks": .array(self.model.records.filter { current == nil ? threadID == nil : $0.project.path == current?.path }.suffix(100).reversed().map(self.task)), "runs": .array(self.model.profileRemote.runs.filter { current == nil ? threadID == nil : $0.checkout.path == current?.path }.prefix(100).map(self.profileRemoteSummary)), "jenkinsConfigured": .bool(self.model.jenkinsSettings.connection != nil), "progress": .string(self.model.bootstrapIsBlocked ? text("bootstrap.xcode.waiting") : self.model.busy ? text("status.running") : text("status.idle"))])
     }
     func canAccess(_ project: ProjectContext, threadID: String?) -> Bool { threadID == nil || self.project(threadID)?.path == project.path }
     func expected(_ value: BridgeValue, threadID: String? = nil) throws -> ProjectContext {
@@ -125,15 +148,21 @@ import MimicCore
     func handle(_ request: MimicBridgeRequest) async throws -> BridgeValue {
         if ["prepare_development_update", "get_development_update_state"].contains(request.method) {
             guard request.parameters.isEmpty else { throw self.failure("arguments") }
-            let ready = self.developmentUpdateReady
+            let ready = request.method == "prepare_development_update" ? try await self.prepareUpdate(owner: self.developmentUpdateID) : self.developmentUpdateReady
             if ready && request.method == "prepare_development_update" {
                 // Recheck on the exit turn: another request may have arrived while the reply was sent.
                 DispatchQueue.main.async { [weak self] in
-                    guard let self, self.developmentUpdateReady else { return }
+                    guard let self else { return }
+                    guard self.developmentUpdateReady else { self.model.releaseUpdate(owner: self.developmentUpdateID); return }
                     self.developmentExit?()
                 }
             }
             return .object(["ready": .bool(ready), "blockers": .array(self.developmentUpdateBlockers.map(BridgeValue.string))])
+        }
+        if self.model.updateReserved {
+            // Reads remain available to existing observers. Mutations fail before request-ledger admission.
+            let reads = ["get_state", "get_action_configuration", "get_task", "get_task_log", "get_build_activity", "get_build_log", "get_simulator_activity", "get_simulator_screen", "get_panel_state"]
+            guard reads.contains(request.method) else { throw self.failure("updating") }
         }
         self.activeRequests += 1
         defer { self.activeRequests -= 1 }
@@ -258,14 +287,20 @@ import MimicCore
 
     /// Exports a relocatable plugin definition using the current app's signed helper path.
     func exportPlugin() {
-        guard !self.connecting else { return }
+        guard !self.model.admissionsClosed, !self.connecting else { return }
         do {
             let root = try MimicPluginExporter.export(app: Bundle.main.bundleURL, readme: text("mcp.install.instructions"), description: text("mcp.plugin.description"), shortDescription: text("mcp.plugin.shortDescription"))
             if let codex = MimicPluginInstaller.findCodex() {
+                let revision = try MimicPluginExporter.installationRevision(app: Bundle.main.bundleURL)
                 self.connecting = true
                 Task {
                     defer { self.connecting = false }
-                    do { try await MimicPluginInstaller.install(marketplace: root, codex: codex); self.connectionMessage = text("mcp.installed") }
+                    do {
+                        try await MimicPluginInstaller.install(marketplace: root, codex: codex)
+                        self.defaults.set(MimicVersion.build, forKey: "mimic.pluginBuild")
+                        self.defaults.set(revision, forKey: "mimic.pluginRevision")
+                        self.connectionMessage = text("mcp.installed")
+                    }
                     catch { self.connectionMessage = text("mcp.exported"); NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent("README.md")]) }
                 }
                 return
@@ -273,6 +308,29 @@ import MimicCore
             self.connectionMessage = text("mcp.exported")
             NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent("README.md")])
         } catch { self.connectionMessage = text("mcp.error.export") }
+    }
+    /// Refresh only an existing connection; first-time integration remains an explicit setup action.
+    func refreshInstalledPluginIfNeeded() {
+        let root = self.model.supportDirectory.appendingPathComponent("CodexPlugin")
+        guard FileManager.default.fileExists(atPath: root.appendingPathComponent("plugins/mimic/.mcp.json").path),
+              !self.connecting, let codex = MimicPluginInstaller.findCodex() else { return }
+        let revision: String
+        do { revision = try MimicPluginExporter.installationRevision(app: Bundle.main.bundleURL) }
+        catch { self.connectionMessage = text("mcp.error.export"); return }
+        guard self.defaults.string(forKey: "mimic.pluginBuild") != MimicVersion.build ||
+              self.defaults.string(forKey: "mimic.pluginRevision") != revision else { return }
+        self.connecting = true
+        Task {
+            defer { self.connecting = false }
+            do {
+                _ = try MimicPluginExporter.export(app: Bundle.main.bundleURL, directory: root, readme: text("mcp.install.instructions"),
+                    description: text("mcp.plugin.description"), shortDescription: text("mcp.plugin.shortDescription"))
+                try await MimicPluginInstaller.install(marketplace: root, codex: codex)
+                self.defaults.set(MimicVersion.build, forKey: "mimic.pluginBuild")
+                self.defaults.set(revision, forKey: "mimic.pluginRevision")
+                self.connectionMessage = text("update.plugin.ready")
+            } catch { self.connectionMessage = text("mcp.error.export") }
+        }
     }
 }
 
