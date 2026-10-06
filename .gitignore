@@ -53,4 +53,6 @@ Web/README.md
 Artwork/README.md
 Artwork/Concepts/
 Artwork/Versions/
+Artwork/generate-face-icons.py
+Artwork/render-face-icons.py
 AGENTS.md
