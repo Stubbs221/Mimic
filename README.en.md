@@ -25,15 +25,15 @@ Mimic brings local tasks, terminals, Simulator builds, selected tests and CI mon
 
 The menu bar panel:
 
-![Mimic menu bar panel](docs/images/mimic-panel.png)
+<img src="docs/images/mimic-panel.png" alt="Mimic menu bar panel" width="520">
 
 The Codex panel:
 
-![Mimic panel for Codex](docs/images/codex-panel.png)
+<img src="docs/images/codex-panel.png" alt="Mimic panel for Codex" width="520">
 
 Update settings:
 
-![Mimic update settings](docs/images/updates.png)
+<img src="docs/images/updates.png" alt="Mimic update settings" width="440">
 
 These images show the actual interface with demonstration data. The Codex panel was captured in an isolated preview.
 

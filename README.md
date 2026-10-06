@@ -25,15 +25,15 @@ Mimic объединяет локальные задачи, терминалы, 
 
 Главная панель в строке меню:
 
-![Главная панель Mimic](docs/images/mimic-panel.png)
+<img src="docs/images/mimic-panel.png" alt="Главная панель Mimic" width="520">
 
 Панель для Codex:
 
-![Панель Mimic для Codex](docs/images/codex-panel.png)
+<img src="docs/images/codex-panel.png" alt="Панель Mimic для Codex" width="520">
 
 Настройки обновлений:
 
-![Настройки обновлений Mimic](docs/images/updates.png)
+<img src="docs/images/updates.png" alt="Настройки обновлений Mimic" width="440">
 
 Изображения показывают настоящий интерфейс с демонстрационными данными. Панель Codex снята в изолированном предпросмотре.
 
