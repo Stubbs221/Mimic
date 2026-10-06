@@ -1,0 +1,584 @@
+{
+  "schemaVersion": 2,
+  "id": "fixture",
+  "version": "1.1.0",
+  "title": "Fixture",
+  "requiredFiles": [],
+  "services": {
+    "jenkinsURL": "https://jenkins.example.invalid"
+  },
+  "interface": {
+    "version": 1,
+    "bindings": [
+      {
+        "role": "bootstrap",
+        "actionID": "opaque-0",
+        "fields": {
+          "platform": "input_bootstrap_platform",
+          "device": "input_bootstrap_device",
+          "match": "input_bootstrap_match",
+          "full": "input_bootstrap_full",
+          "dependencies": "input_bootstrap_dependencies",
+          "uiDependencies": "input_bootstrap_uiDependencies",
+          "setup": "input_bootstrap_setup"
+        }
+      },
+      {
+        "role": "localization",
+        "actionID": "opaque-1",
+        "fields": {}
+      },
+      {
+        "role": "protocols",
+        "actionID": "opaque-2",
+        "fields": {}
+      },
+      {
+        "role": "format",
+        "actionID": "opaque-3",
+        "fields": {}
+      },
+      {
+        "role": "generateUI",
+        "actionID": "opaque-4",
+        "fields": {
+          "name": "input_generateUI_name"
+        }
+      },
+      {
+        "role": "generateSicilia",
+        "actionID": "opaque-5",
+        "fields": {
+          "name": "input_generateSicilia_name"
+        }
+      },
+      {
+        "role": "generateGalera",
+        "actionID": "opaque-6",
+        "fields": {
+          "name": "input_generateGalera_name"
+        }
+      },
+      {
+        "role": "fullCleanup",
+        "actionID": "opaque-7",
+        "fields": {}
+      },
+      {
+        "role": "derivedDataCleanup",
+        "actionID": "opaque-8",
+        "fields": {}
+      },
+      {
+        "role": "uiTests",
+        "actionID": "opaque-9",
+        "fields": {
+          "branch": "input_uiTests_branch",
+          "plan": "input_uiTests_plan"
+        }
+      },
+      {
+        "role": "qualityGates",
+        "actionID": "opaque-10",
+        "fields": {
+          "branch": "input_qualityGates_branch",
+          "locales": "input_qualityGates_locales",
+          "unitIOS": "input_qualityGates_unitIOS",
+          "unitTVOS": "input_qualityGates_unitTVOS",
+          "snapshotIOS": "input_qualityGates_snapshotIOS",
+          "snapshotTVOS": "input_qualityGates_snapshotTVOS",
+          "buildIOS": "input_qualityGates_buildIOS",
+          "buildTVOS": "input_qualityGates_buildTVOS",
+          "performance": "input_qualityGates_performance"
+        }
+      },
+      {
+        "role": "beta",
+        "actionID": "opaque-11",
+        "fields": {
+          "branch": "input_beta_branch",
+          "target": "input_beta_target",
+          "rebase": "input_beta_rebase",
+          "upload": "input_beta_upload"
+        }
+      }
+    ]
+  },
+  "actions": [
+    {
+      "id": "opaque-11",
+      "title": "Unrelated caption 11",
+      "presentation": "ci",
+      "parameters": [
+        {
+          "id": "input_beta_branch",
+          "title": "branch",
+          "kind": "branch",
+          "defaultValue": "main",
+          "required": true
+        },
+        {
+          "id": "input_beta_target",
+          "title": "target",
+          "kind": "choice",
+          "defaultValue": "App",
+          "required": true,
+          "choices": [
+            "App"
+          ]
+        },
+        {
+          "id": "input_beta_rebase",
+          "title": "rebase",
+          "kind": "text",
+          "defaultValue": "main",
+          "required": true
+        },
+        {
+          "id": "input_beta_upload",
+          "title": "upload",
+          "kind": "choice",
+          "defaultValue": "FALSE",
+          "required": true,
+          "choices": [
+            "TRUE",
+            "FALSE"
+          ]
+        }
+      ],
+      "mcpAllowed": true,
+      "logPolicy": "boundedSanitized",
+      "requiresXcodeQuit": false,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [],
+      "remote": {
+        "job": "fixture/beta",
+        "branchParameter": "REF",
+        "tracking": "jenkinsOnly"
+      }
+    },
+    {
+      "id": "opaque-10",
+      "title": "Unrelated caption 10",
+      "presentation": "ci",
+      "parameters": [
+        {
+          "id": "input_qualityGates_branch",
+          "title": "branch",
+          "kind": "branch",
+          "defaultValue": "main",
+          "required": true
+        },
+        {
+          "id": "input_qualityGates_locales",
+          "title": "locales",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_qualityGates_unitIOS",
+          "title": "unitIOS",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_qualityGates_unitTVOS",
+          "title": "unitTVOS",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_qualityGates_snapshotIOS",
+          "title": "snapshotIOS",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_qualityGates_snapshotTVOS",
+          "title": "snapshotTVOS",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_qualityGates_buildIOS",
+          "title": "buildIOS",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_qualityGates_buildTVOS",
+          "title": "buildTVOS",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_qualityGates_performance",
+          "title": "performance",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        }
+      ],
+      "mcpAllowed": true,
+      "logPolicy": "boundedSanitized",
+      "requiresXcodeQuit": false,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [],
+      "remote": {
+        "job": "fixture/qualityGates",
+        "branchParameter": "REF",
+        "tracking": "jenkinsOnly"
+      }
+    },
+    {
+      "id": "opaque-9",
+      "title": "Unrelated caption 9",
+      "presentation": "ci",
+      "parameters": [
+        {
+          "id": "input_uiTests_branch",
+          "title": "branch",
+          "kind": "branch",
+          "defaultValue": "main",
+          "required": true
+        },
+        {
+          "id": "input_uiTests_plan",
+          "title": "plan",
+          "kind": "choice",
+          "defaultValue": "SMOKE",
+          "required": true,
+          "choices": [
+            "SMOKE",
+            "FUNCTIONAL",
+            "STATS",
+            "FULL"
+          ]
+        }
+      ],
+      "mcpAllowed": true,
+      "logPolicy": "boundedSanitized",
+      "requiresXcodeQuit": false,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [],
+      "remote": {
+        "job": "fixture/uiTests",
+        "branchParameter": "REF",
+        "tracking": "jenkinsOnly"
+      }
+    },
+    {
+      "id": "opaque-8",
+      "title": "Unrelated caption 8",
+      "presentation": "regular",
+      "parameters": [],
+      "mcpAllowed": true,
+      "logPolicy": "boundedSanitized",
+      "requiresXcodeQuit": true,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "fixture done\n"
+          ],
+          "directory": "${checkout}"
+        }
+      ]
+    },
+    {
+      "id": "opaque-7",
+      "title": "Unrelated caption 7",
+      "presentation": "regular",
+      "parameters": [],
+      "mcpAllowed": true,
+      "logPolicy": "metadataOnly",
+      "requiresXcodeQuit": true,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "fixture done\n"
+          ],
+          "directory": "${checkout}"
+        }
+      ]
+    },
+    {
+      "id": "opaque-6",
+      "title": "Unrelated caption 6",
+      "presentation": "generator",
+      "parameters": [
+        {
+          "id": "input_generateGalera_name",
+          "title": "name",
+          "kind": "text",
+          "defaultValue": "Fixture",
+          "required": true
+        }
+      ],
+      "mcpAllowed": false,
+      "logPolicy": "boundedSanitized",
+      "requiresXcodeQuit": false,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "fixture done\n"
+          ],
+          "directory": "${checkout}"
+        }
+      ],
+      "previewSteps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "{\"files\": [{\"path\": \"generateGalera.swift\", \"exists\": false}], \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+          ],
+          "directory": "${checkout}"
+        }
+      ]
+    },
+    {
+      "id": "opaque-5",
+      "title": "Unrelated caption 5",
+      "presentation": "generator",
+      "parameters": [
+        {
+          "id": "input_generateSicilia_name",
+          "title": "name",
+          "kind": "text",
+          "defaultValue": "Fixture",
+          "required": true
+        }
+      ],
+      "mcpAllowed": false,
+      "logPolicy": "boundedSanitized",
+      "requiresXcodeQuit": false,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "fixture done\n"
+          ],
+          "directory": "${checkout}"
+        }
+      ],
+      "previewSteps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "{\"files\": [{\"path\": \"generateSicilia.swift\", \"exists\": false}], \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+          ],
+          "directory": "${checkout}"
+        }
+      ]
+    },
+    {
+      "id": "opaque-4",
+      "title": "Unrelated caption 4",
+      "presentation": "generator",
+      "parameters": [
+        {
+          "id": "input_generateUI_name",
+          "title": "name",
+          "kind": "text",
+          "defaultValue": "Fixture",
+          "required": true
+        }
+      ],
+      "mcpAllowed": false,
+      "logPolicy": "boundedSanitized",
+      "requiresXcodeQuit": false,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "fixture done\n"
+          ],
+          "directory": "${checkout}"
+        }
+      ],
+      "previewSteps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "{\"files\": [{\"path\": \"generateUI.swift\", \"exists\": false}], \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+          ],
+          "directory": "${checkout}"
+        }
+      ]
+    },
+    {
+      "id": "opaque-3",
+      "title": "Unrelated caption 3",
+      "presentation": "regular",
+      "parameters": [],
+      "mcpAllowed": true,
+      "logPolicy": "boundedSanitized",
+      "requiresXcodeQuit": false,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "fixture done\n"
+          ],
+          "directory": "${checkout}"
+        }
+      ]
+    },
+    {
+      "id": "opaque-2",
+      "title": "Unrelated caption 2",
+      "presentation": "regular",
+      "parameters": [],
+      "mcpAllowed": true,
+      "logPolicy": "boundedSanitized",
+      "requiresXcodeQuit": false,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "fixture done\n"
+          ],
+          "directory": "${checkout}"
+        }
+      ]
+    },
+    {
+      "id": "opaque-1",
+      "title": "Unrelated caption 1",
+      "presentation": "regular",
+      "parameters": [],
+      "mcpAllowed": true,
+      "logPolicy": "boundedSanitized",
+      "requiresXcodeQuit": false,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "fixture done\n"
+          ],
+          "directory": "${checkout}"
+        }
+      ]
+    },
+    {
+      "id": "opaque-0",
+      "title": "Unrelated caption 0",
+      "presentation": "preparation",
+      "parameters": [
+        {
+          "id": "input_bootstrap_platform",
+          "title": "platform",
+          "kind": "platform",
+          "defaultValue": "ios",
+          "required": true
+        },
+        {
+          "id": "input_bootstrap_device",
+          "title": "device",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_bootstrap_match",
+          "title": "match",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_bootstrap_full",
+          "title": "full",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_bootstrap_dependencies",
+          "title": "dependencies",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_bootstrap_uiDependencies",
+          "title": "uiDependencies",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        },
+        {
+          "id": "input_bootstrap_setup",
+          "title": "setup",
+          "kind": "boolean",
+          "defaultValue": "true",
+          "required": true
+        }
+      ],
+      "mcpAllowed": true,
+      "logPolicy": "metadataOnly",
+      "requiresXcodeQuit": true,
+      "requiredFiles": [],
+      "requiredTools": [],
+      "steps": [
+        {
+          "executable": "/usr/bin/printf",
+          "arguments": [
+            "fixture done\n"
+          ],
+          "directory": "${checkout}"
+        }
+      ],
+      "progress": [
+        {
+          "title": "Dependencies",
+          "contains": "fixture-begin",
+          "step": "brew",
+          "stage": "dependencies",
+          "event": "start"
+        },
+        {
+          "title": "Dependencies complete",
+          "contains": "fixture-done",
+          "step": "brew",
+          "stage": "dependencies",
+          "event": "complete"
+        },
+        {
+          "title": "Already installed",
+          "contains": "fixture-skip",
+          "step": "mint",
+          "event": "skip"
+        }
+      ]
+    }
+  ]
+}

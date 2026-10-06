@@ -1,0 +1,10 @@
+/* Created by Василий Маслов on 04.10.2026. */
+"probe.title" = "Проверка Mimic";
+"probe.input" = "Ввод текста";
+"probe.placeholder" = "Введите текст";
+"probe.clear" = "Очистить";
+"probe.actions" = "Нажатия";
+"probe.increment" = "Увеличить счётчик";
+"probe.count" = "Счётчик: %ld";
+"probe.scroll" = "Прокрутка";
+"probe.row" = "Строка %ld";

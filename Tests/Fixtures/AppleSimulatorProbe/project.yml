@@ -1,0 +1,24 @@
+# Created by Василий Маслов on 04.10.2026.
+name: MimicAppleFixture
+options:
+  developmentLanguage: ru
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGNING_ALLOWED: "NO"
+    GENERATE_INFOPLIST_FILE: "YES"
+    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0"
+    INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+    TARGETED_DEVICE_FAMILY: "1,2"
+targets:
+  MimicAppleFixture:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: local.vmaslov.MimicAppleFixture
+    scheme: {}

@@ -1,0 +1,25 @@
+{
+  "name": "mimic-panel",
+  "private": true,
+  "version": "1.2.0",
+  "type": "module",
+  "author": "Василий Маслов",
+  "license": "MIT",
+  "packageManager": "pnpm@11.19.0",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@openai/mcp-extensions": "0.1.0",
+    "@xterm/xterm": "6.0.0",
+    "@xterm/addon-fit": "0.11.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3"
+  }
+}

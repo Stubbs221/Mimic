@@ -1,0 +1,205 @@
+{
+  "tools": [
+    {
+      "name": "DeviceInteractionEndSession",
+      "inputSchema": {
+        "properties": {
+          "interactionSessionKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "interactionSessionKey"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "userMessage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "userMessage"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "DeviceInteractionInstallAndRun",
+      "inputSchema": {
+        "properties": {
+          "commandLineArguments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "environmentVariables": {
+            "type": "object"
+          },
+          "interactionSessionKey": {
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "interactionSessionKey"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "userMessage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "userMessage"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "DeviceInteractionStartSession",
+      "inputSchema": {
+        "properties": {
+          "deviceIdentifier": {
+            "type": "string"
+          },
+          "sessionIdentifier": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "deviceIdentifier",
+          "sessionIdentifier"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "deviceIsSimulator": {
+            "type": "boolean"
+          },
+          "deviceUUID": {
+            "type": "string"
+          },
+          "interactionSessionKey": {
+            "type": "string"
+          },
+          "skillToTrigger": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "skillToTrigger",
+          "interactionSessionKey",
+          "deviceUUID",
+          "deviceIsSimulator"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "DeviceInteractionStartWorkspaceSession",
+      "inputSchema": {
+        "properties": {
+          "deviceIdentifier": {
+            "type": "string"
+          },
+          "sessionIdentifier": {
+            "type": "string"
+          },
+          "workspaceIdentifier": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionIdentifier"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "deviceIsSimulator": {
+            "type": "boolean"
+          },
+          "deviceUUID": {
+            "type": "string"
+          },
+          "interactionSessionKey": {
+            "type": "string"
+          },
+          "skillToTrigger": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "skillToTrigger",
+          "interactionSessionKey",
+          "deviceUUID",
+          "deviceIsSimulator"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "DeviceInteractionSynthesize",
+      "inputSchema": {
+        "properties": {
+          "activationBundleId": {
+            "type": "string"
+          },
+          "interactSessionKey": {
+            "type": "string"
+          },
+          "interactionCommand": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "interactSessionKey"
+        ],
+        "type": "object"
+      },
+      "outputSchema": {
+        "properties": {
+          "applicationState": {
+            "type": "string"
+          },
+          "hierarchyPath": {
+            "type": "string"
+          },
+          "logsPath": {
+            "type": "string"
+          },
+          "screenshotPath": {
+            "type": "string"
+          },
+          "thumbnailScreenshotPath": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "thumbnailScreenshotPath",
+          "screenshotPath",
+          "hierarchyPath",
+          "logsPath",
+          "applicationState"
+        ],
+        "type": "object"
+      }
+    }
+  ]
+}

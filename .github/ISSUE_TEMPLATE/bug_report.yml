@@ -1,0 +1,40 @@
+# Created by Василий Маслов on 06.10.2026.
+name: Bug report
+description: Report a reproducible Mimic problem using sanitized data.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach credentials, private profiles/adapters, full environments or terminal input.
+        Report suspected vulnerabilities privately using Security → Report a vulnerability when enabled.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions and architecture
+      description: Mimic version/source revision, macOS, CPU architecture, and selected Xcode.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Prefer a minimal synthetic fixture. Do not run live team jobs just to file an issue.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Optional screenshots or minimal diagnostics. Review them before attaching.

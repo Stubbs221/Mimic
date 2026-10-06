@@ -1,0 +1,37 @@
+# Created by Василий Маслов on 01.10.2026.
+.build/
+.swiftpm/
+.local/
+.DS_Store
+
+Web/node_modules/
+.pnpm-store/
+
+*.mimicprofile
+__pycache__/
+
+# Local secrets and signing material; keep explicit example configuration publishable.
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+
+# Local packages, diagnostics and compiler/browser artifacts.
+*.app/
+*.dSYM/
+*.xcresult/
+*.trace/
+*.zip
+*.dmg
+*.pkg
+*.log
+*.pyc
+coverage/
+playwright-report/
+test-results/

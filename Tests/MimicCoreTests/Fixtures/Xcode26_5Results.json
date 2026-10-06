@@ -1,0 +1,39 @@
+{
+  "author": "Василий Маслов",
+  "created": "04.10.2026",
+  "serverVersion": "24939",
+  "sdkVersion": "0.12.1",
+  "results": {
+    "build": {
+      "buildResult": "The project built successfully.",
+      "elapsedTime": 0.39,
+      "errors": [],
+      "fullLogPath": "/private/tmp/MimicFixture/operation-log.txt"
+    },
+    "test": {
+      "counts": {
+        "expectedFailures": 0,
+        "failed": 0,
+        "notRun": 0,
+        "passed": 1,
+        "skipped": 0,
+        "total": 1
+      },
+      "fullConsoleLogsPath": "/private/tmp/MimicFixture/operation-log.txt",
+      "fullSummaryPath": "/private/tmp/MimicFixture/result-summary.txt",
+      "results": [
+        {
+          "displayName": "testValue()",
+          "errorMessages": [],
+          "identifier": "FixtureTests/testValue()",
+          "state": "Passed",
+          "targetName": "FixtureTests"
+        }
+      ],
+      "schemeName": "Fixture",
+      "summary": "1 tests: 1 passed, 0 failed, 0 skipped, 0 expected failures, 0 not run",
+      "totalResults": 1,
+      "truncated": false
+    }
+  }
+}

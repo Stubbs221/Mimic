@@ -1,0 +1,377 @@
+{
+  "author": "Василий Маслов",
+  "capturedAt": "2026-10-04",
+  "xcodeVersion": "26.5 (17F42)",
+  "serverVersion": "24939",
+  "tools": [
+    {
+      "description": "Lists the current Xcode windows and their workspace information",
+      "inputSchema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "XcodeListWindows",
+      "outputSchema": {
+        "properties": {
+          "message": {
+            "description": "Description of all open Xcode windows",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "title": "List Windows"
+    },
+    {
+      "description": "Runs specific tests using the active scheme's active test plan",
+      "inputSchema": {
+        "properties": {
+          "tabIdentifier": {
+            "description": "The workspace tab identifier",
+            "type": "string"
+          },
+          "tests": {
+            "description": "Array of test specifiers to run. Each specifier contains 'targetName' and 'testIdentifier' fields. Use GetTestList action to discover available tests and their identifiers, then extract the 'targetName' and 'identifier' fields from the TestActionInfo results to construct TestActionSpecifier objects.",
+            "items": {
+              "properties": {
+                "targetName": {
+                  "description": "The test target name",
+                  "type": "string"
+                },
+                "testIdentifier": {
+                  "description": "Test identifier in XCTestIdentifier format",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "targetName",
+                "testIdentifier"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabIdentifier",
+          "tests"
+        ],
+        "type": "object"
+      },
+      "name": "RunSomeTests",
+      "outputSchema": {
+        "properties": {
+          "activeTestPlanName": {
+            "description": "Active test plan name",
+            "type": "string"
+          },
+          "counts": {
+            "description": "Test execution counts",
+            "properties": {
+              "expectedFailures": {
+                "description": "Number of expected failures",
+                "type": "integer"
+              },
+              "failed": {
+                "description": "Number of failed tests",
+                "type": "integer"
+              },
+              "notRun": {
+                "description": "Number of tests not run",
+                "type": "integer"
+              },
+              "passed": {
+                "description": "Number of passed tests",
+                "type": "integer"
+              },
+              "skipped": {
+                "description": "Number of skipped tests",
+                "type": "integer"
+              },
+              "total": {
+                "description": "Total test count",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "skipped",
+              "expectedFailures",
+              "notRun"
+            ],
+            "type": "object"
+          },
+          "fullConsoleLogsPath": {
+            "description": "A text file path containing all logs that would be printed in the console from `print`, `NSLog`, etc. during test build and execution.",
+            "type": "string"
+          },
+          "fullSummaryPath": {
+            "description": "A text file path containing all test results and complete issue details in textual form",
+            "type": "string"
+          },
+          "message": {
+            "description": "Additional information about truncation",
+            "type": "string"
+          },
+          "results": {
+            "description": "Results for each test (truncated at 100, failures shown first)",
+            "items": {
+              "properties": {
+                "displayName": {
+                  "description": "Human-readable test name",
+                  "type": "string"
+                },
+                "errorMessages": {
+                  "description": "Error messages",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "identifier": {
+                  "description": "Test identifier in XCTestIdentifier format",
+                  "type": "string"
+                },
+                "state": {
+                  "description": "Execution state",
+                  "type": "string"
+                },
+                "targetName": {
+                  "description": "The test target name",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "targetName",
+                "identifier",
+                "displayName",
+                "state",
+                "errorMessages"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "schemeName": {
+            "description": "Active scheme name",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Test execution summary",
+            "type": "string"
+          },
+          "totalResults": {
+            "description": "Total number of test results before truncation",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "Whether results were truncated due to exceeding 100 results",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "summary",
+          "counts",
+          "results",
+          "schemeName",
+          "truncated",
+          "totalResults",
+          "fullSummaryPath"
+        ],
+        "type": "object"
+      },
+      "title": "Run Some Tests"
+    },
+    {
+      "description": "Gets the log of the current or most recently finished build. You can choose which build log entries to include by specifying the severity of any issues emitted by the build task represented by the entry. You can also filter by message regex pattern or file glob pattern. The response also indicates whether the build is currently in progress.",
+      "inputSchema": {
+        "properties": {
+          "glob": {
+            "description": "Glob to filter the returned build log entries. Will match against the 'path' field of any emitted issues, as well as against the location of any build task.",
+            "type": "string"
+          },
+          "pattern": {
+            "description": "Regex to filter the returned build log entries. Will match against the 'message' field of any emitted issues, as well as the task description, command line, and console output of any build tasks.",
+            "type": "string"
+          },
+          "severity": {
+            "description": "Limit the output of build log entries to those that emitted issues of the specified severity or higher. Valid values in order of decreasing severity are 'error', 'warning', 'remark'. Defaults to 'error'.",
+            "enum": [
+              "remark",
+              "warning",
+              "error"
+            ],
+            "type": "string"
+          },
+          "tabIdentifier": {
+            "description": "The workspace tab identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tabIdentifier"
+        ],
+        "type": "object"
+      },
+      "name": "GetBuildLog",
+      "outputSchema": {
+        "properties": {
+          "buildIsRunning": {
+            "description": "Indicates whether the build is still running.",
+            "type": "boolean"
+          },
+          "buildLogEntries": {
+            "description": "The build log entries describing build commands that emitted issues",
+            "items": {
+              "properties": {
+                "buildTask": {
+                  "description": "The build task represented by the log entry",
+                  "type": "string"
+                },
+                "emittedIssues": {
+                  "description": "Any issues emitted by the build task represented by the log entry",
+                  "items": {
+                    "properties": {
+                      "line": {
+                        "description": "The line number where the issue was detected, if known",
+                        "type": "integer"
+                      },
+                      "message": {
+                        "description": "The message describing the issue",
+                        "type": "string"
+                      },
+                      "path": {
+                        "description": "The file path where the issue was detected, if any",
+                        "type": "string"
+                      },
+                      "severity": {
+                        "description": "The severity of issue (error, warning, remark)",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "line",
+                      "severity",
+                      "message"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "emittedIssues"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "buildResult": {
+            "description": "The message indicating the result of the build operation",
+            "type": "string"
+          },
+          "fullLogPath": {
+            "description": "Path of the full log in textual format, containing the complete command lines and any output from the build tasks",
+            "type": "string"
+          },
+          "message": {
+            "description": "Optional message with additional information about the search results",
+            "type": "string"
+          },
+          "totalFound": {
+            "description": "Total number of build log entries before truncation",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "Whether results were truncated due to exceeding 100 issues",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "buildResult",
+          "buildLogEntries",
+          "buildIsRunning",
+          "truncated",
+          "totalFound",
+          "fullLogPath"
+        ],
+        "type": "object"
+      },
+      "title": "Get Build Log"
+    },
+    {
+      "description": "Builds an Xcode project and waits until the build completes.",
+      "inputSchema": {
+        "properties": {
+          "tabIdentifier": {
+            "description": "The workspace tab identifier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tabIdentifier"
+        ],
+        "type": "object"
+      },
+      "name": "BuildProject",
+      "outputSchema": {
+        "properties": {
+          "buildResult": {
+            "description": "The message indicating the result of the build operation",
+            "type": "string"
+          },
+          "elapsedTime": {
+            "description": "The time it took to finish the build, in seconds",
+            "type": "number"
+          },
+          "errors": {
+            "description": "List of build errors",
+            "items": {
+              "properties": {
+                "classification": {
+                  "description": "The type of error (error, warning, etc.)",
+                  "type": "string"
+                },
+                "filePath": {
+                  "description": "The file path where the error occurred",
+                  "type": "string"
+                },
+                "lineNumber": {
+                  "description": "The line number where the error occurred",
+                  "type": "integer"
+                },
+                "message": {
+                  "description": "The error message",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "classification",
+                "message"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "fullLogPath": {
+            "description": "Path of the full log in textual format, containing the complete command lines and any output from the build tasks",
+            "type": "string"
+          }
+        },
+        "required": [
+          "buildResult",
+          "errors",
+          "fullLogPath"
+        ],
+        "type": "object"
+      },
+      "title": "Build Project"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+# Created by Василий Маслов on 06.10.2026.
+name: Feature request
+description: Describe a development workflow that Mimic could improve.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: Explain the user need using public or synthetic examples.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe observable behavior and how you would verify it.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and constraints
+      description: Include relevant platform or profile constraints. Do not include private service addresses.

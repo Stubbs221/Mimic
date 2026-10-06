@@ -1,0 +1,48 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "extended-srgb:0.97255,0.94902,0.91373,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "extended-srgb:0.16078,0.14510,0.18039,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "name": "MimicEnamel",
+      "layers": [
+        {
+          "name": "01-Eyes",
+          "image-name": "01-Eyes.svg",
+          "glass": false
+        },
+        {
+          "name": "02-Mouth",
+          "image-name": "02-Mouth.svg",
+          "glass": false
+        },
+        {
+          "name": "03-Shape",
+          "image-name": "03-Shape.svg",
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.08
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

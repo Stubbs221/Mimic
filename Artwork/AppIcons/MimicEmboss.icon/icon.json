@@ -1,0 +1,73 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "extended-srgb:0.97255,0.94902,0.91373,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "extended-srgb:0.14118,0.12941,0.17647,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "name": "MimicEmboss",
+      "layers": [
+        {
+          "name": "01-Eyes",
+          "image-name": "01-Eyes.svg",
+          "glass": false,
+          "fill-specializations": [
+            {
+              "value": "automatic"
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-srgb:0.93333,0.90196,0.86667,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": "automatic"
+            }
+          ]
+        },
+        {
+          "name": "03-Shape",
+          "image-name": "03-Shape.svg",
+          "glass": true,
+          "fill-specializations": [
+            {
+              "value": "automatic"
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "extended-srgb:0.93333,0.90196,0.86667,1.00000"
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": "automatic"
+            }
+          ]
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.1
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

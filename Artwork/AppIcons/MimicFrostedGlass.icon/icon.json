@@ -1,0 +1,48 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "extended-srgb:0.18824,0.15294,0.24314,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "extended-srgb:0.18824,0.15294,0.24314,1.00000"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "name": "MimicFrostedGlass",
+      "layers": [
+        {
+          "name": "01-Eyes",
+          "image-name": "01-Eyes.svg",
+          "glass": false
+        },
+        {
+          "name": "02-Mouth",
+          "image-name": "02-Mouth.svg",
+          "glass": false
+        },
+        {
+          "name": "03-Shape",
+          "image-name": "03-Shape.svg",
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.3
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}

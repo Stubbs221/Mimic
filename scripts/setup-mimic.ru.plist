@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Created by Василий Маслов on 04.10.2026. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>background</key>
+	<string>Запускается установленный Mimic.</string>
+	<key>development.bridgeClosed</key>
+	<string>Mimic закрыл соединение; проверяется завершение процесса.</string>
+	<key>development.invalidReply</key>
+	<string>Некорректный ответ Mimic.</string>
+	<key>development.legacy</key>
+	<string>Mimic не подтвердил обновление. Для первого переноса закройте старую версию и повторите установку.</string>
+	<key>development.waiting</key>
+	<string>Ожидание завершения задач Mimic…</string>
+	<key>development.timeout</key>
+	<string>Mimic занят: установка отложена. Завершите задачи/сессию симулятора и повторите сборку.</string>
+	<key>development.launchFailed</key>
+	<string>Установленный Mimic не подтвердил запуск; предыдущая версия сохранена в резервной копии.</string>
+	<key>development.source</key>
+	<string>Bundle для сборки должен отличаться от установленного приложения.</string>
+	<key>development.plugin</key>
+	<string>Плагин Codex переподключён. Для обновления открытой панели может понадобиться перезапуск Codex.</string>
+	<key>development.updated</key>
+	<string>Mimic обновлён и запущен: {destination}</string>
+	<key>development.arguments</key>
+	<string>Нужны абсолютные пути и неотрицательное время ожидания.</string>
+	<key>inventory</key>
+	<string>Не удалось проверить работающие процессы. Установка остановлена; проверьте разрешения и повторите запуск.</string>
+	<key>architecture</key>
+	<string>Приложение не поддерживает архитектуру этого Mac.</string>
+	<key>bundle</key>
+	<string>Это приложение не является Mimic.</string>
+	<key>cancelled</key>
+	<string>Установка отменена.</string>
+	<key>destination</key>
+	<string>Не удалось установить приложение. Проверьте каталог назначения.</string>
+	<key>helper</key>
+	<string>В приложении отсутствует исполняемый файл или helper.</string>
+	<key>install</key>
+	<string>Установить Mimic в выбранный каталог (по умолчанию ~/Applications)? Введите yes или да:</string>
+	<key>missing</key>
+	<string>Mimic.app не найден. Поместите приложение рядом со скриптом или укажите --app.</string>
+	<key>opening</key>
+	<string>Открывается мастер настройки Mimic. Токены вводятся только в приложении.</string>
+	<key>os</key>
+	<string>Нужна macOS 14 или новее.</string>
+	<key>replace</key>
+	<string>Заменить установленный Mimic? Прежняя копия будет сохранена. Введите yes или да:</string>
+	<key>running</key>
+	<string>Сначала завершите задачи и закройте Mimic. Установщик не заменяет работающее приложение.</string>
+	<key>signature</key>
+	<string>Проверка локальной подписи приложения не пройдена.</string>
+	<key>valid</key>
+	<string>Проверка приложения пройдена. Изменения не внесены.</string>
+</dict>
+</plist>

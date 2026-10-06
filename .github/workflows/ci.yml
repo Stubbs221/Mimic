@@ -1,0 +1,75 @@
+# Created by Василий Маслов on 06.10.2026.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  documentation:
+    name: Documentation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 scripts/check-doc-links.py
+
+  web:
+    name: Web panel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: Web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+          run_install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: node check-layout.mjs
+      - name: Verify bundled HTML is reproducible
+        run: |
+          cp ../Sources/MimicMCP/Resources/panel.html "$RUNNER_TEMP/mimic-panel.html"
+          pnpm run build
+          cmp "$RUNNER_TEMP/mimic-panel.html" ../Sources/MimicMCP/Resources/panel.html
+
+  macos:
+    name: macOS build and fixtures
+    runs-on: macos-26
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      MIMIC_SIGNING_IDENTITY: '-'
+      MIMIC_BUILD_SYSTEM: native
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Show selected toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Build local app package without installation
+        run: scripts/build-app.sh --no-install
+      - name: Run selected disposable fixtures
+        run: swift test --build-system native --force-resolved-versions --filter 'ProfileTests|ProfileInterfaceTests|PanelToolTests' --skip privatePackageImportsWithoutExecutingAdapters
