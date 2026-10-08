@@ -7,7 +7,7 @@
 
 [Русский](README.md) · [English](README.en.md)
 
-<a href="docs/MimicSetup.md"><img src="docs/images/badge-preview.svg" alt="Mimic 1.4.0 preview"></a>
+<a href="docs/MimicSetup.md"><img src="docs/images/badge-release.svg" alt="Mimic 1.4.0"></a>
 <a href="docs/MimicSetup.md"><img src="docs/images/badge-macos.svg" alt="macOS 14+"></a>
 <a href="docs/MimicSetup.md"><img src="docs/images/badge-architecture.svg" alt="Apple Silicon"></a>
 <a href="LICENSE"><img src="docs/images/badge-license.svg" alt="MIT"></a>
@@ -15,12 +15,12 @@
 <br><br>
 <img src="docs/images/readme-hero-en.png" alt="Mimic Tile Grid on macOS and in Codex, with working data redacted" width="1040">
 
-[**Download the published version**](https://github.com/Stubbs221/Mimic/releases/latest) · [**Get started**](docs/MimicSetup.md) · [What's new](CHANGELOG.md)
+[**Download Mimic 1.4.0**](https://github.com/Stubbs221/Mimic/releases/tag/v1.4.0) · [**Get started**](docs/MimicSetup.md) · [What's new](CHANGELOG.md)
 
 </div>
 
-> [!NOTE]
-> **1.4.0 / build 140** is in preparation. The candidate is being qualified; the published release is currently **1.3.1**. Pushing source does not publish a release.
+> [!TIP]
+> **Mimic 1.4.0 · build 140 · October 8, 2026.** Developer ID signed and Apple notarized. Install the ready-to-use app or update from 1.3.1 in **Настройки → Основные**.
 
 Mimic brings your team's familiar workflows together: project preparation, tools, builds, selected tests and CI. Open it from the menu bar or work beside your agent in Codex. **One executor, a shared queue and history, and a separate project context for each chat.**
 
