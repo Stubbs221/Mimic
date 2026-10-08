@@ -24,6 +24,18 @@
 
 Mimic brings your team's familiar workflows together: project preparation, tools, builds, selected tests and CI. Open it from the menu bar or work beside your agent in Codex. **One executor, a shared queue and history, and a separate project context for each chat.**
 
+## Explore and share
+
+Three illustrated documents in Russian, using the Mimic palette. **View PDFs on GitHub or download the HTML and open it in a browser.** Styles, screenshots and image zoom work offline.
+
+| Document | PDF | HTML |
+| --- | --- | --- |
+| **A 2–3 minute introduction** — the essentials | [View](docs/releases/1.4.0/quick-preview.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.4.0/quick-preview.html) |
+| **Full overview** — features, diagrams and security | [View](docs/releases/1.4.0/overview.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.4.0/overview.html) |
+| **Guide** — installation, setup and everyday use | [View](docs/releases/1.4.0/guide.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.4.0/guide.html) |
+
+[**All HTML in one ZIP**](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.4.0/Mimic-1.4.0-HTML.zip) — extract the three files together for navigation between documents. [About the materials](docs/releases/1.4.0/README.md).
+
 ## Less switching. More doing.
 
 | 🧩 Your panel | 🛠 Your team's tools | 🚦 Checks at hand |
