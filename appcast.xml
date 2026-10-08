@@ -6,6 +6,41 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <title>Mimic</title>
     <link>https://github.com/Stubbs221/Mimic</link>
     <item>
+      <title>Mimic 1.4.0</title>
+      <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 08.10.2026. --&gt;
+# Mimic 1.4.0
+
+Apple-разработка под рукой — в macOS и внутри Codex. Сборка **140**, 8 октября 2026.
+
+- **Tile Grid** — основное оформление двух поверхностей: размеры и порядок плиток, отдельные раскладки, темы и сохранённый выбор прежнего интерфейса.
+- **Инструменты команды** — общий каталог и избранное, Celestial с предпросмотром, Babylon, Protobuf, SwiftFormat и очистки через доверенный профиль.
+- **Рабочие сценарии** — общая очередь, прогресс, отмена, терминалы и история; ветки с опциональным rebase и передачей конфликтов в Codex.
+- **Сборки, выбранные тесты и CI** — настройки сборки без блокировки интерфейса, Jenkins/GitLab: UI-тесты, Quality Gates, Beta и результаты.
+- **Simulator внутри Codex** — экран и управление, независимый выбор источников изображения и ввода, видео MCP и снимки, непрерывные HID-жесты и Apple MCP.
+- **AI и настройки** — обновлённая статистика, разделы настроек и онбординг.
+
+## Установка и обновление
+
+Для первой установки скачайте **MimicSetup-1.4.0.zip**, распакуйте и запустите `setup-mimic.command` либо перенесите приложение в Applications. Из 1.3.1 проверьте обновление в **Настройки → Основные**. Профиль, настройки и история сохраняются; уже открытую панель Codex может понадобиться открыть заново.
+
+Пакет подписан **Developer ID**, принят нотарификацией **Apple** и содержит ticket. Архив обновления и лента имеют независимую подпись **Sparkle**. Контрольные суммы — в `SHA256SUMS`.
+
+**Apple Silicon · macOS 14+ · русский интерфейс.** Экран Simulator требует **Xcode 27+** и доступных нативных инструментов Apple; WSS — отдельно настроенного доверенного endpoint. Intel и runtime на macOS 14 не квалифицированы. Числовые обещания видеопроизводительности для этой сборки не заявляются.
+
+Приватный `.mimicprofile` команды поставляется отдельно: команды и исполняемые адаптеры не входят в публичный пакет, CI credentials хранятся в Keychain. Используйте доверенный профиль и проверяйте логи перед пересылкой: автоматическая очистка не гарантирует удаления любых чувствительных данных.
+
+[Инструкция](https://github.com/Stubbs221/Mimic/blob/v1.4.0/docs/MimicSetup.md) · [Все изменения](https://github.com/Stubbs221/Mimic/blob/v1.4.0/CHANGELOG.md) · [English overview](https://github.com/Stubbs221/Mimic/blob/v1.4.0/README.en.md)
+
+Автор: Василий Маслов.
+</description>
+      <pubDate>Thu, 08 Oct 2026 12:35:43 GMT</pubDate>
+      <sparkle:version>140</sparkle:version>
+      <sparkle:shortVersionString>1.4.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <enclosure url="https://github.com/Stubbs221/Mimic/releases/download/v1.4.0/Mimic-1.4.0.zip" length="16372260" type="application/octet-stream" sparkle:edSignature="mNbaFXr+HG4mY1e1ZThTkgy/pZSYn1sK91ToiIkiy7/lvvxewCt+QEVBaKjdo5Y4tKvBTVTBga0j1JP/wDVpBg=="></enclosure>
+    </item>
+    <item>
       <title>Mimic 1.3.1</title>
       <description sparkle:format="plain-text">Mimic 1.3.1, сборка 131 — первый публичный выпуск для Apple Silicon.
 
@@ -32,6 +67,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: HXWE4r6LU0q5SK7NXCZ7JbajixEFYshfSjq8ttwV0ydIc/bZ09zDohGVqH99TYCrEIBHddOAu4pxUDaqBe2PCw==
-length: 3819
+edSignature: mTjazfeWsGw5nyFo+zLEKubTbpe6M4lYjOPGJW7FRVCPejFvYX003zkCnkaaKBDMTGn8rPMDUO60qnwJ0DtGCw==
+length: 8222
 -->
