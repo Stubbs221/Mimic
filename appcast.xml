@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <!-- Created by Василий Маслов on 08.10.2026. -->
+  <channel>
+    <title>Mimic</title>
+    <link>https://github.com/Stubbs221/Mimic</link>
+    <item>
+      <title>Mimic 1.3.1</title>
+      <description sparkle:format="plain-text">Mimic 1.3.1, сборка 131 — первый публичный выпуск для Apple Silicon.
+
+- Автообновления: проверка раз в час, загрузка новой версии и установка после завершения локальной работы.
+- Резервная копия перед заменой приложения; профиль, настройки и история сохраняются.
+- Обновление подключённого плагина Codex после запуска новой сборки.
+- Более компактные Bootstrap, CI и AI-карточки, подробности CI и улучшения терминалов в панели Codex.
+- Новые инструкции, русский README и отдельная английская версия, изображения интерфейса с демонстрационными данными.
+
+Для первой установки скачайте **MimicSetup-1.3.1.zip**, распакуйте и запустите `setup-mimic.command`. **Mimic-1.3.1.zip** содержит только приложение и используется автообновлением. Для рабочей панели нужен доверенный совместимый `.mimicprofile` вашей команды; приватный профиль не входит в выпуск. Старым версиям без обновлятора нужна одна ручная установка.
+
+Приложение подписано Developer ID с hardened runtime и прошло нотарификацию Apple. Архив обновления и лента Sparkle подписаны.
+
+Минимальная система — macOS 14. Этот выпуск проверен на Apple Silicon с текущей macOS; runtime macOS 14 и Intel не проверены. Выполнены адресные Swift, веб- и упаковочные проверки, а также установка/перезапуск и отказы Sparkle на одноразовых приложениях. Живые Bootstrap/codegen, iOS/tvOS builds и командные удалённые CI-прогоны в приёмке не запускались.
+
+[Установка](https://github.com/Stubbs221/Mimic/blob/v1.3.1/docs/MimicSetup.md) · [Codex](https://github.com/Stubbs221/Mimic/blob/v1.3.1/docs/CodexPlugin.md) · [Изменения](https://github.com/Stubbs221/Mimic/blob/v1.3.1/CHANGELOG.md)
+</description>
+      <pubDate>Thu, 08 Oct 2026 02:24:05 GMT</pubDate>
+      <sparkle:version>131</sparkle:version>
+      <sparkle:shortVersionString>1.3.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <enclosure url="https://github.com/Stubbs221/Mimic/releases/download/v1.3.1/Mimic-1.3.1.zip" length="15117837" type="application/octet-stream" sparkle:edSignature="DipN/CqWf6r7NkAiRwu7jZwCjfq/4h1puHlJQHIJzLid3OW6wMiBxvxZW+UP97vDGjTSzra+goX3MzOQ80y7DQ=="></enclosure>
+    </item>
+  </channel>
+</rss><!-- sparkle-signatures:
+edSignature: HXWE4r6LU0q5SK7NXCZ7JbajixEFYshfSjq8ttwV0ydIc/bZ09zDohGVqH99TYCrEIBHddOAu4pxUDaqBe2PCw==
+length: 3819
+-->
