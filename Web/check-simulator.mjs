@@ -1,43 +1,74 @@
-//
-//  check-simulator.mjs
-//  MimicPanel
-//
-//  Created by Василий Маслов on 05.10.2026.
+// Created by Василий Маслов on 05.10.2026.
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { createServer } from 'node:http';
-import { createRequire } from 'node:module';
-const require=createRequire(import.meta.url);
-const {chromium}=require(process.env.MIMIC_PLAYWRIGHT_MODULE??'playwright');
+import {readFile} from 'node:fs/promises';
+import {createServer} from 'node:http';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url),{chromium}=require(process.env.MIMIC_PLAYWRIGHT_MODULE??'playwright');
 const html=await readFile(new URL('../Sources/MimicMCP/Resources/panel.html',import.meta.url));
-const server=createServer((_,reply)=>{reply.setHeader('Content-Type','text/html');reply.end(html);});
-await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+const longName='iPhone команды интеграции — Александр Константинопольский · Проверка подписок и профиля 🧪';
+const edgeHTML=html.toString().replaceAll('\"iPhone Fixture\"',JSON.stringify(longName)).replaceAll('\"Second Device\"',JSON.stringify(longName));
+const server=createServer((request,reply)=>{reply.setHeader('Content-Type','text/html');reply.end(request.url?.includes('edgeNames=1')?edgeHTML:html);});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await chromium.launch({headless:true,executablePath:process.env.MIMIC_CHROME_EXECUTABLE});
 try{
- const page=await browser.newPage({viewport:{width:940,height:1100}}),errors=[];
- page.on('pageerror',error=>errors.push(error.message));
+ const page=await browser.newPage({viewport:{width:940,height:1100}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(`http://127.0.0.1:${server.address().port}/?preview=1`);
- await page.locator('.panel-block[data-block="simulators"] .block-title').click();
- await page.getByRole('button',{name:'Обновить устройства',exact:true}).click();
- await page.getByRole('button',{name:'Открыть экран',exact:true}).click();
- await page.locator('.simulator-image').waitFor({state:'visible'});
- const input=page.locator('#sim-text');
- await input.fill('Привет  🧪');
- await input.focus();
- await input.evaluate(node=>{window.__input=node;window.__image=document.querySelector('.simulator-image');node.setSelectionRange(4,4);});
- await page.waitForTimeout(6100);
- assert.equal(await input.evaluate(node=>node===window.__input&&document.activeElement===node&&node.selectionStart===4),true,'Polling must preserve textarea identity, focus and selection');
- assert.equal(await page.locator('.simulator-image').evaluate(node=>node===window.__image),true,'Polling must preserve the image node');
- await page.getByRole('button',{name:'Ввести на устройстве',exact:true}).click();
- await page.waitForFunction(()=>document.querySelector('#sim-text')?.value==='');
- await page.getByRole('button',{name:'Обновить экран',exact:true}).click();
- await page.waitForFunction(()=>document.querySelector('.simulator-image')?.getAttribute('aria-disabled')==='false');
- assert.equal(await page.locator('.simulator-image').evaluate(node=>node===window.__image),true);
- await page.setViewportSize({width:480,height:1100});
- assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Narrow layout must not overflow');
- await page.screenshot({path:process.env.MIMIC_PANEL_SCREENSHOT??'/private/tmp/MimicSimulatorPanel-20261005.png',fullPage:true});
- await page.getByRole('button',{name:'Закрыть экран',exact:true}).click();
- await page.waitForFunction(()=>document.querySelector('.simulator-image')?.hidden===true);
+ await page.locator('[data-block="simulators"] .block-title').click();
+ await page.getByRole('button',{name:'Apple MCP',exact:true}).click();
+ const screen=page.locator('.sim-surface'),input=page.locator('.sim-keyboard');await page.waitForFunction(()=>document.querySelector('.sim-surface')?.getAttribute('aria-disabled')==='false');
+ assert.equal(await page.locator('.simulator textarea').count(),0);assert.equal(await page.getByRole('button',{name:'Открыть экран',exact:true}).count(),0);
+ assert.match(await page.locator('.sim-state').textContent(),/Подключён · Кадры/);
+ assert.equal(await page.locator('.sim-picker').getAttribute('open'),null,'Successful connection closes the inline picker');
+ assert.equal(await page.locator('.sim-header .block-name').textContent(),'Симулятор','Card heading stays distinct from the selected model');
+ assert.equal(await page.locator('.sim-switch .sim-name').textContent(),'iPhone 18 Pro');
+ assert.equal(await page.getByRole('button',{name:'Отключить',exact:true}).isVisible(),true);
+ assert.equal(await page.locator('.sim-diagnostics').getAttribute('open'),null);
+ assert.equal(await page.locator('.sim-metrics').isVisible(),false,'Transport and metrics stay inside collapsed diagnostics');
+ assert.match(await page.locator('.sim-notice').textContent(),/Резервные кадры/);
+ for(const name of ['Home','Повернуть']){const size=await page.getByRole('button',{name,exact:true}).evaluate(node=>({width:node.offsetWidth,height:node.offsetHeight}));assert.deepEqual(size,{width:32,height:32});}
+ await page.locator('.sim-diagnostics>summary').click();assert.equal(await page.locator('.sim-metrics').isVisible(),true);assert.match(await page.locator('.sim-metrics').textContent(),/Кадры Apple MCP.*FPS/);
+ const diagnostic=page.getByRole('button',{name:'Диагностика видеоканалов',exact:true});await diagnostic.focus();await page.waitForTimeout(500);assert.equal(await diagnostic.evaluate(node=>document.activeElement===node),true,'Polling retains diagnostic button focus');await page.locator('.sim-diagnostics>summary').click();
+ await page.locator('.sim-menu>summary').click();await page.locator('.sim-menu-list').waitFor({state:'visible'});const menuBounds=await page.locator('.sim-menu-list').boundingBox(),identityBounds=await page.locator('.sim-identity').boundingBox(),viewportBounds=await page.locator('.sim-viewport').boundingBox();assert.ok(menuBounds.y>=identityBounds.y+identityBounds.height-1&&viewportBounds.y>=menuBounds.y+menuBounds.height,'Menu remains in flow above screen');await page.keyboard.press('Escape');assert.equal(await page.locator('.sim-menu>summary').evaluate(node=>node===document.activeElement),true);
+ await page.locator('.sim-menu-list').waitFor({state:'hidden'});await page.waitForTimeout(250);
+ // Empty areas remain tappable; neither endpoint is snapped to accessibility hit points.
+ const rect=await screen.boundingBox();await page.mouse.click(rect.x+rect.width*.1,rect.y+rect.height*.1);
+ await page.waitForFunction(()=>window.mimicSimulatorFixture.actions().length===1);let actions=await page.evaluate(()=>window.mimicSimulatorFixture.actions());assert.ok(actions[0].action.x<60&&actions[0].action.y<100);
+ await page.waitForFunction(()=>document.querySelector('.sim-surface')?.getAttribute('aria-disabled')==='false');
+ await page.mouse.move(rect.x+rect.width*.5,rect.y+rect.height*.25);await page.mouse.down();await page.mouse.move(rect.x+rect.width*.5,rect.y+rect.height*.29,{steps:4});await page.mouse.up();
+ await page.waitForFunction(()=>window.mimicSimulatorFixture.actions().length===2);actions=await page.evaluate(()=>window.mimicSimulatorFixture.actions());assert.equal(actions[1].action.type,'swipe');assert.ok(Math.abs(actions[1].action.endY-actions[1].action.y)>20);
+ await page.waitForFunction(()=>document.querySelector('.sim-surface')?.getAttribute('aria-disabled')==='false');await screen.focus();
+ await input.evaluate(node=>{window.__keyboard=node;window.__screen=document.querySelector('.sim-surface');node.dispatchEvent(new CompositionEvent('compositionstart'));node.value='Промежуточный';node.dispatchEvent(new InputEvent('input',{isComposing:true}));});await page.waitForTimeout(300);assert.equal((await page.evaluate(()=>window.mimicSimulatorFixture.actions())).length,2);
+ await input.evaluate(node=>{node.value='Привет 🧪';node.dispatchEvent(new CompositionEvent('compositionend'));node.dispatchEvent(new InputEvent('input'));});await page.waitForFunction(()=>window.mimicSimulatorFixture.actions().length===3);
+ assert.equal((await page.evaluate(()=>window.mimicSimulatorFixture.actions()))[2].action.text,'Привет 🧪');
+ await page.waitForFunction(()=>document.querySelector('.sim-surface')?.getAttribute('aria-disabled')==='false');
+ const paste='Я🧪'.repeat(4000);await input.evaluate((node,text)=>{const data=new DataTransfer();data.setData('text/plain',text);node.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));},paste);
+ await page.waitForFunction(()=>window.mimicSimulatorFixture.actions().filter(x=>x.action?.type==='text').slice(1).map(x=>x.action.text).join('').length===12000);
+ actions=await page.evaluate(()=>window.mimicSimulatorFixture.actions());const chunks=actions.filter(x=>x.action?.type==='text').slice(1).map(x=>x.action.text);assert.equal(chunks.join(''),paste);assert.ok(chunks.every(text=>Buffer.byteLength(text)<=8192&&!text.includes('\uFFFD')));
+ await page.waitForFunction(()=>document.querySelector('.sim-surface')?.getAttribute('aria-disabled')==='false');await screen.focus();await page.waitForTimeout(1100);assert.equal(await input.evaluate(node=>node===window.__keyboard&&document.activeElement===node),true,'Polling preserves input node and focus');
+ const prior=(await page.evaluate(()=>window.mimicSimulatorFixture.actions())).length;await input.evaluate(node=>{node.focus();node.value='Я🙂';node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',bubbles:true,cancelable:true}));});await page.waitForFunction(n=>window.mimicSimulatorFixture.actions().length===n+2,prior);actions=await page.evaluate(()=>window.mimicSimulatorFixture.actions());assert.equal(actions.at(-2).action.text,'Я🙂');assert.deepEqual(actions.at(-1).action,{type:'key',key:'backspace'});await page.waitForFunction(()=>document.querySelector('.sim-surface')?.getAttribute('aria-disabled')==='false');await page.keyboard.press('Delete');assert.match(await page.locator('.sim-input-notice').textContent(),/Delete.*не поддерживается/);
+ await page.locator('.sim-menu>summary').click();await page.getByRole('button',{name:'Развернуть',exact:true}).click();assert.equal(await page.locator('.sim-maximized').count(),1);if(await page.locator('.sim-picker').getAttribute('open')===null)await page.getByRole('button',{name:'Выбрать устройство',exact:true}).click();await page.keyboard.press('Escape');assert.equal(await page.locator('.sim-picker').getAttribute('open'),null);assert.equal(await page.locator('.sim-maximized').count(),1);await page.keyboard.press('Escape');assert.equal(await page.locator('.sim-maximized').count(),0);assert.equal(await page.locator('[data-block="simulators"] .block-title').getAttribute('aria-expanded'),'true');
+ const count=actions.length;await page.evaluate(()=>window.mimicSimulatorFixture.setBusy(true));const busyRect=await screen.boundingBox();assert.ok(busyRect);await page.mouse.click(busyRect.x+10,busyRect.y+10);await page.waitForTimeout(100);assert.equal((await page.evaluate(()=>window.mimicSimulatorFixture.actions())).length,count,'Busy input is discarded');await page.evaluate(()=>window.mimicSimulatorFixture.setBusy(false));
+ for(const width of [720,480,400,360,320]){await page.setViewportSize({width,height:760});await page.waitForTimeout(350);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'No horizontal overflow');await page.waitForFunction(()=>{const rect=document.querySelector('.sim-device').getBoundingClientRect();return rect.height>0&&rect.height<650&&rect.width<innerWidth;});const bounds=await page.locator('.sim-device').boundingBox();assert.ok(bounds.height<650&&bounds.width<width);if(width===360||width===720){for(const theme of ['light','dark']){await page.emulateMedia({colorScheme:theme});await page.locator('.simulator-v2').screenshot({path:`/private/tmp/MimicSimulatorV1-20261008/${width}-${theme}.png`});}await page.emulateMedia({colorScheme:'light'});}}
+ await page.screenshot({path:process.env.MIMIC_PANEL_SCREENSHOT??'/private/tmp/MimicSimulatorV2-20261007.png',fullPage:true});
+ // A collapsed view retains the session but stops frame delivery and catches up after agent work.
+ await page.locator('[data-block="simulators"] .block-title').click();await page.waitForTimeout(600);
+ const before=await page.evaluate(()=>window.mimicSimulatorFixture.calls().filter(x=>x==='simulator_ui_frame').length);await page.waitForTimeout(1000);
+ assert.equal(await page.evaluate(()=>window.mimicSimulatorFixture.calls().filter(x=>x==='simulator_ui_frame').length),before);
+ await page.evaluate(()=>window.mimicSimulatorFixture.agentCommand());await page.locator('[data-block="simulators"] .block-title').click();await page.waitForFunction(()=>document.querySelector('.sim-surface')?.getAttribute('aria-disabled')==='false');
+ const attachesBefore=await page.evaluate(()=>window.mimicSimulatorFixture.calls().filter(x=>x==='simulator_ui_attach').length);
+ const commandsBefore=await page.evaluate(()=>window.mimicSimulatorFixture.actions().length);
+ await page.evaluate(()=>window.mimicSimulatorFixture.failNextFrame());
+ await page.waitForFunction(before=>window.mimicSimulatorFixture.calls().filter(x=>x==='simulator_ui_attach').length===before+1,attachesBefore);
+ await page.waitForFunction(()=>document.querySelector('.sim-surface')?.getAttribute('aria-disabled')==='false');
+ assert.equal(await page.locator('.sim-viewport').isVisible(),true,'A lost passive session reconnects and paints a fresh frame');
+ assert.equal(await page.evaluate(()=>window.mimicSimulatorFixture.actions().length),commandsBefore,'Recovery must not replay device commands');
+ assert.doesNotMatch(await page.locator('.sim-message').textContent(),/Соединение потеряно/);
+ await page.evaluate(()=>window.mimicSimulatorFixture.setVisible(false));assert.equal(await page.locator('[data-block="simulators"]').isVisible(),false);await page.getByRole('button',{name:'Новое действие',exact:true}).click();assert.equal(await page.locator('.block-catalog').getByRole('button',{name:'Симулятор',exact:true}).count(),0);
  assert.deepEqual(errors,[]);
- console.log('PASS: simulator UI, Unicode input, stable DOM/focus/selection, refresh, narrow layout and close');
+ for(const options of ['simDevices=empty','simDevices=two','simDevices=two&edgeNames=1','simDevices=recent','simModel=ipad&simOrientation=landscape&simProjectless=1']){
+  await page.goto(`http://127.0.0.1:${server.address().port}/?preview=1&${options}`);await page.locator('[data-block="simulators"] .block-title').click();await page.waitForTimeout(400);
+  if(options.includes('empty')){assert.match(await page.locator('.sim-message').textContent(),/нет доступных/);assert.equal(await page.locator('.sim-surface').isVisible(),false);}
+  else if(options.includes('two')||options.includes('recent')){if(options.includes('edgeNames')){const labels=await page.locator('.sim-choice').allTextContents();assert.ok(labels.some(x=>x.includes('AAAAAAAA'))&&labels.some(x=>x.includes('CCCCCCCC')),'Duplicate names show UUID');await page.addStyleTag({content:'html{font-size:150%} .simulator-v2{font-size:150%}'});}assert.equal(await page.locator('.sim-surface').isVisible(),false);assert.equal(await page.getByRole('button',{name:'Home',exact:true}).isVisible(),false);for(const width of [320,400,480]){await page.setViewportSize({width,height:800});await page.waitForTimeout(350);const search=await page.locator('.sim-search').boundingBox(),choice=await page.locator('.sim-choice').first().boundingBox(),header=await page.locator('.sim-header').boundingBox();assert.ok(search.y>=header.y+header.height-1&&choice.y>=search.y+search.height,'Inline picker elements do not overlap: '+JSON.stringify({width,options,search,choice,header}));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:`/private/tmp/MimicSimulatorRefinement-20261007/disconnected-${width}-${options}.png`,fullPage:true});}await page.locator('.sim-search').fill('18 Pro');assert.ok(await page.locator('.sim-choice').count()>0,'Search includes model');await page.locator('.sim-search').fill('');await page.locator('.sim-choice').first().click();await page.waitForFunction(()=>document.querySelector('.sim-surface')?.getAttribute('aria-disabled')==='false');assert.equal(await page.locator('.sim-picker').getAttribute('open'),null,'Manual connection closes the inline picker');}
+  else{await page.waitForFunction(()=>document.querySelector('.sim-surface')?.getAttribute('aria-disabled')==='false');assert.equal(await page.locator('.sim-device.profile').count(),1);const bounds=await page.locator('.sim-device').boundingBox();assert.ok(bounds.width>bounds.height);await page.emulateMedia({colorScheme:'dark'});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.getByRole('button',{name:'Повернуть',exact:true}).click();await page.waitForFunction(()=>{const r=document.querySelector('.sim-device').getBoundingClientRect();return r.height>r.width;});await page.screenshot({path:'/private/tmp/MimicSimulatorIPadDark-20261007.png',fullPage:true});}
+ }
+ assert.deepEqual(errors,[]);console.log('PASS: automatic connection, fallback, raw tap/swipe, IME, UTF-8 chunks, focus, Escape, busy input, narrow layout, Xcode 26 hiding, collapse/resume, empty/multiple/recent devices, projectless iPad, landscape/portrait and dark theme');
 }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}

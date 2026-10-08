@@ -60,6 +60,13 @@ struct AppleSimulatorTests {
             #expect(throws: AppleSimulatorError.self) { try AppleSimulatorAction.swipe(x: 0, y: 0, endX: 1, endY: 1, duration: duration).command() }
         }
     }
+    @Test func specialKeysUseVerifiedCommandsAndUnsupportedDeleteIsRejected() throws {
+        #expect(try AppleSimulatorAction.key(.backspace).command() == "sender keyboard kbd \\u{0008}")
+        #expect(try AppleSimulatorAction.key(.return).command() == "sender keyboard kbd \\u{000A}")
+        #expect(throws: AppleSimulatorError.unsupported) { try AppleSimulatorAction.key(.forwardDelete).command() }
+        #expect(try SimulatorBridge.action(.object(["type": .string("key"), "key": .string("backspace")])) == .key(.backspace))
+        #expect(throws: AppleSimulatorError.arguments) { try SimulatorBridge.action(.object(["type": .string("key"), "key": .string("arbitrary DSL")])) }
+    }
     @Test func unicodeSpacesAndLiteralEscapesCannotBecomeCommands() throws {
         let value = "Привет  🧪\n\\u{000A} b h"
         let command = try AppleSimulatorAction.text(value).command()

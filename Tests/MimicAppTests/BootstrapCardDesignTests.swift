@@ -8,6 +8,40 @@ import MimicCore
 @Suite(.serialized)
 @MainActor
 struct BootstrapCardDesignTests {
+    /// Exercise the available terminal area, including the space reserved for the error action.
+    @Test func placeholderFitsFullAndExpandedWithEnlargedText() throws {
+        let output = ProcessInfo.processInfo.environment["MIMIC_PREVIEW_DIR"].map { URL(fileURLWithPath: $0) }
+        if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
+        for state in [BootstrapTerminalPlaceholderState.idle, .queued, .running, .unavailable] {
+            for width in [CGFloat(320), 440, 560] {
+                for expanded in [false, true] {
+                    for scale in [CGFloat(1), 1.5] {
+                        for dark in [false, true] {
+                            let terminalWidth = expanded ? width - 24 : (width - 36) * 0.6
+                            let height: CGFloat = (expanded ? 240 : 128) - (state == .unavailable ? 44 : 0)
+                            let view = NSHostingView(rootView: BootstrapTerminalPlaceholder(state: state, platform: .tvos)
+                                .environment(\.mimicPanelAppearance, .tileGrid).environment(\.mimicTextScale, scale)
+                                .environment(\.colorScheme, dark ? .dark : .light)
+                                .frame(width: terminalWidth, height: height))
+                            let window = NSWindow(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
+                            window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                            window.contentView = view
+                            defer { window.close() }
+                            view.frame = NSRect(x: 0, y: 0, width: terminalWidth, height: height)
+                            window.setContentSize(view.frame.size); view.layoutSubtreeIfNeeded()
+                            #expect(abs(view.fittingSize.height - height) < 1)
+                            let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+                            view.cacheDisplay(in: view.bounds, to: bitmap)
+                            if let output {
+                                try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appendingPathComponent("placeholder-\(state)-\(Int(width))-\(expanded)-\(scale)-\(dark).png"))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// The same realistic task data must fit the actual collapsed grid, without a live executor.
     @Test func collapsedStatesFitTheirCardHeight() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("BootstrapCompact-" + UUID().uuidString)

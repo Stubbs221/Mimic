@@ -30,7 +30,7 @@ try{
    assert.equal(Math.round((await card.boundingBox()).height),160);assert(await card.evaluate(node=>node.scrollWidth<=node.clientWidth+1));
    assert(await summary.evaluate(node=>node.getBoundingClientRect().bottom<=node.parentElement.getBoundingClientRect().bottom-10));
    const footers=await summary.locator('.ci-run-footer').evaluateAll(nodes=>nodes.map(node=>({bottom:node.getBoundingClientRect().bottom,runBottom:node.parentElement.getBoundingClientRect().bottom,top:node.getBoundingClientRect().top,branchBottom:node.parentElement.querySelector('.ci-compact-branch').getBoundingClientRect().bottom})));
-   for(const footer of footers){assert(Math.abs(footer.bottom-footer.runBottom)<1);assert(footer.top>=footer.branchBottom+3);}
+   for(const footer of footers){assert(Math.abs(footer.bottom-footer.runBottom)<1,JSON.stringify({width,colorScheme,reducedMotion,contrast,size,footer}));assert(footer.top>=footer.branchBottom+3);}
    if(count===2)assert(Math.abs(footers[0].bottom-footers[1].bottom)<1);
    if(reducedMotion==='reduce')assert.equal(await progress.locator('div').evaluate(node=>getComputedStyle(node).transitionDuration),'0s');
   }

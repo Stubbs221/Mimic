@@ -53,8 +53,8 @@ final class BootstrapActivityPanel: NSObject, NSWindowDelegate {
         guard self.showsBootstrap || self.model.ciMonitor.overlay != nil else { self.motion.setVisible(false); return }
         self.updating = true
         defer { self.updating = false }
-        let content = MimicWindowRoot(presentation: self.motion.presentation, settings: self.model.motionSettings) {
-            ActivityViewport(model: self.model, showsBootstrap: self.showsBootstrap, stamp: self.contentStamp,
+        let content = MimicWindowRoot(presentation: self.motion.presentation, settings: self.model.motionSettings, appearance: self.model.appearance) {
+            ActivityViewport(model: self.model, monitor: self.model.ciMonitor, showsBootstrap: self.showsBootstrap, stamp: self.contentStamp,
                 open: { [weak self] in self?.open() }, measured: { [weak self] height, stamp in
                     DispatchQueue.main.async { self?.naturalHeightChanged(height, stamp: stamp) }
                 })
@@ -135,7 +135,9 @@ final class PersistentBootstrapPanel: NSPanel {
 
 /// Section updates retain the same hosting view and window drag surface.
 private struct ActivityViewport: View {
+    private var theme = MimicTheme()
     @ObservedObject var model: TaskCoordinator
+    @ObservedObject var monitor: CIActivityMonitor
     let showsBootstrap: Bool
     let stamp: String
     let open: () -> Void
@@ -144,8 +146,8 @@ private struct ActivityViewport: View {
         ScrollView {
             VStack(spacing: 0) {
                 if self.showsBootstrap { QuickBootstrapView(model: self.model, showMimic: self.open, framed: false) }
-                if self.showsBootstrap, self.model.ciMonitor.overlay != nil { Divider() }
-                if let summary = self.model.ciMonitor.overlay {
+                if self.showsBootstrap, self.monitor.overlay != nil { Divider() }
+                if let summary = self.monitor.overlay {
                     CIActivitySection(summary: summary, open: { self.model.showCI(summary) }, hide: { self.model.ciMonitor.hideCI() })
                 }
             }.fixedSize(horizontal: false, vertical: true)
@@ -153,7 +155,7 @@ private struct ActivityViewport: View {
         }.scrollIndicators(.hidden).frame(width: MimicMetrics.cardWidth).frame(maxHeight: .infinity, alignment: .top)
             // The viewport keeps all four corners when content exceeds screen height.
             .modifier(MimicCardBackground())
-            .clipShape(RoundedRectangle(cornerRadius: MimicMetrics.surfaceRadius))
+            .clipShape(RoundedRectangle(cornerRadius: theme.tiled ? 18 : MimicMetrics.surfaceRadius))
             .onPreferenceChange(BootstrapHeightKey.self) { value in self.measured(value.height, value.stamp) }
     }
 }

@@ -9,6 +9,7 @@ import Foundation
 import SwiftUI
 import Testing
 import MimicCore
+import Combine
 @testable import Mimic
 
 @MainActor
@@ -54,6 +55,19 @@ private struct UsageCoordinatorFixture {
 
 @Suite(.serialized, .timeLimit(.minutes(1))) @MainActor
 struct AIUsageCoordinatorTests {
+    @Test func identicalScanDoesNotPublishHistoriesAgain() async throws {
+        let points = [AIUsageDailyPoint(date: Date(timeIntervalSince1970: 1000), tokens: 1234)]
+        let f = try UsageCoordinatorFixture(scanUsage: { .init(activity: nil, histories: [.codex: points], unknownModels: [.codex: ["fixture-model"]]) }); defer { f.cleanup() }
+        f.codex.result = .success(f.snapshot())
+        await f.coordinator.tick(); try await self.wait { f.coordinator.refreshing.isEmpty }
+        #expect(f.coordinator.histories[.codex] == points && f.coordinator.unknownModels[.codex] == ["fixture-model"])
+        var historyPublications = 0, unknownPublications = 0
+        let history = f.coordinator.$histories.dropFirst().sink { _ in historyPublications += 1 }
+        let unknown = f.coordinator.$unknownModels.dropFirst().sink { _ in unknownPublications += 1 }
+        defer { history.cancel(); unknown.cancel() }
+        await f.coordinator.tick()
+        #expect(historyPublications == 0 && unknownPublications == 0)
+    }
     private func wait(_ condition: () -> Bool) async throws {
         for _ in 0 ..< 1000 {
             if condition() { return }

@@ -58,7 +58,7 @@ public struct BuildParameters: Codable, Equatable, Sendable {
 }
 
 public enum BuildError: String, Error, Sendable {
-    case arguments, testsRequired, context, unavailable, unsupported, catalogue, configuration, duplicate, capacity, notFound, diagnostic, stopped
+    case arguments, testsRequired, context, unavailable, unsupported, catalogue, catalogueTimeout, catalogueProcess, catalogueResponse, configuration, duplicate, capacity, notFound, diagnostic, stopped
 }
 
 /// Execution and observation have separate states: a broken connection never proves build failure.
@@ -111,31 +111,48 @@ public struct BuildCatalogue: Codable, Sendable {
     public var destinations: [BuildDestination] = []
     public var testPlans: [String] = []
     public init() { }
-    public static func inspect(project: ProjectContext, scheme: String = "") throws -> Self {
+    public static func inspect(project: ProjectContext, scheme: String = "", includeTestPlans: Bool = false, timeout: TimeInterval = 120) throws -> Self {
+        try inspect(project: project, scheme: scheme, includeTestPlans: includeTestPlans, timeout: timeout) { arguments, environment, remaining in
+            ReadOnlyProcess.capture("/usr/bin/xcrun", ["xcodebuild"] + arguments, directory: project.path, environment: environment, timeout: remaining)
+        }
+    }
+    /// All child queries consume one absolute budget; a slow first query cannot restart the deadline.
+    static func inspect(project: ProjectContext, scheme: String, includeTestPlans: Bool, timeout: TimeInterval,
+                        capture run: ([String], [String: String], TimeInterval) throws -> (Int32, String)) throws -> Self {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
         var env = EnvironmentInspector.environment(project: project)
         env["DEVELOPER_DIR"] = project.developerDirectory ?? EnvironmentInspector.capture("/usr/bin/xcode-select", ["-p"]).1
         func capture(_ args: [String]) throws -> String {
-            let result = EnvironmentInspector.capture("/usr/bin/xcrun", ["xcodebuild"] + args + ["-disableAutomaticPackageResolution", "-onlyUsePackageVersionsFromResolvedFile"], directory: project.path, environment: env)
-            guard result.0 == 0 else { throw BuildError.catalogue }; return result.1
+            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            guard remaining > 0 else { throw BuildError.catalogueTimeout }
+            let result = try run(args + ["-disableAutomaticPackageResolution", "-onlyUsePackageVersionsFromResolvedFile"], env, remaining)
+            guard result.0 != ReadOnlyProcess.timeoutExitCode, ProcessInfo.processInfo.systemUptime < deadline else { throw BuildError.catalogueTimeout }
+            guard result.0 == 0 else { throw BuildError.catalogueProcess }
+            return result.1
+        }
+        func object(_ text: String) throws -> [String: Any] {
+            guard let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { throw BuildError.catalogueResponse }
+            return json
         }
         var value = Self()
         guard let target = project.appleTarget else { throw BuildError.configuration }
         let targetFlag = target.path.hasSuffix(".xcodeproj") ? "-project" : "-workspace"
         _ = try ProfileValidation.checkoutPath(target.path, root: project.path)
-        let workspace = try capture(["-list", "-json", targetFlag, project.workspace])
-        let json = try JSONSerialization.jsonObject(with: Data(workspace.utf8)) as? [String: Any]
-        value.schemes = ((json?[targetFlag == "-project" ? "project" : "workspace"] as? [String: Any])?["schemes"] as? [String] ?? []).sorted()
-        guard !value.schemes.isEmpty else { throw BuildError.catalogue }
+        let json = try object(capture(["-list", "-json", targetFlag, project.workspace]))
+        guard let schemes = (json[targetFlag == "-project" ? "project" : "workspace"] as? [String: Any])?["schemes"] as? [String], !schemes.isEmpty else { throw BuildError.catalogueResponse }
+        value.schemes = schemes.sorted()
         guard let configurationPath = targetFlag == "-project" ? Optional(target.path) : target.configurationProject else { throw BuildError.configuration }
-        let projectJSON = try capture(["-list", "-json", "-project", try ProfileValidation.checkoutPath(configurationPath, root: project.path)])
-        let projectObject = try JSONSerialization.jsonObject(with: Data(projectJSON.utf8)) as? [String: Any]
-        value.configurations = ((projectObject?["project"] as? [String: Any])?["configurations"] as? [String] ?? []).sorted()
+        let projectObject = try object(capture(["-list", "-json", "-project", try ProfileValidation.checkoutPath(configurationPath, root: project.path)]))
+        guard let configurations = (projectObject["project"] as? [String: Any])?["configurations"] as? [String], !configurations.isEmpty else { throw BuildError.catalogueResponse }
+        value.configurations = configurations.sorted()
         if !scheme.isEmpty {
             guard value.schemes.contains(scheme) else { throw BuildError.configuration }
             value.destinations = destinations(from: try capture(["-showdestinations", targetFlag, project.workspace, "-scheme", scheme]))
-            let plans = EnvironmentInspector.capture("/usr/bin/xcrun", ["xcodebuild", "-showTestPlans", targetFlag, project.workspace, "-scheme", scheme, "-disableAutomaticPackageResolution", "-onlyUsePackageVersionsFromResolvedFile"], directory: project.path, environment: env)
-            if plans.0 == 0, let range = plans.1.range(of: "Test plans associated with the scheme") {
-                value.testPlans = plans.1[range.upperBound...].components(separatedBy: "\n").dropFirst().map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            if includeTestPlans {
+                let plans = try capture(["-showTestPlans", targetFlag, project.workspace, "-scheme", scheme])
+                if let range = plans.range(of: "Test plans associated with the scheme") {
+                    value.testPlans = plans[range.upperBound...].components(separatedBy: "\n").dropFirst().map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                } else { throw BuildError.catalogueResponse }
             }
         }
         return value

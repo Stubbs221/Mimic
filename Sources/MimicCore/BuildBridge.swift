@@ -3,7 +3,7 @@ import Foundation
 
 /// The same strict payload is used by Codex and the bundled terminal client.
 public enum BuildBridge {
-    public static let tools = ["get_build_configuration", "build_project", "run_selected_tests", "get_build_activity", "cancel_build_activity", "get_build_diagnostic"]
+    public static let tools = ["start_build_configuration", "get_build_configuration_state", "get_build_configuration", "build_project", "run_selected_tests", "get_build_activity", "cancel_build_activity", "get_build_diagnostic"]
     public static func context(_ value: BridgeValue) throws -> ProjectContext {
         guard let fields = value.object, Set(fields.keys).isSubset(of: ["checkoutId", "branch", "sha", "xcode", "appleTarget", "profileID", "profileRevision"]), let path = value["checkoutId"].string, let branch = value["branch"].string, let sha = value["sha"].string, let xcode = value["xcode"].string else { throw BuildError.context }
         let target = value["appleTarget"] == .null ? nil : try JSONDecoder().decode(AppleTarget.self, from: JSONEncoder().encode(value["appleTarget"]))

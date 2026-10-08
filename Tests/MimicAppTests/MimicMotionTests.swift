@@ -35,9 +35,10 @@ import MimicCore
 }
 private struct CollapseProbeView: View {
     let probe: CollapseProbe
+    var retainsContent = false
     var body: some View {
-        MimicCollapse(expanded: self.probe.expanded, source: self.probe.source) {
-            Text("Fixture disclosure").frame(width: 200, height: 100)
+        MimicCollapse(expanded: self.probe.expanded, source: self.probe.source, retainsContent: self.retainsContent) {
+            Text("Fixture disclosure").frame(width: 200, height: 100).background(Color.red)
                 .onAppear { self.probe.mounted += 1 }.onDisappear { self.probe.removed += 1 }
         }.frame(width: 200, height: 130, alignment: .top)
     }
@@ -45,6 +46,43 @@ private struct CollapseProbeView: View {
 
 @Suite(.serialized, .timeLimit(.minutes(1))) @MainActor
 struct MimicMotionTests {
+    @Test(arguments: [false, true])
+    func retainedDisclosureMountsOnlyOnFirstOpenAndPreservesItsSubtree(reduceMotion: Bool) async throws {
+        let probe = CollapseProbe(); probe.expanded = false
+        let settings = MimicMotionSettings(); settings.reduceMotionOverride = reduceMotion
+        let host = NSHostingView(rootView: CollapseProbeView(probe: probe, retainsContent: true).environment(\.mimicMotionSettings, settings))
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 200, height: 130), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(probe.mounted == 0 && probe.removed == 0)
+        probe.expanded = true
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(probe.mounted == 1 && probe.removed == 0)
+        probe.expanded = false
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(probe.mounted == 1 && probe.removed == 0)
+        probe.expanded = true
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(probe.mounted == 1 && probe.removed == 0)
+    }
+
+    @Test func initiallyClosedDisclosureRevealsWithReduceMotion() async throws {
+        let probe = CollapseProbe(); probe.expanded = false
+        let settings = MimicMotionSettings(); settings.reduceMotionOverride = true
+        let host = NSHostingView(rootView: CollapseProbeView(probe: probe).environment(\.mimicMotionSettings, settings))
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 200, height: 130), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.close() }
+        try await Task.sleep(for: .milliseconds(50)); probe.expanded = true
+        try await Task.sleep(for: .milliseconds(250)); host.layoutSubtreeIfNeeded()
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds)); host.cacheDisplay(in: host.bounds, to: bitmap)
+        try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/private/tmp/MimicTileGrid-20261008/native/reduced-disclosure.png"))
+        let pixel = try #require(bitmap.colorAt(x: bitmap.pixelsWide / 2, y: bitmap.pixelsHigh / 2)?.usingColorSpace(.deviceRGB))
+        #expect(pixel.redComponent > 0.8 && pixel.greenComponent < 0.5, "Disclosure pixel: \(pixel)")
+        #expect(probe.mounted == 1 && probe.removed == 0)
+    }
+
     @Test(arguments: [MimicMotionSource.pointer, .keyboard, .automatic])
     func policyCoversKeyboardReducedMotionAndDebugSpeed(_ source: MimicMotionSource) {
         for reduced in [false, true] {
@@ -193,7 +231,10 @@ struct MimicMotionTests {
         let suite = "Mimic-scroll-" + UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))
         let model = TaskCoordinator(directory: directory, defaults: defaults)
-        defer { try? FileManager.default.removeItem(at: directory); defaults.removePersistentDomain(forName: suite) }
+        defer { model.stopAndExit(); try? FileManager.default.removeItem(at: directory); defaults.removePersistentDomain(forName: suite) }
+        model.aiUsage.stop()
+        // Drain the model's queued startup notification before observing scroll-only mutations.
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
         var domain = 0, scroll = 0, callbacks = 0
         let domainSubscription = model.objectWillChange.sink { domain += 1 }
         let scrollSubscription = model.panelScroll.objectWillChange.sink { scroll += 1 }

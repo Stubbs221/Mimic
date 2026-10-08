@@ -82,7 +82,10 @@ struct LiquidGlassPreviewPanel: View {
         } else if self.dataset == "worst" {
             let project = ProjectContext(path: "/private/tmp/Mimic-fixture/MobilePlatformInfrastructureCheckout", branch: "feature/infrastructure/dependency-registry-bootstrap-diagnostics", commit: "fixture")
             self.model.projects = [project]; self.model.selectedProjectPath = project.path
-            self.model.simulators = [SimulatorDevice(id: UUID(), name: "iPad Pro 13-inch Mobile Platform Infrastructure Development", runtime: "iOS 26.5", state: "Booted")]
+            self.model.installSimulatorPreview((0..<9).map { index in
+                SimulatorDevice(id: UUID(), name: index < 2 ? "Mimic Apple Probe" : index == 2 ? "iPad Pro 13-inch Mobile Platform Infrastructure Development" : "Apple TV 4K (3rd generation) (at 1080p)",
+                                runtime: index > 2 ? "tvOS 27.0" : "iOS 27.0", state: index < 4 ? "Booted" : "Shutdown")
+            })
             if let index = self.model.records.firstIndex(where: { $0.status == .failed }) {
                 self.model.records[index].error = "/Fastlane/fastfiles/project_dependency_registry_configuration:223: invalid multibyte char (US-ASCII)"
             }

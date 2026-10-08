@@ -13,7 +13,7 @@ struct ReadOnlyProcessTests {
         for script in ["sleep 30 & printf child-pid:%s $!", "trap '' TERM; printf ready; while :; do sleep 1; done"] {
             let start = ContinuousClock.now
             let result = ReadOnlyProcess.capture("/bin/sh", ["-c", script], directory: nil, environment: nil, timeout: 0.15)
-            #expect(result.0 == -1)
+            #expect(result.0 == ReadOnlyProcess.timeoutExitCode)
             #expect(start.duration(to: .now) < .seconds(2))
             if let pid = result.1.split(separator: ":").last.flatMap({ Int32($0) }) {
                 #expect(terminated(pid))

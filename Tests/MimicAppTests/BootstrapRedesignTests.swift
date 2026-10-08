@@ -1,6 +1,7 @@
 // Created by Василий Маслов on 06.10.2026.
 import AppKit
 import CryptoKit
+import Combine
 import Foundation
 import Testing
 import SwiftUI
@@ -43,6 +44,11 @@ import MimicCore
         var record = TaskRecord(action: .bootstrap, project: ProjectContext(path: root.path)); record.status = .running
         model.records = [record]
         let terminal = model.bootstrapTerminal(for: record), originalView = terminal.view()
+        #expect(!terminal.hasOutput)
+        var outputTransitions: [Bool] = []
+        let observation = terminal.$hasOutput.sink { outputTransitions.append($0) }
+        defer { observation.cancel() }
+        #expect(!String(decoding: originalView.getTerminal().getBufferAsData(), as: UTF8.self).contains("mimic bootstrap"))
         let channel = try PanelTerminalChannel(taskID: record.id, threadID: "fixture-chat", clientKey: P256.KeyAgreement.PrivateKey().publicKey.x963Representation)
         let subscription = PanelTerminalSubscription(channel, model: model)
         defer { subscription.stop() }
@@ -52,6 +58,8 @@ import MimicCore
         model.detachTerminal(owner: historyOwner)
         model.terminalOutput?(UUID(), Data("another task\r\n".utf8))
         model.terminalOutput?(record.id, Data("final line\r\n".utf8))
+        model.terminalOutput?(record.id, Data())
+        #expect(outputTransitions == [false, true], "First output publishes immediately; empty chunks cannot restore the placeholder")
         model.records[0].status = .failed
         #expect(model.replay(id: record.id).isEmpty)
         #expect(String(decoding: terminal.snapshot, as: UTF8.self) == "first line\r\nfinal line\r\n")

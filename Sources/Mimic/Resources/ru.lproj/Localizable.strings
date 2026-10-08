@@ -146,8 +146,8 @@
 "generator.error.missingConfig" = "Не найдена конфигурация Generation в Fastlane/.env.default.";
 "generator.error.missingTemplate" = "Не найден шаблон Generation. Проверьте checkout.";
 "generator.error.unknown" = "Не удалось прочитать план Generation. Проверьте Ruby и наличие шаблонов в проекте.";
-"simulators.description" = "iPhone и iPad из выбранного Xcode. Запуск и выключение — для конкретного устройства.";
-"simulators.search" = "Найти устройство или версию iOS…";
+"simulators.description" = "iPhone, iPad и Apple TV из выбранного Xcode. Запуск и выключение — для конкретного устройства.";
+"simulators.search" = "Найти устройство или версию ОС…";
 "simulators.loading" = "Получаем список устройств…";
 "simulators.booted" = "запущен";
 "simulators.off" = "выключен";
@@ -156,8 +156,8 @@
 "simulators.shutdown" = "Выключить";
 "simulators.actions" = "Действия с симулятором";
 "simulators.empty" = "Нет доступных устройств";
-"simulators.empty.help" = "Добавьте iOS Simulator Runtime и устройство в Xcode или измените запрос поиска.";
-"simulators.error" = "Не удалось получить устройства. Проверьте выбранный Xcode и установленные iOS runtimes.";
+"simulators.empty.help" = "Добавьте Simulator Runtime и устройство в выбранном Xcode.";
+"simulators.error" = "Не удалось получить устройства. Проверьте выбранный Xcode и установленные Simulator runtimes.";
 "simulators.open.error" = "Не удалось открыть Simulator выбранного Xcode.";
 "tasks.search" = "Поиск по задачам и проектам…";
 "tasks.filter" = "Фильтр задач";
@@ -209,6 +209,14 @@
 "branch.dirty" = "Сначала обработайте изменения и новые файлы в Git.";
 "branch.operation" = "Сначала завершите текущую операцию Git.";
 "branch.blocked" = "Дождитесь проверки checkout и завершите задачи Mimic.";
+"branch.blocker.update" = "Дождитесь завершения обновления Mimic.";
+"branch.blocker.shutdown" = "Mimic завершает работу. Переключение ветки недоступно.";
+"branch.blocker.tasks" = "Дождитесь завершения локальных задач Mimic и их проверки перед запуском.";
+"branch.blocker.builds" = "Дождитесь завершения сборок и тестов Mimic, включая проверку перед запуском.";
+"branch.blocker.simulator" = "Дождитесь завершения операции или получения снимка симулятора.";
+"branch.blocker.git" = "Завершите текущее переключение ветки или операцию Git.";
+"branch.blocker.checking" = "Проверяем checkout. Переключение станет доступно после проверки.";
+"branch.blocker.unavailable" = "Не удалось проверить checkout. Откройте список веток повторно для новой проверки.";
 "branch.missing" = "Локальная ветка больше не существует.";
 "branch.error" = "Не удалось проверить или переключить ветку.";
 "tool.name.generation" = "Celestial";
@@ -413,7 +421,7 @@
 "interface.term.tools.title" = "Инструменты";
 "interface.term.tools.detail" = "Строки Generation, Localization, Protobuf и SwiftFormat на главной. Очистка запускается из быстрого меню.";
 "interface.term.simulators.title" = "Раздел «Симуляторы»";
-"interface.term.simulators.detail" = "Один выбранный запущенный симулятор, переключатель других запущенных устройств и полный каталог с поиском.";
+"interface.term.simulators.detail" = "Запущенные и недавние симуляторы: два в мини-плашке, четыре в широкой. Каталог с поиском, фильтрами и действиями для каждого устройства.";
 "interface.term.settings.title" = "Страница «Настройки»";
 "interface.term.settings.detail" = "Шестерёнка открывает отдельную страницу внутри панели: Приложение, AI и интеграции, CI, Окружение. «Назад» возвращает к прежнему месту главной; Escape закрывает панель.";
 "interface.term.ci.title" = "Раздел «CI»";
@@ -512,9 +520,9 @@
 "mcp.error.admission" = "Задача не добавлена. Проверьте состояние checkout, Xcode и очереди в Mimic.";
 "mcp.submit.unknown" = "Jenkins мог принять запрос, но подтверждение не получено. Проверьте Jenkins перед новым запуском; автоматического повтора нет.";
 "mcp.pipeline.unlinked" = "Jenkins завершился, но точный GitLab pipeline не найден. Проверьте ссылку на сборку Jenkins.";
-"mcp.install.instructions" = "<!-- Created by Василий Маслов on 04.10.2026. -->\n# Mimic в Codex\n\nДобавьте эту папку как локальный marketplace в менеджере плагинов Codex. Установите Mimic из Mimic Local и откройте новый чат. В панели чата выберите «Задачи Mimic».\n\nЕсли версия Codex принимает путь к манифесту, выберите .agents/plugins/marketplace.json в этой папке.\n\nMimic.app должен оставаться по текущему пути. После перемещения приложения повторите «Подключить к Codex» и обновите плагин. Node.js и терминал для работы не нужны.\n\nДля UI-тестов подключите GitLab и Jenkins в настройках нативного Mimic. Токены не отправляйте в чат.\n\nПанель поддерживает Bootstrap iOS/tvOS, две очистки, отмену локальной задачи, выбор удалённой ветки и плана UI-тестов. Диагностика передаётся в чат только по явному запросу; перед отправкой можно проверить и сократить фрагмент.\n";
+"mcp.install.instructions" = "<!-- Created by Василий Маслов on 04.10.2026. -->\n# Mimic в Codex\n\nДобавьте эту папку как локальный marketplace в менеджере плагинов Codex. Установите Mimic из Mimic Local и откройте новый чат. В панели чата выберите «Mimic».\n\nЕсли версия Codex принимает путь к манифесту, выберите .agents/plugins/marketplace.json в этой папке.\n\nMimic.app должен оставаться по текущему пути. После перемещения приложения повторите «Подключить к Codex» и обновите плагин. Node.js и терминал для работы не нужны.\n\nДля UI-тестов подключите GitLab и Jenkins в настройках нативного Mimic. Токены не отправляйте в чат.\n\nПанель поддерживает Bootstrap iOS/tvOS, две очистки, отмену локальной задачи, выбор удалённой ветки и плана UI-тестов. Диагностика передаётся в чат только по явному запросу; перед отправкой можно проверить и сократить фрагмент.\n";
 
-"mcp.installed" = "Mimic установлен в Codex. Откройте новый чат и выберите таб «Задачи Mimic».";
+"mcp.installed" = "Mimic установлен в Codex. Откройте новый чат и выберите таб «Mimic».";
 
 "mcp.plugin.description" = "Локальные задачи Mimic и UI-тесты через Jenkins";
 "mcp.plugin.shortDescription" = "Задачи и UI-тесты";
@@ -826,10 +834,10 @@
 
 /* Grouped settings page */
 "settings.back" = "Назад";
-"settings.group.application" = "Приложение";
-"settings.group.aiIntegrations" = "AI и интеграции";
+"settings.group.application" = "Основные";
+"settings.group.aiIntegrations" = "AI и Codex";
 "settings.group.ci" = "CI";
-"settings.group.environment" = "Окружение";
+"settings.group.environment" = "Профиль и среда";
 "settings.field.server" = "Сервер";
 "settings.connection.connected" = "Подключено";
 "settings.connection.disconnected" = "Не подключено";
@@ -838,7 +846,7 @@
 "settings.connection.checkout" = "Для проверки и сохранения GitLab выберите проект в «Настройки → Окружение».";
 "settings.token.keep" = "Оставьте поле токена пустым, чтобы использовать сохранённый токен.";
 "settings.jenkins.token.detail" = "Личный API-токен Jenkins хранится в Связке ключей.";
-"settings.ai.default" = "Агент для анализа задач";
+"settings.ai.default" = "Провайдер по умолчанию";
 "settings.ai.analysis" = "Анализ задач";
 "settings.ai.analysis.detail" = "Локальный CLI анализирует выбранный фрагмент результата задачи по вашему запросу.";
 "settings.ai.path" = "Путь к CLI";
@@ -910,6 +918,17 @@
 "panel.layout.conflict" = "Раскладка изменилась. Отмените настройку и откройте её снова.";
 "panel.layout.invalid" = "Не удалось разместить блок. Выберите свободное место.";
 "panel.new.action" = "Новое действие";
+"panel.tiles.add" = "Добавить плитку";
+"panel.tiles.remove" = "Убрать плитку";
+"panel.tiles.remove.hint" = "Выберите плитку, чтобы убрать её с панели";
+"panel.tiles.empty" = "Добавьте первую плитку";
+"panel.tiles.empty.help" = "Нажмите «+», чтобы настроить свою панель.";
+"panel.tiles.search" = "Найти плитку";
+"panel.tiles.no.results" = "Подходящих плиток нет";
+"panel.tiles.all.added" = "Все плитки уже на панели";
+"panel.tiles.all.added.help" = "Убранные плитки появятся здесь снова.";
+"footer.history" = "История";
+"panel.chrome.close" = "Закрыть";
 "panel.ready" = "Готов к запуску";
 "panel.open.tool" = "Открыть инструмент";
 
@@ -925,6 +944,8 @@
 "panel.notice.input" = "Задача ожидает ввода";
 
 "panel.layout.drag.hint" = "Удерживайте карточку или глубоко нажмите трекпад, чтобы переместить.";
+"panel.layout.drag.mini" = "Компактная";
+"panel.layout.drag.full" = "Полная";
 "panel.layout.drag.conflict" = "Раскладка уже изменена. Загружено её актуальное состояние.";
 
 "tasks.more" = "Показать ещё";
@@ -947,7 +968,7 @@
 /* Automatic updates */
 "update.title" = "Обновления Mimic";
 "update.automatic" = "Обновлять автоматически";
-"update.explanation" = "Mimic скачивает новые версии и перезапускается после завершения локальных задач.";
+"update.explanation" = "Mimic перезапустится после завершения задач.";
 "update.check" = "Проверить обновления";
 "update.install" = "Установить обновление";
 "update.state.unavailable" = "Источник обновлений ещё не настроен";
@@ -975,3 +996,141 @@
 "bootstrap.xcode.blocked.compact" = "Xcode не закрыт";
 "bootstrap.preparation.description" = "Полная подготовка зависимостей, UI-тестов и проекта. Перед запуском Mimic закроет все экземпляры Xcode; обработайте диалоги сохранения несохранённых изменений в Xcode.";
 "bootstrap.cancel" = "Отменить";
+
+"simulators.filter" = "Фильтр устройств";
+"simulators.filter.all" = "Все";
+"simulators.filter.booted" = "Запущенные";
+"simulators.filter.recent" = "Недавние";
+"simulators.filter.empty" = "В этом фильтре нет устройств.";
+"simulators.search.empty" = "По запросу ничего не найдено.";
+"simulators.page.previous" = "Назад";
+"simulators.page.next" = "Далее";
+"simulators.page.position" = "%d из %d";
+"simulators.compact.empty" = "Нет запущенных или недавних устройств.";
+"simulators.stale" = "Данные устарели";
+"simulators.retry" = "Повторить";
+"simulators.forget" = "Убрать из недавних";
+"simulators.showTask" = "Показать задачу и лог";
+"simulators.preparing" = "подготовка";
+"simulators.queued" = "в очереди";
+"simulators.booting" = "запускается";
+"simulators.shuttingDown" = "выключается";
+"simulators.opening" = "открывается";
+"simulators.operation.error" = "Не удалось выполнить действие с симулятором.";
+
+// Project tools
+"tools.description.generation" = "Создание UI-компонентов и блоков";
+"tools.description.localization" = "Обновление Swift-локализации";
+"tools.description.proto" = "Генерация моделей из .proto";
+"tools.description.format" = "Форматирование Swift-кода";
+"tools.description.fullCleanup" = "Очистка кэшей разработки";
+"tools.description.derivedDataCleanup" = "Очистка данных сборки Xcode";
+"tools.effects.localization" = "Обновит сгенерированную локализацию по правилам выбранного профиля.";
+"tools.effects.proto" = "Обновит модели из схем протоколов по правилам выбранного профиля.";
+"tools.effects.format" = "Отформатирует файлы, выбранные действием профиля. Точная команда доступна в подробностях.";
+"tools.effects.fullCleanup" = "Удалит кэши, указанные действием выбранного профиля. Xcode должен быть закрыт. Следующая сборка может занять больше времени.";
+"tools.effects.derivedDataCleanup" = "Удалит данные сборки, указанные действием выбранного профиля. Xcode должен быть закрыт. При следующей сборке они создадутся заново.";
+"tools.back" = "Все инструменты";
+"tools.pin" = "Добавить в избранное";
+"tools.unpin" = "Убрать из избранного";
+"tools.move.up" = "Выше в избранном";
+"tools.move.down" = "Ниже в избранном";
+"tools.favorites.restored" = "Восстановлены Celestial, Babylon и SwiftFormat.";
+"tools.favorites.conflict" = "Избранное изменилось в другой панели. Данные обновлены — повторите изменение.";
+"tools.task.open" = "Открыть задачу и лог";
+"tools.queue.explanation" = "Ожидает освобождения общей очереди. Можно отменить до запуска.";
+"tools.generator.ui" = "UI-компонент";
+"tools.generator.module" = "Sicilia";
+"tools.generator.feature" = "Galera";
+"tools.unavailable" = "Инструмент пока недоступен.";
+"tools.settings" = "Настройки окружения";
+"tools.command.unavailable" = "Команда станет доступна после заполнения формы и проверки окружения.";
+"tools.effects.full" = "Удалит общие кэши SwiftPM, DerivedData и SourcePackages Xcode для всех проектов этого пользователя. Xcode должен быть закрыт. Следующая сборка заново загрузит зависимости и создаст кэши.";
+"tools.effects.derivedData" = "Удалит содержимое общей папки Xcode DerivedData для всех проектов этого пользователя. Xcode должен быть закрыт. При следующей сборке данные создадутся заново.";
+"mcp.error.toolsConflict" = "Избранное изменилось в другой панели. Данные обновлены — повторите изменение.";
+"mcp.error.toolBusy" = "Этот инструмент уже выполняется или ожидает в очереди для выбранного проекта.";
+
+"simulator.workspace.title" = "Workspace для доступа Xcode";
+"simulator.workspace.choose" = "Выбрать workspace";
+"simulator.workspace.invalid" = "Выберите существующий .xcworkspace или .xcodeproj";
+
+// Catalogue query failure categories.
+"build.error.catalogueTimeout" = "Xcode не вернул каталог за 120 секунд";
+"build.error.catalogueProcess" = "Xcode завершил получение каталога с ошибкой";
+"build.error.catalogueResponse" = "Xcode вернул некорректный каталог";
+
+// Branch switching with preserved local edits.
+"branch.rebase" = "Rebase на develop";
+"branch.rebase.help" = "Перед переключением получить свежий origin/develop и перебазировать выбранную ветку. Конфликты передать в новый чат Codex.";
+"branch.phase.checking" = "Проверяем переключение…";
+"branch.phase.fetching" = "Получаем свежий origin/develop…";
+"branch.phase.rebasing" = "Перебазируем выбранную ветку…";
+"branch.phase.stashing" = "Сохраняем локальные изменения…";
+"branch.phase.switching" = "Переключаем ветку…";
+"branch.phase.restoring" = "Восстанавливаем локальные изменения…";
+"branch.phase.awaitingAgent" = "Конфликты — ожидаем Codex";
+"branch.phase.resolving" = "Codex разрешает конфликты";
+"branch.phase.needsReview" = "Требуется проверка состояния Git";
+"branch.phase.succeeded" = "Ветка переключена";
+"branch.phase.failed" = "Не удалось переключить ветку";
+"branch.phase.cancelled" = "Переключение отменено";
+"branch.delivery.pending" = "Готовим передачу в новый чат Codex…";
+"branch.delivery.reserved" = "Отправляем задачу в новый чат Codex…";
+"branch.delivery.sent" = "Задача отправлена — ожидаем принятия агентом";
+"branch.delivery.manual" = "Чат подготовлен — нажмите «Отправить» в Codex";
+"branch.delivery.unknown" = "Результат отправки неизвестен. Проверьте Codex; повторная отправка отключена.";
+"branch.codex.open" = "Открыть Codex";
+"branch.codex.unavailable" = "Не удалось открыть Codex. Проверьте установку приложения.";
+"branch.review.acknowledge" = "Подтвердить остановку";
+"branch.stash.backup" = "Резерв изменений:";
+"branch.error.blocked" = "Дождитесь завершения локальных задач.";
+"branch.error.context" = "Ветка или SHA изменились. Переключение остановлено.";
+"branch.error.missing" = "Целевая локальная ветка не найдена.";
+"branch.error.occupied" = "Целевая ветка открыта в другом worktree.";
+"branch.error.operation" = "Сначала завершите текущую Git-операцию.";
+"branch.error.detached" = "Сначала выберите исходную локальную ветку.";
+"branch.error.diverged" = "Локальный develop разошёлся с origin/develop. Fast-forward невозможен.";
+"branch.error.ownership" = "Операция уже принадлежит другому чату Codex.";
+"branch.error.conflict" = "Остались неразрешённые конфликты.";
+"branch.error.review" = "Проверьте checkout и временный worktree. Завершите Git-операции и разрешите конфликты перед продолжением.";
+"branch.cancelled" = "Переключение отменено.";
+
+"appearance.section" = "Внешний вид";
+"appearance.title" = "Интерфейс";
+"appearance.tileGrid" = "Tile Grid";
+"appearance.legacy" = "Прежний интерфейс";
+"appearance.shared" = "Общее для приложения и панелей Codex на этом Mac. Раскладки сохраняются.";
+
+"panel.layout.short" = "Сетка";
+
+"settings.tab.application" = "Приложение";
+"settings.tab.aiIntegrations" = "AI";
+"settings.tab.ci" = "CI";
+"settings.tab.environment" = "Среда";
+
+/* Desktop frame diagnostics */
+"diagnostics.title" = "Диагностика интерфейса";
+"diagnostics.enabled" = "Показывать FPS и время кадра";
+"diagnostics.help" = "Отзывчивость main thread, а не число кадров, показанных compositor. График хранит последние 10 секунд; наведение показывает пиковый интервал в миллисекундах.";
+"diagnostics.ms" = "мс";
+"diagnostics.accessibility" = "FPS и время кадра";
+"diagnostics.empty" = "Нет данных";
+"diagnostics.bucket" = "максимум за 250 мс";
+
+"bootstrap.terminal.example" = "Пример вывода";
+"bootstrap.terminal.queued" = "Ожидание запуска…";
+"bootstrap.terminal.unavailable" = "Вывод этого запуска недоступен";
+
+/* Unified native settings */
+"settings.group.appearance" = "Оформление";
+"settings.group.diagnostics" = "Диагностика";
+"settings.category" = "Раздел";
+"settings.service" = "Дополнительно";
+"settings.profile.global" = "Общий профиль Mimic";
+"settings.workspace" = "Workspace / project";
+"settings.workspace.empty" = "Не выбран";
+"settings.choose" = "Выбрать…";
+"settings.environment.diagnostics" = "Диагностика среды";
+"settings.details" = "Подробности";
+"settings.diagnostics.help" = "Что показывает график";
+"settings.appearance.previews" = "Сравнить оформление";

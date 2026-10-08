@@ -31,7 +31,7 @@ class SetupScriptTests(unittest.TestCase):
         (contents / 'MacOS').mkdir(parents=True)
         (contents / 'Helpers').mkdir()
         with (contents / 'Info.plist').open('wb') as f:
-            plistlib.dump({'CFBundleIdentifier': 'local.vmaslov.Mimic', 'CFBundleExecutable': executable, 'CFBundlePackageType': 'APPL', 'CFBundleVersion': '8'}, f)
+            plistlib.dump({'CFBundleIdentifier': 'local.vmaslov.Mimic', 'CFBundleName': 'Mimic', 'CFBundleExecutable': executable, 'CFBundlePackageType': 'APPL', 'CFBundleVersion': '8'}, f)
         for path in ['MacOS/' + executable, 'Helpers/TaskHost', 'Helpers/MimicMCP']:
             target = contents / path
             shutil.copy('/usr/bin/true', target)
@@ -41,15 +41,37 @@ class SetupScriptTests(unittest.TestCase):
         self.temp.cleanup()
     def run_script(self, *args, answer='yes\n'):
         return subprocess.run(['/bin/bash', str(self.script), '--app', str(self.app), *args], input=answer, text=True, capture_output=True, timeout=15)
-    def test_spaces_and_repeated_install_with_backup(self):
+    def test_spaces_and_repeated_install_removes_backups(self):
         destination = self.root / 'Installed apps' / 'Mimic.app'
         self.assertEqual(self.run_script('--check-only').returncode, 0)
         self.assertEqual(self.run_script('--destination', str(destination)).returncode, 0)
         self.assertTrue(destination.exists())
         self.assertEqual(self.run_script('--destination', str(destination)).returncode, 0)
-        self.assertEqual(len(list(destination.parent.glob('Mimic.backup.*.app'))), 1)
+        self.assertFalse(list(destination.parent.glob('Mimic.backup.*.app')))
         self.assertEqual(self.run_script('--destination', str(destination), '--uninstall-integration').returncode, 0)
         self.assertTrue(destination.exists())
+    def test_cleanup_preserves_unrelated_bundles_symlinks_and_source(self):
+        destination = self.root / 'Mimic.app'
+        old = self.root / 'Mimic.backup.old.app'
+        self.make_app(old)
+        legacy = self.root / 'Mimic.backup.legacy.app'
+        self.make_app(legacy)
+        with (legacy / 'Contents/Info.plist').open('wb') as file:
+            plistlib.dump({'CFBundleIdentifier': 'local.vmaslov.IVIToolbox', 'CFBundleName': 'Mimic', 'CFBundleExecutable': 'Mimic'}, file)
+        unrelated = self.root / 'Mimic.backup.unrelated.app'
+        self.make_app(unrelated)
+        with (unrelated / 'Contents/Info.plist').open('wb') as file:
+            plistlib.dump({'CFBundleIdentifier': 'another.app'}, file)
+        link = self.root / 'Mimic.backup.link.app'
+        link.symlink_to(self.app, target_is_directory=True)
+        self.app = self.root / 'Mimic.backup.source.app'
+        self.make_app(self.app)
+        self.assertEqual(self.run_script('--destination', str(destination)).returncode, 0)
+        self.assertFalse(old.exists())
+        self.assertFalse(legacy.exists())
+        self.assertTrue(unrelated.exists())
+        self.assertTrue(link.is_symlink())
+        self.assertTrue(self.app.exists())
     def test_missing_app_and_helper_and_bad_bundle(self):
         self.assertNotEqual(self.run_script('--app', str(self.root / 'missing.app'), '--check-only').returncode, 0)
         (self.app / 'Contents/Helpers/TaskHost').unlink()
@@ -110,15 +132,12 @@ class SetupScriptTests(unittest.TestCase):
         self.assertEqual(self.run_script('--check-only').returncode, 0)
         self.assertEqual(self.run_script('--destination', str(destination)).returncode, 0)
         self.assertTrue((destination / 'Contents/MacOS/Mimic').exists())
-    def test_new_executable_replaces_legacy_bundle_with_backup(self):
+    def test_new_executable_replaces_legacy_bundle_without_backup(self):
         destination = self.root / 'Mimic.app'
         self.make_app(destination, executable='Mimic')
         self.assertEqual(self.run_script('--destination', str(destination)).returncode, 0)
         self.assertTrue((destination / 'Contents/MacOS/Mimic').exists())
-        self.assertFalse((destination / 'Contents/MacOS/Mimic').exists())
-        backups = list(self.root.glob('Mimic.backup.*.app'))
-        self.assertEqual(len(backups), 1)
-        self.assertTrue((backups[0] / 'Contents/MacOS/Mimic').exists())
+        self.assertFalse(list(self.root.glob('Mimic.backup.*.app')))
     def test_arbitrary_executable_paths_are_rejected(self):
         plist = self.app / 'Contents/Info.plist'
         with plist.open('rb') as f:

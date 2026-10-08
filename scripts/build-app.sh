@@ -84,6 +84,8 @@ cp "$PRODUCTS/Mimic" "$APP/Contents/MacOS/Mimic"
 cp "$PRODUCTS/TaskHost" "$APP/Contents/Helpers/TaskHost"
 cp "$PRODUCTS/MimicMCP" "$APP/Contents/Helpers/MimicMCP"
 cp "$PRODUCTS/MimicCLI" "$APP/Contents/Helpers/MimicCLI"
+cp "$PRODUCTS/SimulatorVideoHost" "$APP/Contents/Helpers/SimulatorVideoHost"
+cp "$PRODUCTS/SimulatorInputHost" "$APP/Contents/Helpers/SimulatorInputHost"
 for resource_name in Mimic_Mimic Mimic_MimicCore Mimic_MimicMCP SwiftTerm_SwiftTerm ZIPFoundation_ZIPFoundation; do
   resource="$PRODUCTS/$resource_name.bundle"
   [ -d "$resource" ] || continue
@@ -131,12 +133,14 @@ cp "$PWD/Artwork/Plugin/MimicPluginIcon.png" "$APP/Contents/Resources/MimicPlugi
 cp -R "$PWD/ThirdPartyNotices" "$APP/Contents/Resources/ThirdPartyNotices"
 cp "$PWD/LICENSE" "$APP/Contents/Resources/LICENSE"
 # Object-file debug maps contain local build paths; keep them out of the distributable executables.
-for executable in "$APP/Contents/MacOS/Mimic" "$APP/Contents/Helpers/TaskHost" "$APP/Contents/Helpers/MimicMCP" "$APP/Contents/Helpers/MimicCLI"; do
+for executable in "$APP/Contents/MacOS/Mimic" "$APP/Contents/Helpers/TaskHost" "$APP/Contents/Helpers/MimicMCP" "$APP/Contents/Helpers/MimicCLI" "$APP/Contents/Helpers/SimulatorVideoHost" "$APP/Contents/Helpers/SimulatorInputHost"; do
   /usr/bin/strip -S "$executable"
 done
 codesign "${MIMIC_SIGN_FLAGS[@]}" --identifier local.vmaslov.Mimic.TaskHost "$APP/Contents/Helpers/TaskHost"
 codesign "${MIMIC_SIGN_FLAGS[@]}" --identifier local.vmaslov.Mimic.MimicMCP "$APP/Contents/Helpers/MimicMCP"
 codesign "${MIMIC_SIGN_FLAGS[@]}" --identifier local.vmaslov.Mimic.MimicCLI "$APP/Contents/Helpers/MimicCLI"
+codesign "${MIMIC_SIGN_FLAGS[@]}" --identifier local.vmaslov.Mimic.SimulatorVideoHost "$APP/Contents/Helpers/SimulatorVideoHost"
+codesign "${MIMIC_SIGN_FLAGS[@]}" --identifier local.vmaslov.Mimic.SimulatorInputHost "$APP/Contents/Helpers/SimulatorInputHost"
 # Sign nested Sparkle code from the inside out, retaining its identifiers and symlink layout.
 SPARKLE="$APP/Contents/Frameworks/Sparkle.framework/Versions/B"
 for SERVICE in "$SPARKLE/XPCServices/"*.xpc; do

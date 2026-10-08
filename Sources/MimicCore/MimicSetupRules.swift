@@ -44,7 +44,7 @@ public enum MimicSetupRules {
             let block = """
             \(start)
             ## Mimic for `\(project)`
-            Only when the working directory is `\(project)` or a descendant: on the first response in a new chat, call the available Mimic MCP tool `open_panel` to open its task panel in this same chat. Discover the tool using tool search if needed. Do this once per chat; do not reopen a panel the user closed. Explicit user instructions take priority. Open only the panel: never launch tasks, bootstrap, cleanup or Jenkins, and never create another chat to open or test it. If unavailable, continue the user's task, briefly report that Mimic could not open, and do not retry repeatedly or run its helper directly through a terminal.
+            Only when the working directory is `\(project)` or a descendant: on the first response in a new chat, call the available Mimic MCP tool `open_panel` with `checkout` set to the absolute working directory of this chat (including a descendant directory) to open its task panel in this same chat. Discover the tool using tool search if needed. Opening and binding must not send additional messages to the chat. Do this once per chat; do not reopen a panel the user closed. Explicit user instructions take priority. Open only the panel: never launch tasks, bootstrap, cleanup or Jenkins, and never create another chat to open or test it. If unavailable, continue the user's task, briefly report that Mimic could not open, and do not retry repeatedly or run its helper directly through a terminal.
             \(end)
             """
             // Replacing in place avoids blank-line growth on repeated setup.

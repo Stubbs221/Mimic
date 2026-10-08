@@ -21,6 +21,7 @@ enum InterfaceTerm: String, CaseIterable, Identifiable {
 
 /// A separate reference window keeps the selected working section and task intact.
 struct InterfaceMapView: View {
+    private var theme = MimicTheme()
     @State private var query = ""
 
     var body: some View {
@@ -47,7 +48,7 @@ struct InterfaceMapView: View {
                 }.padding(.trailing, 8)
             }.textSelection(.enabled)
         }.padding(20).frame(minWidth: 440, idealWidth: 560, minHeight: 420, idealHeight: 700)
-            .background(Color(nsColor: .windowBackgroundColor)).accessibilityIdentifier("interface.map")
+            .background(theme.tiled ? theme.color("paper") : Color(nsColor: .windowBackgroundColor)).accessibilityIdentifier("interface.map")
     }
 
     private var diagram: some View {

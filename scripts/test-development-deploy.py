@@ -38,6 +38,20 @@ class DevelopmentDeployTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 deploy.wait_for_exit(30)
 
+    def test_socket_disappears_before_owner_exit(self):
+        for failure in [FileNotFoundError(), ConnectionRefusedError()]:
+            with self.subTest(failure=type(failure).__name__), \
+                 patch.object(deploy, 'process_ids', side_effect=[['123'], [], [], [], [], []]), \
+                 patch.object(deploy, 'prepare_exit', side_effect=failure), patch.object(deploy.time, 'sleep'):
+                deploy.wait_for_exit(30)
+
+    def test_missing_bridge_remains_bounded_by_original_deadline(self):
+        with patch.object(deploy, 'process_ids', return_value=['123']), \
+             patch.object(deploy, 'prepare_exit', side_effect=FileNotFoundError()), \
+             patch.object(deploy.time, 'monotonic', side_effect=[0, 0, 31]), patch.object(deploy.time, 'sleep'):
+            with self.assertRaises(RuntimeError):
+                deploy.wait_for_exit(30)
+
     def test_invalid_bundle_never_requests_exit(self):
         with patch.object(deploy.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'fixture')), \
              patch.object(deploy, 'wait_for_exit') as wait:

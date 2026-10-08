@@ -11,9 +11,18 @@ import UniformTypeIdentifiers
 
 func text(_ key: String) -> String { NSLocalizedString(key, bundle: MimicResources.bundle, comment: "") }
 
+/// A rejected click and a disabled row describe the same admission decision.
+enum BranchSwitchBlocker: String, Error {
+    case update, shutdown, tasks, builds, simulator, git, checking, unavailable
+    var message: String { text("branch.blocker." + self.rawValue) }
+}
+
 /// The single owner of queued jobs and PTY sessions; view lifetime never controls execution.
 @MainActor
 final class TaskCoordinator: ObservableObject {
+    let systemOptions: MimicSystemOptions
+    let frameDiagnostics: FrameDiagnosticsSettings
+    let appearance: PanelAppearanceStore
     @Published
     var projects: [ProjectContext] = []
     @Published var activeProfile: ProfileSnapshot?
@@ -27,7 +36,7 @@ final class TaskCoordinator: ObservableObject {
     private var pipelineCommands: [UUID: [CommandSpec]] = [:]
     @Published
     var selectedProjectPath = "" {
-        didSet { if oldValue != self.selectedProjectPath { self.resetTaskHistory() } }
+        didSet { if oldValue != self.selectedProjectPath { self.resetTaskHistory(); self.simulatorPageIndex = 0; self.synchronizeSimulatorContext() } }
     }
     @Published
     var records: [TaskRecord] = []
@@ -58,7 +67,10 @@ final class TaskCoordinator: ObservableObject {
     private(set) var quickBootstrapActivity: QuickBootstrapActivity?
     @Published
     var expandedSection: PanelSection? {
-        didSet { if self.expandedSection == .tasks, oldValue != .tasks { self.resetTaskHistory() } }
+        didSet {
+            if self.expandedSection == .tasks, oldValue != .tasks { self.resetTaskHistory() }
+            if self.expandedSection == .simulators, oldValue != .simulators { self.simulatorPageIndex = 0 }
+        }
     }
     @Published
     private(set) var panelPage = PanelPage.home
@@ -70,12 +82,30 @@ final class TaskCoordinator: ObservableObject {
     let motionSettings = MimicMotionSettings()
     private(set) var navigationSource = MimicMotionSource.automatic
     let panelScroll = MimicPanelScroll()
+    let branchSwitch: BranchSwitchCoordinator
+    let toolsPreferences: ToolsPreferencesModel
+    @Published var selectedProjectTool: ProjectTool?
+    @Published var toolAdmissions: Set<String> = []
     let panelLayout: PanelLayoutController
     var scrollSource: MimicMotionSource { panelScroll.source }
     @Published
     var branchSearch = ""
-    @Published
-    var simulatorSearch = ""
+    let simulatorPanel = SimulatorPanelState()
+    var simulatorSearch: String {
+        get { simulatorPanel.search }
+        set { simulatorPanel.search = newValue }
+    }
+    var simulatorFilter: SimulatorFilter {
+        get { simulatorPanel.filter }
+        set { simulatorPanel.filter = newValue }
+    }
+    private(set) var simulatorPageIndex: Int {
+        get { simulatorPanel.pageIndex }
+        set { simulatorPanel.pageIndex = newValue }
+    }
+    @Published private(set) var simulatorAdmissions: [UUID: SimulatorPanelOperation] = [:]
+    @Published private(set) var simulatorOpening: [UUID: UUID] = [:]
+    @Published private(set) var simulatorFailures: [UUID: SimulatorPanelFailure] = [:]
     @Published
     var taskSearch = "" {
         didSet { if oldValue != self.taskSearch { self.resetTaskHistory() } }
@@ -107,16 +137,26 @@ final class TaskCoordinator: ObservableObject {
     var checking = false
     @Published
     var gitSummary: GitSummary?
-    @Published
-    var simulators: [SimulatorDevice] = []
-    @Published
-    var loadingSimulators = false
-    @Published
-    var simulatorError = ""
-    @Published
-    private(set) var simulatorDeveloper = ""
-    @Published
-    private(set) var simulatorUsage = SimulatorUsage()
+    var simulators: [SimulatorDevice] {
+        get { simulatorPanel.presentation.devices }
+        set { simulatorPanel.apply(devices: newValue, usage: simulatorUsage, developer: simulatorDeveloper) }
+    }
+    var loadingSimulators: Bool {
+        get { simulatorPanel.loading }
+        set { if simulatorPanel.loading != newValue { simulatorPanel.loading = newValue } }
+    }
+    var simulatorError: String {
+        get { simulatorPanel.error }
+        set { if simulatorPanel.error != newValue { simulatorPanel.error = newValue } }
+    }
+    private(set) var simulatorDeveloper: String {
+        get { simulatorPanel.presentation.developer }
+        set { simulatorPanel.apply(devices: simulators, usage: simulatorUsage, developer: newValue) }
+    }
+    private(set) var simulatorUsage: SimulatorUsage {
+        get { simulatorPanel.presentation.usage }
+        set { simulatorPanel.apply(devices: simulators, usage: newValue, developer: simulatorDeveloper) }
+    }
     @Published
     private(set) var selectedSimulatorIDs: [String: String] = [:]
     @Published
@@ -138,11 +178,20 @@ final class TaskCoordinator: ObservableObject {
     @Published
     var planningGeneration = false
     private var generationRevision = UUID()
+    private var generationPreviewID: UUID?
     private var previewProjectPath: String?
     private var readinessRevision = UUID()
     private var projectRevision = UUID()
     private var simulatorRevision = UUID()
+    private var simulatorContextProject: ProjectContext?
+    private var simulatorRefreshTask: Task<Void, Never>?
+    private var simulatorRefreshRequested = false
+    private var simulatorOpenRequests: [UUID: SimulatorPanelOperation] = [:]
+    private var simulatorUIRequests: [UUID: SimulatorPanelOperation] = [:]
+    private var simulatorDismissedFailures: Set<UUID> = []
+    private let simulatorServices: SimulatorPanelServices
     private let inspectBootstrapAdmission: @Sendable (ProjectContext, BootstrapOptions) async -> BootstrapAdmissionResult
+    private let inspectProject: @Sendable (ProjectContext) async -> (ProjectContext?, [String], GitSummary?)
     private let launchPreparation: LaunchPreparation
     private let taskHostURL: URL
     let profileRemote: ProfileRemoteCoordinator
@@ -175,7 +224,7 @@ final class TaskCoordinator: ObservableObject {
     var ci: CIState { self.ciMonitor.desktopState ?? self.ciFallback }
     @Published private(set) var ciInspection: CICompactSummary?
     var ciPresentedState: CIState { self.ciInspection.flatMap { self.ciMonitor.state(for: $0) } ?? self.ci }
-    private var panelVisible = false
+    @Published private(set) var panelVisible = false
     let analysis: AnalysisCoordinator
     let aiSettings: AISettingsModel
     let appIconSettings: AppIconSettings
@@ -221,14 +270,26 @@ final class TaskCoordinator: ObservableObject {
     private var subscriptions = Set<AnyCancellable>()
     private var stateChangeQueued = false
 
-    init(directory: URL? = nil, helperURL: URL? = nil, buildCoordinator: BuildCoordinator? = nil, simulatorCoordinator: SimulatorCoordinator? = nil, xcodeApplications: any XcodeApplicationService = SystemXcodeApplications(), branchService: any GitBranchService = LocalGitBranchService(), usageStore: (any SimulatorUsageStore)? = nil, defaults: UserDefaults = .standard, ciClient: (any GitLabService)? = nil, ciSettings: CISettingsModel? = nil, jenkinsSettings: JenkinsSettings? = nil, analysis: AnalysisCoordinator? = nil, inspectBootstrapAdmission: @escaping @Sendable (ProjectContext, BootstrapOptions) async -> BootstrapAdmissionResult = { await BootstrapAdmissionResult.inspect(project: $0, options: $1) }) {
+    init(directory: URL? = nil, simulatorServices: SimulatorPanelServices = SimulatorPanelServices(), helperURL: URL? = nil, buildCoordinator: BuildCoordinator? = nil, simulatorCoordinator: SimulatorCoordinator? = nil, xcodeApplications: any XcodeApplicationService = SystemXcodeApplications(), branchService: any GitBranchService = LocalGitBranchService(), usageStore: (any SimulatorUsageStore)? = nil, defaults: UserDefaults = .standard, ciClient: (any GitLabService)? = nil, ciSettings: CISettingsModel? = nil, jenkinsSettings: JenkinsSettings? = nil, analysis: AnalysisCoordinator? = nil, inspectBootstrapAdmission: @escaping @Sendable (ProjectContext, BootstrapOptions) async -> BootstrapAdmissionResult = { await BootstrapAdmissionResult.inspect(project: $0, options: $1) }, inspectProject: @escaping @Sendable (ProjectContext) async -> (ProjectContext?, [String], GitSummary?) = { current in
+        await Task.detached { () -> (ProjectContext?, [String], GitSummary?) in
+            guard let updated = try? EnvironmentInspector.project(path: current.path, developerDirectory: current.developerDirectory, appleTarget: current.appleTarget) else { return (nil, [], nil) }
+            let status = EnvironmentInspector.capture("/usr/bin/git", ["-C", updated.path, "status", "--porcelain=v1", "-z"], trim: false)
+            return (updated, EnvironmentInspector.diagnostic(project: updated), status.0 == 0 ? GitSummary(porcelain: status.1) : nil)
+        }.value
+    }) {
+        self.simulatorServices = simulatorServices
         self.inspectBootstrapAdmission = inspectBootstrapAdmission
+        self.inspectProject = inspectProject
         self.launchPreparation = LaunchPreparation(applications: xcodeApplications)
         self.defaults = defaults; self.branchService = branchService
+        self.systemOptions = MimicSystemOptions(defaults: defaults)
+        self.frameDiagnostics = FrameDiagnosticsSettings(defaults: defaults)
+        self.appearance = PanelAppearanceStore(defaults: defaults)
         self.panelLayout = PanelLayoutController(defaults: defaults)
+        self.toolsPreferences = ToolsPreferencesModel(defaults: defaults)
+        self.branchSwitch = BranchSwitchCoordinator(defaults: defaults)
         self.appIconSettings = AppIconSettings(defaults: defaults)
         self.usageStore = usageStore ?? DefaultsSimulatorUsageStore(defaults: defaults)
-        self.simulatorUsage = self.usageStore.load()
         self.selectedSimulatorIDs = defaults.dictionary(forKey: "selectedSimulatorIDs") as? [String: String] ?? [:]
         let settings = ciSettings ?? CISettingsModel(store: DefaultsCIConfigurationStore(defaults: defaults), client: ciClient)
         self.ciSettings = settings
@@ -262,6 +323,7 @@ final class TaskCoordinator: ObservableObject {
         self.ciLaunchPreferences = CILaunchPreferences(defaults: defaults)
         self.profileRemote = ProfileRemoteCoordinator(directory: directory, jenkins: jenkinsSettings.authenticatedClient, gitlab: settings.authenticatedClient, jenkinsToken: { try jenkinsSettings.token(for: $0) }, gitlabToken: { try settings.token(for: $0) })
         self.remoteTests = RemoteTestCoordinator(directory: directory, jenkins: jenkinsSettings.authenticatedClient, gitlab: settings.authenticatedClient, jenkinsToken: { try jenkinsSettings.token(for: $0) }, gitlabToken: { try settings.token(for: $0) })
+        self.simulatorUsage = self.usageStore.load()
         do { self.records = try self.history.load(); try self.history.save(self.records) } catch { self.message = text("history.error") + ": " + error.localizedDescription }
         if let data = defaults.data(forKey: "projects"), let saved = try? JSONDecoder().decode([ProjectContext].self, from: data) { self.projects = saved }
         self.selectedProjectPath = defaults.string(forKey: "selectedProject") ?? self.projects.first?.path ?? ""
@@ -275,20 +337,17 @@ final class TaskCoordinator: ObservableObject {
             self.ciMonitor.credentialsChanged()
             if self.ciMonitor.desktopState == nil, self.ci.context == previous { self.ci.credentialsChanged() }
         }
-        objectWillChange.sink { [weak self] in
-            guard let self, !self.stateChangeQueued else { return }
-            self.stateChangeQueued = true
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.stateChangeQueued = false; self.stateChanged?()
-            }
-        }.store(in: &self.subscriptions)
+        objectWillChange.sink { [weak self] in self?.scheduleStateChange() }.store(in: &self.subscriptions)
         if !self.projects.isEmpty { self.refresh() }
         self.updateCIContext()
-        self.ciMonitor.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
+        // CI surfaces observe their own state. Only replacing the desktop context changes the panel tree.
+        self.ciMonitor.$desktopState.removeDuplicates(by: { $0 === $1 }).dropFirst().sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &self.subscriptions)
+        self.ciMonitor.objectWillChange.sink { [weak self] in
+            FramePerformanceTrace.event("CI state changed"); self?.scheduleStateChange()
+        }.store(in: &self.subscriptions)
         self.analysis.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
         self.aiSettings.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
-        self.aiUsage.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
+        self.aiUsage.objectWillChange.sink { [weak self] in self?.scheduleStateChange() }.store(in: &self.subscriptions)
         self.analysis.onInferenceStarted = { [weak self] provider, date in self?.aiUsage.record(AIUsageActivity(provider: provider, date: date)) }
         self.aiSettings.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async { [weak self] in
@@ -329,9 +388,18 @@ final class TaskCoordinator: ObservableObject {
         self.simulatorScreen.currentProfile = { [weak self] in self?.activeProfile }
         self.simulatorScreen.acceptsProject = { [weak self] in self?.projects.contains($0) == true }
         self.simulatorScreen.mayAdmit = { [weak self] in self.map { !$0.admissionsClosed && !$0.switchingBranch && !$0.hasGitOperation } ?? false }
+        self.simulatorScreen.mayStartInput = { [weak self] in
+            guard let self else { return false }
+            return !self.busy && !self.admissionsClosed && !self.switchingBranch && !self.hasGitOperation && !self.builds.hasPending && !self.records.contains { $0.status == .queued }
+        }
         self.simulatorScreen.schedule = { [weak self] in self?.startNext(); self?.finishExitIfReady() }
+        self.simulatorScreen.recentIDs = { [weak self] developer in (self?.simulatorUsage.dates[developer] ?? [:]).sorted { $0.value > $1.value }.prefix(5).map(\.key) }
+        self.simulatorScreen.didUseDevice = { [weak self] in self?.recordSimulatorUsage($0, developer: $1) }
         self.simulatorScreen.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
         self.aiSettings.onIdle = { [weak self] in self?.finishExitIfReady() }
+        self.branchSwitch.openManualChat = { NSWorkspace.shared.open($0) }
+        self.branchSwitch.onChange = { [weak self] in self?.branchSwitchChanged() }
+        self.branchSwitchChanged()
     }
 
     var project: ProjectContext? { self.projects.first { $0.path == self.selectedProjectPath } }
@@ -366,12 +434,41 @@ final class TaskCoordinator: ObservableObject {
         if self.ciLaunch.submitting { blockers.append("ci") }
         return blockers
     }
-    var canSwitchBranch: Bool {
-        !self.admissionsClosed && !self.builds.hasPending && !self.simulatorScreen.hasPending && self.gitSummary.map { $0.changed == 0 && $0.untracked == 0 } == true && !self.hasGitOperation && !self.checking && self.checkoutGate.canSwitch(records: self.records, preparing: self.preparing)
+    var branchSwitchBlocker: BranchSwitchBlocker? {
+        guard let project = self.project else { return .unavailable }
+        return self.branchSwitchBlocker(for: project, requiresSnapshot: true)
+    }
+    var canSwitchBranch: Bool { self.branchSwitchBlocker == nil }
+
+    /// Queue ownership is global; desktop inspection must never gate a different chat checkout.
+    private func branchSwitchBlocker(for project: ProjectContext, requiresSnapshot: Bool) -> BranchSwitchBlocker? {
+        if self.updateReserved { return .update }
+        if self.stoppingForExit { return .shutdown }
+        if self.switchingBranch || self.branchSwitch.hasPending || self.branchSwitch.isExecuting || self.checkoutGate.isSwitching { return .git }
+        if self.builds.hasPending || self.builds.admittingCount != 0 { return .builds }
+        if self.simulatorScreen.hasPending { return .simulator }
+        if !self.checkoutGate.canSwitch(records: self.records, preparing: self.preparing) { return .tasks }
+        if requiresSnapshot {
+            guard self.project == project else { return .unavailable }
+            if self.checking { return .checking }
+            if self.gitSummary == nil { return .unavailable }
+            if self.hasGitOperation { return .git }
+        }
+        return nil
     }
 
     var orderedSimulators: [SimulatorDevice] {
-        self.simulatorUsage.recent(self.simulators, developer: self.simulatorDeveloper, limit: self.simulators.count)
+        self.simulatorPresentation.ordered
+    }
+
+    /// Menu-bar and auxiliary windows still refresh, without invalidating the retained panel documents.
+    private func scheduleStateChange() {
+        guard !stateChangeQueued else { return }
+        stateChangeQueued = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.stateChangeQueued = false; self.stateChanged?()
+        }
     }
     var bootedSimulators: [SimulatorDevice] { self.orderedSimulators.filter(\.isBooted) }
     var selectedSimulator: SimulatorDevice? {
@@ -451,9 +548,10 @@ final class TaskCoordinator: ObservableObject {
         self.cancelPanelScroll(); self.settingsScroll.cancel()
         AIUsageTrendPopoverController.dismissAll()
         self.panelPage = .settings
+        if settingsGroup == nil { settingsGroup = .application }
         if let group {
             self.settingsGroup = group
-            self.settingsScroll.begin(target: group.scrollID, source: source)
+            self.settingsScroll.begin(target: "settings.top", source: source)
         }
     }
 
@@ -472,9 +570,7 @@ final class TaskCoordinator: ObservableObject {
     }
 
     func toggleSettingsGroup(_ group: SettingsGroup, source: MimicMotionSource = .current) {
-        self.navigationSource = source; self.releasePanelFocus?()
-        self.settingsScroll.cancel()
-        self.settingsGroup = self.settingsGroup == group ? nil : group
+        self.openSettings(group: group, source: source)
     }
 
     /// Opening and collapsing areas never invalidate drafts or cancel work.
@@ -689,23 +785,55 @@ final class TaskCoordinator: ObservableObject {
         }
     }
 
-    func switchBranch(_ name: String) {
-        guard let current = self.project, current.branch != name else { return }
-        guard self.canSwitchBranch, self.checkoutGate.beginSwitch(records: self.records, preparing: self.preparing) else { self.branchError = text("branch.blocked"); return }
-        self.switchingBranch = true; self.branchRevision = UUID(); self.projectRevision = UUID(); self.readinessRevision = UUID()
-        self.branchError = ""; self.invalidateGeneration()
-        Task {
-            defer {
-                self.checkoutGate.finishSwitch(); self.switchingBranch = false
-                if self.stoppingForExit { self.finishExitIfReady() } else { self.refresh(); self.startNext() }
-            }
-            do { try self.applyGit(await self.branchService.switchBranch(name, project: current)) }
-            catch { self.branchError = self.branchErrorText(error) }
+    /// Keep the picker and its search intact when admission fails, including a last-moment blocker.
+    @discardableResult
+    func switchBranch(_ name: String) -> Bool {
+        guard let current = self.project else { self.branchError = BranchSwitchBlocker.unavailable.message; return false }
+        do {
+            if current.branch != name { _ = try self.startBranchSwitch(name, project: current, requestID: UUID()) }
+            self.branchError = ""
+            if self.expandedSection == .branches { self.toggleSection(.branches) }
+            return true
+        } catch { self.branchError = self.branchErrorText(error); return false }
+    }
+
+    /// Native and panel entrypoints reserve the existing checkout gate before starting any Git step.
+    @discardableResult
+    func startBranchSwitch(_ name: String, project: ProjectContext, requestID: UUID, threadID: String? = nil) throws -> BranchSwitchOperation {
+        if let old = try? self.branchSwitch.operation(requestID) {
+            guard old.source == project, old.target == name, old.sourceThreadID == threadID else { throw BranchSwitchError.context }
+            return old
+        }
+        if let blocker = self.branchSwitchBlocker(for: project, requiresSnapshot: threadID == nil) { throw blocker }
+        guard self.checkoutGate.beginSwitch(records: self.records, preparing: self.preparing) else { throw BranchSwitchBlocker.tasks }
+        do { return try self.branchSwitch.start(id: requestID, project: project, target: name, threadID: threadID) }
+        catch { self.checkoutGate.finishSwitch(); throw error }
+    }
+
+    private func branchSwitchChanged() {
+        let pending = self.branchSwitch.hasPending || self.branchSwitch.isExecuting
+        if pending, !self.switchingBranch {
+            if !self.checkoutGate.isSwitching { _ = self.checkoutGate.beginSwitch(records: self.records, preparing: self.preparing) }
+            self.switchingBranch = true
+            self.branchRevision = UUID(); self.projectRevision = UUID(); self.readinessRevision = UUID()
+            self.invalidateGeneration()
+        }
+        if let op = self.branchSwitch.operations.last, op.didSwitch, op.phase != .needsReview, (pending || self.switchingBranch), let sha = op.resultSHA,
+           let index = self.projects.firstIndex(where: { $0.path == op.source.path }) {
+            self.projects[index].branch = op.target; self.projects[index].commit = sha; self.saveProjects()
+        }
+        self.objectWillChange.send()
+        if !pending, self.switchingBranch {
+            self.switchingBranch = false; self.checkoutGate.finishSwitch()
+            if self.stoppingForExit { self.finishExitIfReady() }
+            else { self.refresh(); self.startNext() }
         }
     }
 
     private func branchErrorText(_ error: any Error) -> String {
         switch error {
+        case let blocker as BranchSwitchBlocker: blocker.message
+        case let error as BranchSwitchError: text("branch.error." + String(describing: error))
         case BranchError.dirty: text("branch.dirty")
         case BranchError.operation: text("branch.operation")
         case BranchError.missing: text("branch.missing")
@@ -727,6 +855,7 @@ final class TaskCoordinator: ObservableObject {
     }
 
     private func updateCIContext() {
+        self.synchronizeSimulatorContext()
         self.ciSettings.selectCheckout(self.selectedProjectPath)
         self.ciMonitor.setDesktop(self.project.flatMap { project in self.ciSettings.connection.map { CIContext(project: project, connection: $0) } })
         self.ciPresentedState.setVisible(self.panelVisible)
@@ -739,12 +868,13 @@ final class TaskCoordinator: ObservableObject {
         // Device discovery depends on checkout/Xcode, not the Git revision of the full diagnostic.
         self.refreshSimulators()
         Task {
-            let result = await Task.detached { () -> (ProjectContext?, [String], GitSummary?) in
-                guard let updated = try? EnvironmentInspector.project(path: current.path, developerDirectory: current.developerDirectory, appleTarget: current.appleTarget) else { return (nil, [], nil) }
-                let status = EnvironmentInspector.capture("/usr/bin/git", ["-C", updated.path, "status", "--porcelain=v1", "-z"], trim: false)
-                return (updated, EnvironmentInspector.diagnostic(project: updated), status.0 == 0 ? GitSummary(porcelain: status.1) : nil)
-            }.value
-            guard self.projectRevision == revision, self.project == current else { return }
+            let result = await self.inspectProject(current)
+            guard self.projectRevision == revision else { return }
+            // Polling may have refreshed this checkout's identity while diagnostics were suspended.
+            // This request still owns `checking`, but its old result cannot replace the fresh context.
+            guard self.project == current else {
+                self.checking = false; self.diagnostic = text("checkout.changed"); self.refreshGit(); return
+            }
             if let updated = result.0, let index = projects.firstIndex(where: { $0.path == current.path }) {
                 self.projects[index] = updated; self.diagnostic = result.1.joined(separator: "\n"); self.gitSummary = result.2; self.saveProjects()
             } else { self.diagnostic = text("project.invalid") }
@@ -804,6 +934,9 @@ final class TaskCoordinator: ObservableObject {
     func checkReadiness() {
         guard let current = project else { return }
         self.readiness = [:]; self.checking = false
+        // Simulator commands use the selected Xcode directly, independently of profile tool bindings.
+        let simulatorMissing = EnvironmentInspector.missing(action: .simulatorBoot, options: self.bootstrapOptions, project: current, environment: EnvironmentInspector.environment(project: current))
+        self.readiness[.simulatorBoot] = simulatorMissing; self.readiness[.simulatorShutdown] = simulatorMissing
         for action in [MimicAction.bootstrap, .localization, .proto, .format, .generation, .fullCleanup, .derivedDataCleanup] {
             do {
                 let execution = try self.profileExecution(action, preview: action == .generation)
@@ -815,6 +948,7 @@ final class TaskCoordinator: ObservableObject {
 
     func invalidateGeneration() {
         self.profilePreviews = self.profilePreviews.filter { $0.key.contains("|") }
+        self.generationPreviewID = nil
         self.generationRevision = UUID(); self.generationPlan = nil; self.generationError = ""; self.planningGeneration = false; self.previewProjectPath = nil
     }
 
@@ -822,8 +956,10 @@ final class TaskCoordinator: ObservableObject {
         guard GenerationRequest.validName(generatorName), !planningGeneration else { return }
         do {
             let execution = try profileExecution(.generation, preview: true)
+            let previewID = UUID(); self.generationPreviewID = previewID
             self.planningGeneration = true; self.generationPlan = nil; self.generationError = ""
-            self.requestProfile(execution: execution, reveal: false) { record in
+            self.requestProfile(execution: execution, recordID: previewID, reveal: false, navigate: false) { record in
+                guard self.generationPreviewID == previewID else { return }
                 if record == nil { self.planningGeneration = false; self.generationError = self.message }
             }
         } catch { self.generationError = text("profile.action.required") }
@@ -832,48 +968,170 @@ final class TaskCoordinator: ObservableObject {
     func generateFromPreview() {
         guard let plan = generationPlan, plan.canGenerate, previewProjectPath == selectedProjectPath else { return }
         let request = GenerationRequest(kind: generatorKind, name: generatorName, digest: plan.digest)
-        self.request(.generation, generation: request)
+        self.launchTool(.generation, generation: request)
     }
 
-    // MARK: - iOS simulators
+    // MARK: - Simulator presentation and discovery
 
-    func refreshSimulators() {
-        guard let current = project else { return }
-        let revision = UUID(); simulatorRevision = revision
-        self.loadingSimulators = true; self.simulatorError = ""; self.simulators = []
-        Task {
-            let result = await Task.detached {
-                let developer = current.developerDirectory ?? EnvironmentInspector.capture("/usr/bin/xcode-select", ["-p"]).1
-                var env = EnvironmentInspector.environment(project: current); env["DEVELOPER_DIR"] = developer
-                return (EnvironmentInspector.capture("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "--json"], environment: env), developer)
-            }.value
-            guard self.simulatorRevision == revision, self.project?.path == current.path, self.project?.developerDirectory == current.developerDirectory else { return }
-            self.loadingSimulators = false
-            do {
-                guard result.0.0 == 0, !result.1.isEmpty else { throw MimicError.invalidSimulator }
-                self.simulatorDeveloper = result.1
-                self.simulators = try SimulatorCatalog.parse(Data(result.0.1.utf8))
-            } catch { self.simulators = []; self.simulatorError = text("simulators.error") }
+    var simulatorPresentation: SimulatorPresentation {
+        self.simulatorPanel.presentation
+    }
+    var simulatorCatalogPage: SimulatorCatalogPage {
+        SimulatorCatalogPage(devices: self.simulatorPresentation.catalog(filter: self.simulatorFilter, search: self.simulatorSearch), index: self.simulatorPageIndex)
+    }
+    func moveSimulatorPage(by offset: Int) {
+        let page = self.simulatorCatalogPage
+        self.simulatorPageIndex = min(max(0, page.index + offset), page.count - 1)
+    }
+    var simulatorStale: Bool { !self.simulatorError.isEmpty }
+
+    /// Hidden retained documents must not keep a catalogue polling task alive.
+    func shouldPollSimulators(blockVisible: Bool) -> Bool {
+        self.panelVisible && self.panelPage == .home && blockVisible && !self.admissionsClosed
+    }
+    func pollSimulators() async {
+        while !Task.isCancelled {
+            self.refreshSimulators()
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+        }
+    }
+
+    /// Context changes invalidate data and automatic opens, without starting a parallel system query.
+    private func synchronizeSimulatorContext() {
+        let next = self.project
+        guard self.simulatorContextProject?.path != next?.path || self.simulatorContextProject?.developerDirectory != next?.developerDirectory else { return }
+        self.simulatorContextProject = next; self.simulatorRevision = UUID()
+        self.simulators = []; self.simulatorDeveloper = ""; self.simulatorError = ""
+        self.simulatorFailures = [:]; self.simulatorOpening = [:]
+        self.simulatorRefreshRequested = self.simulatorRefreshTask != nil
+    }
+
+    func refreshSimulators(afterOperation: Bool = false) {
+        self.synchronizeSimulatorContext()
+        guard let current = self.project else { return }
+        guard self.simulatorRefreshTask == nil else {
+            if afterOperation { self.simulatorRefreshRequested = true }
+            return
+        }
+        let revision = self.simulatorRevision
+        self.loadingSimulators = true
+        self.simulatorRefreshTask = Task { [weak self, simulatorServices] in
+            let interval = FramePerformanceTrace.begin("Simulator catalogue")
+            defer { FramePerformanceTrace.end("Simulator catalogue", interval) }
+            let result: Result<SimulatorCatalogSnapshot, any Error>
+            do { result = .success(try await simulatorServices.catalog(current)) }
+            catch { result = .failure(error) }
+            guard let self else { return }
+            self.synchronizeSimulatorContext()
+            if self.simulatorRevision == revision {
+                switch result {
+                case let .success(snapshot):
+                    if self.simulatorDeveloper != snapshot.developer {
+                        self.simulatorRevision = UUID(); self.simulatorFailures = [:]
+                    }
+                    self.simulatorPanel.apply(devices: snapshot.devices, usage: self.simulatorUsage, developer: snapshot.developer)
+                    self.simulatorError = ""
+                case .failure: self.simulatorError = text("simulators.error")
+                }
+            }
+            self.loadingSimulators = false; self.simulatorRefreshTask = nil
+            if self.simulatorRefreshRequested {
+                self.simulatorRefreshRequested = false
+                self.refreshSimulators()
+            }
+        }
+    }
+
+    func forgetSimulator(_ device: SimulatorDevice) {
+        self.simulatorUsage.forget(device.id, developer: self.simulatorDeveloper)
+        self.usageStore.save(self.simulatorUsage)
+    }
+
+    func simulatorPendingRecord(_ device: SimulatorDevice) -> TaskRecord? {
+        self.records.last { record in
+            record.simulator?.id == device.id && record.project.path == self.project?.path &&
+            record.selectedDeveloperDirectory == self.simulatorDeveloper && (record.status == .queued || record.status == .running)
+        }
+    }
+    func simulatorBusy(_ device: SimulatorDevice) -> Bool {
+        self.simulatorAdmissions[device.id].map { $0.project == self.project && $0.developer == self.simulatorDeveloper } == true ||
+        self.simulatorOpening[device.id] != nil || self.simulatorPendingRecord(device) != nil
+    }
+    func simulatorFailure(_ device: SimulatorDevice) -> SimulatorPanelFailure? {
+        if let failure = self.simulatorFailures[device.id] { return failure }
+        guard let record = self.records.last(where: {
+            $0.simulator?.id == device.id && $0.project.path == self.project?.path && $0.selectedDeveloperDirectory == self.simulatorDeveloper
+        }), record.status == .failed, !self.simulatorDismissedFailures.contains(record.id) else { return nil }
+        return SimulatorPanelFailure(message: record.error ?? text("simulators.operation.error"), taskID: record.id)
+    }
+    func canActivateSimulator(_ device: SimulatorDevice) -> Bool {
+        !self.admissionsClosed && !self.switchingBranch && !self.simulatorStale && !self.simulatorDeveloper.isEmpty &&
+        !self.simulatorBusy(device) && self.simulators.contains(where: { $0.id == device.id }) &&
+        (device.isBooted || (device.state == "Shutdown" && self.readiness[.simulatorBoot] == []))
+    }
+    func activateSimulator(_ device: SimulatorDevice) {
+        guard self.canActivateSimulator(device) else { return }
+        if device.isBooted { self.openSimulator(device) }
+        else { self.requestSimulator(.simulatorBoot, device: device) }
+    }
+
+    /// Reserve before admission suspends so double clicks cannot enqueue the same device twice.
+    func requestSimulator(_ action: MimicAction, device: SimulatorDevice) {
+        guard action == .simulatorBoot || action == .simulatorShutdown,
+              self.canActivateSimulator(device), let project = self.project,
+              action == .simulatorBoot ? device.state == "Shutdown" : device.isBooted else { return }
+        let operation = SimulatorPanelOperation(id: UUID(), device: device, action: action, project: project,
+                                                developer: self.simulatorDeveloper, revision: self.simulatorRevision)
+        self.simulatorFailures[device.id] = nil; self.simulatorAdmissions[device.id] = operation
+        self.simulatorUIRequests[operation.id] = operation
+        self.dismissSimulatorFailure(device)
+        if action == .simulatorBoot { self.simulatorOpenRequests[operation.id] = operation }
+        self.request(action, simulator: device, expected: project, recordID: operation.id, reveal: false, navigate: false) { [weak self] record in
+            guard let self else { return }
+            self.simulatorUIRequests[operation.id] = nil
+            if self.simulatorAdmissions[device.id]?.id == operation.id { self.simulatorAdmissions[device.id] = nil }
+            if record == nil {
+                self.simulatorOpenRequests[operation.id] = nil
+                if self.simulatorRevision == operation.revision {
+                    self.simulatorFailures[device.id] = SimulatorPanelFailure(message: self.message.isEmpty ? text("simulators.operation.error") : self.message, taskID: nil)
+                }
+            }
         }
     }
 
     func openSimulator(_ device: SimulatorDevice) {
-        guard let current = project else { return }
-        Task { [self] in
-            let developer: String
-            if let selected = current.developerDirectory { developer = selected }
-            else { developer = await Task.detached { EnvironmentInspector.capture("/usr/bin/xcode-select", ["-p"]).1 }.value }
-            guard self.project == current else { return }
-            let url = URL(fileURLWithPath: developer).appendingPathComponent("Applications/Simulator.app")
-            guard FileManager.default.fileExists(atPath: url.path) else { self.message = text("simulators.error"); return }
-            let config = NSWorkspace.OpenConfiguration(); config.arguments = ["-CurrentDeviceUDID", device.id.uuidString]
-            NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
-                Task { @MainActor [weak self] in
-                    if error != nil { self?.message = text("simulators.open.error") }
-                    else { self?.recordSimulatorUsage(device.id, developer: developer) }
+        guard let current = self.project, !self.simulatorDeveloper.isEmpty, self.simulatorOpening[device.id] == nil else { return }
+        let developer = self.simulatorDeveloper, revision = self.simulatorRevision, opening = UUID()
+        self.simulatorOpening[device.id] = opening; self.simulatorFailures[device.id] = nil
+        self.dismissSimulatorFailure(device)
+        Task { [weak self, simulatorServices] in
+            defer { if self?.simulatorOpening[device.id] == opening { self?.simulatorOpening[device.id] = nil } }
+            guard let self, self.project == current, self.simulatorRevision == revision else { return }
+            do {
+                try await simulatorServices.open(device, developer)
+                guard self.project == current, self.simulatorRevision == revision else { return }
+                self.recordSimulatorUsage(device.id, developer: developer)
+            } catch {
+                if self.project == current, self.simulatorRevision == revision {
+                    self.simulatorFailures[device.id] = SimulatorPanelFailure(message: text("simulators.open.error") + " " + error.localizedDescription, taskID: nil)
                 }
             }
         }
+    }
+
+    /// Only this request's successful completion can open a window in the unchanged context.
+    func completeSimulatorOperation(_ record: TaskRecord, developer: String?) {
+        let intent = self.simulatorOpenRequests.removeValue(forKey: record.id)
+        guard record.action == .simulatorBoot, record.status == .succeeded,
+              let device = record.simulator, let developer else { return }
+        self.recordSimulatorUsage(device.id, developer: developer)
+        guard let intent, intent.project == self.project, intent.revision == self.simulatorRevision,
+              intent.developer == developer, !self.admissionsClosed else { return }
+        self.openSimulator(device)
+    }
+
+    private func dismissSimulatorFailure(_ device: SimulatorDevice) {
+        if let id = self.simulatorFailure(device)?.taskID { self.simulatorDismissedFailures.insert(id) }
     }
 
     private func recordSimulatorUsage(_ id: UUID, developer: String) {
@@ -943,7 +1201,7 @@ final class TaskCoordinator: ObservableObject {
                 case let .failed(error): self.rejectRequest(error, quick: quick); return
                 }
             } else {
-                guard let project = await Task.detached(operation: { try? EnvironmentInspector.project(path: current.path, developerDirectory: current.developerDirectory, appleTarget: current.appleTarget) }).value else {
+                guard let project = try? await self.simulatorServices.inspect(current) else {
                     self.rejectRequest("project.invalid", quick: quick); return
                 }
                 checked = project
@@ -962,6 +1220,10 @@ final class TaskCoordinator: ObservableObject {
             }
             request.project = checked
             request.selectedDeveloperDirectory = checked.developerDirectory ?? EnvironmentInspector.capture("/usr/bin/xcode-select", ["-p"]).1
+            if let operation = self.simulatorUIRequests[recordID] {
+                guard operation.revision == self.simulatorRevision, operation.project == self.project,
+                      operation.developer == request.selectedDeveloperDirectory else { self.message = text("simulators.changed"); return }
+            }
             let record = request
             admitted = record
             self.records.append(record); if navigate { self.selectedTaskID = record.id }; self.persist()
@@ -1049,6 +1311,8 @@ final class TaskCoordinator: ObservableObject {
             self.records[index].error = error.hasPrefix("missing:") ? text("tools.missing") + String(error.dropFirst(8)) : text(error)
             self.records[index].finishedAt = Date(); self.unreadFailure = true
             self.captureBootstrapDiagnostic(id: next.id, output: Data())
+            self.simulatorOpenRequests[next.id] = nil
+            if next.simulator != nil { self.refreshSimulators(afterOperation: true) }
             self.persist(); self.startNext()
         })
     }
@@ -1148,7 +1412,7 @@ final class TaskCoordinator: ObservableObject {
                     self.profilePreviews[ProfilePreview.cacheKey(project: self.records[index].project, execution: execution)] = ProfilePreview(plan: plan, project: self.records[index].project, execution: execution)
                     if self.project == self.records[index].project {
                     self.profilePreviews[execution.actionID] = ProfilePreview(plan: plan, project: self.records[index].project, execution: execution)
-                    if execution.binding?.role.generator == self.generatorKind,
+                    if self.generationPreviewID == id, execution.binding?.role.generator == self.generatorKind,
                        execution.binding?.parameter(.name).flatMap({ execution.parameters[$0] }) == self.generatorName {
                         self.generationPlan = plan; self.previewProjectPath = self.selectedProjectPath
                     }
@@ -1156,7 +1420,7 @@ final class TaskCoordinator: ObservableObject {
                 }
             } catch { self.records[index].status = .failed; self.records[index].error = text("profile.preview.invalid") }
         }
-        if self.records[index].profileExecution?.preview == true {
+        if self.records[index].profileExecution?.preview == true, self.generationPreviewID == id {
             self.planningGeneration = false
             if self.records[index].status != .succeeded { self.generationError = self.records[index].error ?? text("profile.preview.invalid") }
         }
@@ -1166,17 +1430,15 @@ final class TaskCoordinator: ObservableObject {
             self.buffers[id] = Data(DiagnosticText.clean(String(decoding: buffered, as: UTF8.self)).utf8)
         }
         let isSimulator = self.records[index].simulator != nil
-        if self.records[index].action == .simulatorBoot, self.records[index].status == .succeeded,
-           let device = self.records[index].simulator, let developer = self.simulatorLaunchDevelopers[id] {
-            self.recordSimulatorUsage(device.id, developer: developer)
-        }
+        self.completeSimulatorOperation(self.records[index], developer: self.simulatorLaunchDevelopers[id])
         self.simulatorLaunchDevelopers.removeValue(forKey: id)
         self.persist()
-        if isSimulator { self.refreshSimulators() }
+        if isSimulator { self.refreshSimulators(afterOperation: true) }
         if self.stoppingForExit { self.finishExitIfReady() } else { self.startNext() }
     }
 
     func cancel(id: UUID) {
+        self.simulatorOpenRequests[id] = nil
         guard let index = records.firstIndex(where: { $0.id == id }) else { return }
         if self.records[index].status == .running { self.session?.cancel() }
         else if self.records[index].status == .queued {
@@ -1328,6 +1590,7 @@ final class TaskCoordinator: ObservableObject {
     /// Injects catalogue data for isolated previews; boot commands remain disabled.
     func installSimulatorPreview(_ devices: [SimulatorDevice], developer: String = "/fixture/Xcode/Contents/Developer") {
         self.simulatorRevision = UUID()
+        self.simulatorContextProject = self.project
         self.simulatorDeveloper = developer
         self.simulators = devices
         self.loadingSimulators = false
@@ -1454,7 +1717,15 @@ extension TaskCoordinator {
         guard let current = expected ?? self.project, let action = execution.action, action.remote == nil,
               expected == nil || self.projects.contains(current), !self.admissionsClosed, !self.switchingBranch,
               self.pendingCount < 100, self.checkoutGate.admitTask() else { completion?(nil); return }
+        self.objectWillChange.send()
         if action.presentation == .generator, !execution.preview {
+            // Native forms own their reviewed draft. A cached preview from another chat or
+            // a previously edited name cannot authorize a captured native request.
+            if expected == nil, let kind = execution.binding?.role.generator {
+                guard kind == generatorKind, execution.binding?.parameter(.name).flatMap({ execution.parameters[$0] }) == generatorName,
+                      generationPlan?.canGenerate == true, generationPlan?.digest == execution.parameters["expectedDigest"],
+                      previewProjectPath == selectedProjectPath else { completion?(nil); self.checkoutGate.finishAdmission(); return }
+            }
             guard let reviewed = self.profilePreviews[ProfilePreview.cacheKey(project: current, execution: execution)] ?? self.profilePreviews[action.id], reviewed.project == current,
                   reviewed.execution.snapshot == execution.snapshot,
                   reviewed.execution.parameters == execution.parameters.filter({ $0.key != "expectedDigest" }),
@@ -1584,24 +1855,23 @@ extension TaskCoordinator {
         saveProjects(); return checked
     }
     func refreshPanelContext(_ path: String) async {
+        let interval = FramePerformanceTrace.begin("Panel heartbeat")
+        defer { FramePerformanceTrace.end("Panel heartbeat", interval) }
+        let revision = branchRevision
         guard !switchingBranch, !hasGitOperation, let old = projects.first(where: { $0.path == path }),
-              let checked = try? await Task.detached(operation: { try EnvironmentInspector.project(path: old.path, developerDirectory: old.developerDirectory, appleTarget: old.appleTarget) }).value,
-              let index = projects.firstIndex(of: old) else { return }
+              let checked = try? await simulatorServices.inspect(old),
+              !switchingBranch, !hasGitOperation, branchRevision == revision,
+              let index = projects.firstIndex(of: old), checked != old else { return }
         projects[index] = checked; saveProjects()
     }
     /// Explicit local branch switching uses the same checkout gate as the native branch picker.
     func switchPanelBranch(_ name: String, project: ProjectContext) async throws {
-        guard !admissionsClosed, !busy, pendingCount == 0, !builds.hasPending, !simulatorScreen.hasPending, !switchingBranch,
-              checkoutGate.beginSwitch(records: records, preparing: preparing) else { throw MimicError.changedCheckout }
-        switchingBranch = true
-        defer { checkoutGate.finishSwitch(); switchingBranch = false; startNext() }
-        let snapshot = try await branchService.switchBranch(name, project: project)
-        guard let index = projects.firstIndex(of: project) else { throw MimicError.changedCheckout }
-        projects[index] = snapshot.project; saveProjects()
+        _ = try self.startBranchSwitch(name, project: project, requestID: UUID())
     }
     /// Setup uses native system dialogs and can complete with the main Mimic window closed.
     func panelSetup(_ operation: String, project: ProjectContext?) async throws {
         guard !admissionsClosed else { throw MimicError.changedCheckout }
+        if operation == "appearance" { openSettings(group: .appearance); showPanel?(); return }
         if operation == "profile" { importProfile(checkout: project?.path); return }
         guard let project, let index = projects.firstIndex(of: project), !switchingBranch else { throw MimicError.changedCheckout }
         if operation == "xcode" {

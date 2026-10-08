@@ -14,7 +14,7 @@ struct CIStatusBadge: View {
 
     var body: some View {
         let localized = text("ci.status." + self.status)
-        Label(localized.hasPrefix("ci.status.") ? self.status : localized, systemImage: self.symbol).font(MimicMetrics.secondary).foregroundStyle(self.color).mimicStatus(self.status)
+        Label(localized.hasPrefix("ci.status.") ? self.status : localized, systemImage: self.symbol).mimicFont(.caption).foregroundStyle(self.color).mimicStatus(self.status)
     }
 }
 
@@ -35,8 +35,8 @@ struct CISection: View {
         if self.state.context?.connection != nil || self.settings.connection != nil {
             VStack(alignment: .leading, spacing: MimicMetrics.medium) {
                 HStack {
-                    if self.showsHeader { Text("CI").font(MimicMetrics.heading).accessibilityAddTraits(.isHeader) }
-                    if let owner = self.state.user { Text("@" + owner.username).font(MimicMetrics.secondary).foregroundStyle(.secondary).lineLimit(1).help(owner.name) }
+                    if self.showsHeader { Text("CI").mimicFont(.heading).accessibilityAddTraits(.isHeader) }
+                    if let owner = self.state.user { Text("@" + owner.username).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(1).help(owner.name) }
                     Spacer(minLength: 4)
                     if self.state.loading { ProgressView().controlSize(.small) }
                     Button { self.state.refresh(manual: true) } label: { Image(systemName: "arrow.clockwise").frame(width: 28, height: 28) }
@@ -52,20 +52,20 @@ struct CISection: View {
 
                     if let launch { CILaunchActions(launch: launch, preferences: launch.preferences, presented: self.presented) }
                     if let error = self.state.error, error != .credential, self.settings.connection.flatMap({ self.settings.credentialSession.failures[$0.id] }) == nil {
-                        Text(text(error.localizationKey)).font(MimicMetrics.secondary).foregroundStyle(.orange)
+                        Text(text(error.localizationKey)).mimicFont(.caption).foregroundStyle(.orange)
                     }
                     if self.state.error != nil, let date = self.state.loadedAt {
-                        Text(text("ci.stale") + " · " + date.formatted(date: .omitted, time: .shortened)).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                        Text(text("ci.stale") + " · " + date.formatted(date: .omitted, time: .shortened)).mimicFont(.caption).foregroundStyle(.secondary)
                     }
-                    Text(text("ci.feed.title")).font(MimicMetrics.secondary.weight(.semibold)).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
+                    Text(text("ci.feed.title")).mimicFont(.caption, weight: .semibold).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
                     if self.state.visibleEntries.isEmpty, self.state.error == nil {
-                        Text(text(self.state.loading ? "ci.loading" : "ci.empty")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                        Text(text(self.state.loading ? "ci.loading" : "ci.empty")).mimicFont(.caption).foregroundStyle(.secondary)
                     }
                     ForEach(self.state.visibleEntries) { entry in
                         CIPipelineCard(state: self.state, entry: entry)
                         Divider()
                     }
-                    if self.state.historyIncomplete { Text(text("ci.history.incomplete")).font(MimicMetrics.secondary).foregroundStyle(.secondary) }
+                    if self.state.historyIncomplete { Text(text("ci.history.incomplete")).mimicFont(.caption).foregroundStyle(.secondary) }
                     if self.state.canShowMore {
                         Button(text("ci.feed.more")) { self.state.showMore() }.buttonStyle(RowButtonStyle())
                             .disabled(self.state.loading).accessibilityIdentifier("ci.feed.more")
@@ -89,7 +89,7 @@ struct CISection: View {
                                 .disabled(self.state.user == nil).accessibilityIdentifier("ci.tracking.add")
                             if self.showingSearch { self.memberSearch }
                         }.padding(.top, 6)
-                    }.font(MimicMetrics.secondary)
+                    }.mimicFont(.caption)
                 }
             }
             .onAppear { self.state.setFeedPresented(self.expanded && self.presented, preserveSelection: self.expanded && !self.presented) }
@@ -124,7 +124,7 @@ struct CISection: View {
                     }
                 }
             }.frame(maxHeight: 180)
-        }.font(MimicMetrics.body)
+        }.mimicFont(.body)
     }
 
 }
@@ -143,7 +143,7 @@ struct CIPipelineDetailsView: View {
             if let error = state.detailError, error != .credential, error != .authentication { Text(text(error.localizationKey)).foregroundStyle(.orange) }
             if let details = state.details {
                 ForEach(self.stages, id: \.self) { stage in
-                    Text(stage).font(MimicMetrics.secondary.weight(.semibold)).foregroundStyle(.secondary)
+                    Text(stage).mimicFont(.caption, weight: .semibold).foregroundStyle(.secondary)
                     ForEach(details.jobs.filter { $0.stage == stage }.sorted { $0.id < $1.id }) { job in
                         HStack {
                             Text(job.name).lineLimit(1).truncationMode(.middle).help(job.name)
@@ -155,7 +155,7 @@ struct CIPipelineDetailsView: View {
                         if job.allowFailure, job.status == "failed" { Text(text("ci.job.allowedFailure")).foregroundStyle(.secondary) }
                     }
                 }
-                if !details.bridges.isEmpty { Text(text("ci.children")).font(MimicMetrics.secondary.weight(.semibold)).foregroundStyle(.secondary) }
+                if !details.bridges.isEmpty { Text(text("ci.children")).mimicFont(.caption, weight: .semibold).foregroundStyle(.secondary) }
                 ForEach(details.bridges) { bridge in
                     HStack {
                         Text(bridge.name).lineLimit(1).truncationMode(.middle)
@@ -167,7 +167,7 @@ struct CIPipelineDetailsView: View {
                 if let error = details.bridgeError { Text(text("ci.children.error") + " " + text(error.localizationKey)).foregroundStyle(.orange) }
                 if details.jobs.isEmpty, details.bridges.isEmpty, details.bridgeError == nil { Text(text("ci.jobs.empty")).foregroundStyle(.secondary) }
             }
-        }.font(MimicMetrics.secondary).padding(.leading, 10)
+        }.mimicFont(.caption).padding(.leading, 10)
     }
 }
 
@@ -203,7 +203,7 @@ struct CISettingsView: View {
                     SecureField(text(self.settings.connection == nil ? "settings.token.placeholder" : "ci.token.replace"), text: self.$settings.enteredToken)
                         .accessibilityIdentifier("gitlab.token")
                 }
-                Text(text("ci.token.scope")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                Text(text("ci.token.scope")).mimicFont(.caption).foregroundStyle(.secondary)
             } credential: {
                 if let connection = self.settings.connection {
                     CICredentialAccessView(session: self.settings.credentialSession, id: connection.id, service: "GitLab", alwaysShow: true) {

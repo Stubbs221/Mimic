@@ -19,7 +19,7 @@ for(const block of blocks)for(const target of [{},...original.rows.flatMap(r=>[{
  const value=change(original,l=>insert(l,block,target));validate(value);assert.deepEqual(value.rows.flatMap(r=>r.slots).filter(Boolean).sort(),[...blocks].sort());for(const kind of blocks)assert.equal(value.rows.find(r=>r.slots.includes(kind)).slots.length,original.rows.find(r=>r.slots.includes(kind)).slots.length);
 }
 let gesture=new HoldGesture();gesture.press(0,0,1000);assert(!gesture.activate(1349));assert(gesture.activate(1350));assert(!gesture.activate(1400));assert.deepEqual(gesture.release(),{drop:true,click:false});
-gesture.press(0,0,0);gesture.move(8,0);assert.equal(gesture.phase,'waiting');gesture.move(8.1,0);assert(!gesture.activate(1000));assert.deepEqual(gesture.release(),{drop:false,click:false});
+gesture.press(0,0,0);gesture.move(12,0);assert.equal(gesture.phase,'waiting');gesture.move(12.1,0);assert(!gesture.activate(1000));assert.deepEqual(gesture.release(),{drop:false,click:false});
 gesture.press(0,0,0,false);assert.equal(gesture.phase,'idle');gesture.press(0,0,0);assert(gesture.release().click);
 assert.equal(scrollSpeed(24,600),-200);assert.equal(scrollSpeed(576,600),200);assert.equal(scrollSpeed(300,600),0);assert.equal(scrollSpeed(650,600),400);
 console.log('PASS: insertion parity scenarios, sizes/identities/no loss, atomic rejection, hold threshold/click suppression, bounded scrolling');
@@ -31,9 +31,14 @@ const enlarged=change(origin,l=>insert(l,'builds',{before:origin.rows[1].id},'fu
 assert.deepEqual(enlarged,change(origin,l=>insert(l,'builds',{before:origin.rows[1].id},'full',undefined,ids)));
 next=change(origin,l=>insert(l,'bootstrap',{row:origin.rows[1].id,slot:1},'mini',undefined,ids));assert.equal(next.rows[1].slots[1],'bootstrap');assert.deepEqual(next.rows.flatMap(r=>r.slots).filter(Boolean).sort(),origin.rows.flatMap(r=>r.slots).filter(Boolean).sort());
 const rejected=structuredClone(origin);assert.throws(()=>insert(rejected,'bootstrap',{row:origin.rows[1].id,slot:0},'full'));assert.deepEqual(rejected,origin);
-let size=new DragResize('mini',{x:0,y:0});assert(!size.update('center',{x:0,y:0},5000));assert(!size.update('center',{x:0,y:0},10000));assert(!size.update('center',{x:20,y:0},10000));assert(!size.update('center',{x:28,y:0},10999));assert(size.update('center',{x:28,y:0},11000));assert.equal(size.size,'full');
-assert(!size.update('right',{x:80,y:0},12000));assert(!size.update('right',{x:88.1,y:0},12800));assert(!size.update('right',{x:88.1,y:0},13799));assert(size.update('right',{x:88.1,y:0},13800));
-size=new DragResize('mini',{x:90,y:0});assert(!size.update('center',{x:70,y:0},0));assert(!size.update('left',{x:10,y:0},800));assert(!size.update('center',{x:60,y:0},1000));assert(!size.update(null,{x:60,y:0},1800));assert(!size.update('center',{x:60,y:0},2000));assert(!size.update('center',{x:60,y:0},2999));assert(size.update('center',{x:60,y:0},3000));
-size=new DragResize('mini',{x:0,y:0});for(let tick=0;tick<10;tick++)assert(!size.update('center',{x:20+tick*9,y:0},tick*200));assert.equal(size.size,'mini');
-assert.equal(resizeZone(20,100),'left');assert.equal(resizeZone(80,100),'right');assert.equal(resizeZone(20.1,100),'center');assert.equal(resizeZone(-1,100),null);
-console.log('PASS: atomic resize/side insertion, stable transient IDs, 1000ms stationary dwell, 8px jitter/reset, fast passage, zone exit, continuous motion');
+let size=new DragResize('mini',{x:0,y:0});
+assert(!size.update('center',{x:0,y:0},0));assert.equal(size.pending,'center');
+assert(!size.update('center',{x:30,y:40},499));assert(size.progress>.99);
+assert(size.update('center',{x:30,y:40},500));assert.equal(size.size,'full');
+assert(!size.update('right',{x:0,y:0},1000));assert(!size.update('right',{x:50.1,y:0},1490));assert.equal(size.progress,0);
+assert(!size.update('right',{x:50.1,y:0},1989));assert(size.update('right',{x:50.1,y:0},1990));
+size=new DragResize('full',{x:0,y:0});assert(!size.update('left',{x:0,y:0},0));assert(!size.update('right',{x:0,y:0},400));assert(!size.update(null,{x:0,y:0},800));assert.equal(size.pending,null);
+assert(!size.update('right',{x:0,y:0},1000));assert(!size.update('right',{x:0,y:0},1499));assert(size.update('right',{x:0,y:0},1500));
+size=new DragResize('mini',{x:0,y:0});for(let tick=0;tick<10;tick++)assert(!size.update('center',{x:tick*30,y:0},tick*200));assert.equal(size.size,'mini');
+assert.equal(resizeZone(30,100),'left');assert.equal(resizeZone(70,100),'right');assert.equal(resizeZone(30.1,100),'center');assert.equal(resizeZone(-1,100),null);
+console.log('PASS: atomic resize/side insertion, 500ms dwell without movement, 50pt radius/reset, zone exit, continuous motion, 30/40/30 zones');

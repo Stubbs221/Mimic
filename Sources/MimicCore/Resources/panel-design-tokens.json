@@ -1,0 +1,63 @@
+{
+  "author": "Василий Маслов",
+  "createdAt": "08.10.2026",
+  "source": "JV8M5FNn84pch8LvBk4sXv / B",
+  "palettes": {
+    "light": {
+      "paper": "#f8f6f1",
+      "surface": "#fffdf9",
+      "raised": "#ffffff",
+      "ink": "#252637",
+      "muted": "#626574",
+      "line": "#dfddd9",
+      "accent": "#6550d7",
+      "accentSoft": "#eee8f8",
+      "onAccent": "#ffffff",
+      "success": "#356842",
+      "warning": "#8a591e",
+      "error": "#a83f38",
+      "terminal": "#282738",
+      "terminalText": "#e1dfef",
+      "usagePurple": "#8572c4",
+      "usageRose": "#b68aa4",
+      "usageOlive": "#8a9b66",
+      "usageBlue": "#7d9bb5",
+      "softSurface": "#f6f8f4"
+    },
+    "dark": {
+      "paper": "#1f202a",
+      "surface": "#2b2c39",
+      "raised": "#353645",
+      "ink": "#f4f1eb",
+      "muted": "#bab8c8",
+      "line": "#454554",
+      "accent": "#b4a1ff",
+      "accentSoft": "#403651",
+      "onAccent": "#252637",
+      "success": "#9acb9d",
+      "warning": "#ebc080",
+      "error": "#ffa29a",
+      "terminal": "#171820",
+      "terminalText": "#e1dfef",
+      "usagePurple": "#b4a2e0",
+      "usageRose": "#d0a0ba",
+      "usageOlive": "#b5c28e",
+      "usageBlue": "#a0bdd3",
+      "softSurface": "#303731"
+    }
+  },
+  "metrics": {
+    "panelWidth": 560,
+    "legacyPanelWidth": 520,
+    "cardRadius": 18,
+    "panelRadius": 28,
+    "controlRadius": 10,
+    "collapsedHeight": 160,
+    "inset": 16,
+    "gap": 12,
+    "body": 13,
+    "caption": 11,
+    "heading": 13,
+    "dragHoldMS": 350
+  }
+}

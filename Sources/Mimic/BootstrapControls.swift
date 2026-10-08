@@ -3,13 +3,17 @@ import SwiftUI
 
 /// Shared role for actions in readable content; glass is never applied to the content itself.
 struct BootstrapControlStyle: PrimitiveButtonStyle {
+    private var theme = MimicTheme()
     var primary = false
     var selected = false
     var fillsWidth = false
     func makeBody(configuration: Configuration) -> some View {
-        if self.fillsWidth {
+        if theme.tiled {
+            Button(role: configuration.role, action: configuration.trigger) { configuration.label.frame(maxWidth: fillsWidth ? .infinity : nil) }
+                .buttonStyle(TileGridButtonStyle(primary: primary || fillsWidth, selected: selected, height: fillsWidth ? 28 : 32))
+        } else if self.fillsWidth {
             Button(role: configuration.role, action: configuration.trigger) {
-                configuration.label.font(MimicMetrics.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 16)
+                configuration.label.mimicFont(.body, weight: .semibold).frame(maxWidth: .infinity, minHeight: 16)
             }.buttonStyle(.borderedProminent).tint(Color(red: 65 / 255, green: 108 / 255, blue: 155 / 255)).controlSize(.small)
                 .buttonBorderShape(.roundedRectangle(radius: 8))
                 .frame(height: 28)

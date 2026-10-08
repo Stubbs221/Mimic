@@ -47,10 +47,12 @@ public struct MimicBridgeRequest: Codable, Sendable {
     public let version: Int
     public let id: UUID
     public let threadID: String?
+    /// Helpers opt in only when they can strip presentation fields into private MCP metadata.
+    public let presentationMetadataVersion: Int?
     public let method: String
     public let parameters: [String: BridgeValue]
-    public init(method: String, parameters: [String: BridgeValue] = [:], id: UUID = UUID(), version: Int = 3, threadID: String? = nil) {
-        self.version = version; self.id = id; self.threadID = threadID; self.method = method; self.parameters = parameters
+    public init(method: String, parameters: [String: BridgeValue] = [:], id: UUID = UUID(), version: Int = 3, threadID: String? = nil, presentationMetadataVersion: Int? = nil) {
+        self.version = version; self.id = id; self.threadID = threadID; self.method = method; self.parameters = parameters; self.presentationMetadataVersion = presentationMetadataVersion
     }
 }
 
@@ -89,16 +91,16 @@ public enum MimicSocket {
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size))
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
     }
-    static func wait(_ fd: Int32, _ events: Int16) throws {
+    static func wait(_ fd: Int32, _ events: Int16, timeout: Int32 = 30_000) throws {
         var p = pollfd(fd: fd, events: events, revents: 0)
-        let status = poll(&p, 1, 30_000)
+        let status = poll(&p, 1, timeout)
         guard status > 0 else { throw MimicBridgeError.timeout }
         guard p.revents & events != 0 else { throw MimicBridgeError.unavailable }
     }
-    static func receive(_ fd: Int32) throws -> Data {
+    static func receive(_ fd: Int32, timeout: Int32 = 30_000) throws -> Data {
         var result = Data(), bytes = [UInt8](repeating: 0, count: 4096)
         while result.count <= maximumBytes {
-            try wait(fd, Int16(POLLIN))
+            try wait(fd, Int16(POLLIN), timeout: timeout)
             let count = Darwin.read(fd, &bytes, bytes.count)
             guard count > 0 else { throw MimicBridgeError.unavailable }
             if let newline = bytes.prefix(count).firstIndex(of: 10) {
@@ -133,7 +135,7 @@ public enum MimicSocket {
         }
         guard status == 0 else { throw MimicBridgeError.unavailable }
         try send(JSONEncoder().encode(request), to: fd)
-        let reply = try JSONDecoder().decode(MimicBridgeReply.self, from: receive(fd))
+        let reply = try JSONDecoder().decode(MimicBridgeReply.self, from: receive(fd, timeout: request.method == "get_build_configuration" || request.method == "cli_get_build_configuration" ? 130_000 : 30_000))
         guard reply.id == request.id else { throw MimicBridgeError.invalidMessage }
         return reply
     }
@@ -165,7 +167,7 @@ public enum MimicSocket {
             return try self.start(handler: handler)
         }
         let bound = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
-        guard bound == 0, listen(fd, 8) == 0 else { close(fd); throw MimicBridgeError.unavailable }
+        guard bound == 0, listen(fd, 32) == 0 else { close(fd); throw MimicBridgeError.unavailable }
         chmod(self.path, 0o600); _ = fcntl(fd, F_SETFL, O_NONBLOCK)
         self.fd = fd
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
@@ -175,7 +177,9 @@ public enum MimicSocket {
                 let client = accept(fd, nil, nil)
                 guard client >= 0 else { return }
                 var uid: uid_t = 0, gid: gid_t = 0
-                guard getpeereid(client, &uid, &gid) == 0, uid == getuid(), self.active < 8 else { close(client); return }
+                // Two six-request video pipelines plus liveness probes and control traffic must fit.
+                // Retain a hard bound for malformed/slow local clients.
+                guard getpeereid(client, &uid, &gid) == 0, uid == getuid(), self.active < 32 else { close(client); return }
                 MimicSocket.configure(client); self.active += 1
                 Task {
                     await Self.serve(client, handler: handler)
@@ -196,7 +200,12 @@ public enum MimicSocket {
         do {
             let request = try JSONDecoder().decode(MimicBridgeRequest.self, from: MimicSocket.receive(fd))
             let compatible = request.version == 3 || request.version == 2 && ["prepare_development_update", "get_development_update_state"].contains(request.method)
-            let reply = compatible ? await handler(request) : MimicBridgeReply(id: request.id, error: "unsupportedVersion")
+            let reply: MimicBridgeReply
+            if !compatible { reply = .init(id: request.id, error: "unsupportedVersion") }
+            else if request.method == "bridge_ping", request.parameters.isEmpty {
+                // Internal IPC only: no model/tool registration and no native app-state work.
+                reply = .init(id: request.id, result: .object(["version": .number(3)]))
+            } else { reply = await handler(request) }
             try MimicSocket.send(JSONEncoder().encode(reply), to: fd)
         } catch { /* A malformed/disconnected peer is isolated from other clients and app state. */ }
     }

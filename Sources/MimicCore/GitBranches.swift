@@ -61,7 +61,7 @@ public struct LocalGitBranchService: GitBranchService {
     private static func snapshot(_ project: ProjectContext) throws -> GitCheckoutState {
         let context = try EnvironmentInspector.project(path: project.path, developerDirectory: project.developerDirectory, appleTarget: project.appleTarget)
         let status = try self.git(context, ["status", "--porcelain=v1", "-z"], trim: false)
-        let markers = ["MERGE_HEAD", "REBASE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer"]
+        let markers = ["MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD", "REVERT_HEAD", "sequencer"]
         let operation = try markers.contains { marker in
             let path = try self.git(context, ["rev-parse", "--git-path", marker])
             let url = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: context.path, isDirectory: true))

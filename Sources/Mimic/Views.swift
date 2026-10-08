@@ -10,14 +10,15 @@ import MimicCore
 
 /// History owns an independent output subscription. PTY ownership remains in TaskCoordinator.
 struct TerminalContainer: NSViewRepresentable {
+    @Environment(\.mimicPanelAppearance) private var appearance
+    @Environment(\.colorScheme) private var colorScheme
     let model: TaskCoordinator
     let id: UUID
     func makeCoordinator() -> TerminalDelegate { TerminalDelegate(model: self.model, id: self.id) }
     func makeNSView(context: Context) -> TerminalView {
         let terminal = TerminalView(frame: .zero)
         terminal.terminalDelegate = context.coordinator
-        terminal.nativeBackgroundColor = .textBackgroundColor
-        terminal.nativeForegroundColor = .textColor
+        configure(terminal)
         terminal.backgroundOpacity = 1
         terminal.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         terminal.getTerminal().changeScrollback(10000)
@@ -30,12 +31,18 @@ struct TerminalContainer: NSViewRepresentable {
         return terminal
     }
 
-    func updateNSView(_ view: TerminalView, context: Context) { self.focusIfRequested(view, coordinator: context.coordinator) }
+    func updateNSView(_ view: TerminalView, context: Context) { configure(view); self.focusIfRequested(view, coordinator: context.coordinator) }
     static func dismantleNSView(_ view: TerminalView, coordinator: TerminalDelegate) {
         view.terminalDelegate = nil
         coordinator.model.detachTerminal(owner: coordinator.subscriptionID)
     }
 
+    private func configure(_ view: TerminalView) {
+        let tiled = appearance == .tileGrid
+        BootstrapTerminalTheme.apply(to: view, dark: tiled || colorScheme == .dark, increasedContrast: false)
+        view.nativeBackgroundColor = tiled ? MimicTheme.native("terminal", dark: colorScheme == .dark) : .textBackgroundColor
+        view.nativeForegroundColor = tiled ? MimicTheme.native("terminalText", dark: colorScheme == .dark) : .textColor
+    }
     private func focusIfRequested(_ view: TerminalView, coordinator: TerminalDelegate) {
         guard self.model.terminalFocusTaskID == self.id, coordinator.lastFocusRequest != self.model.terminalFocusRequest else { return }
         let request = self.model.terminalFocusRequest
@@ -96,12 +103,12 @@ enum BootstrapTerminalTheme {
 }
 
 /// A bounded, task-owned screen survives hidden mini cards and completion. Never serialized.
-@MainActor final class BootstrapTerminalSession {
+@MainActor final class BootstrapTerminalSession: ObservableObject {
     private weak var model: TaskCoordinator?
     let id: UUID
     private let owner = UUID()
     private(set) var snapshot: Data
-    private(set) var hasOutput: Bool
+    @Published private(set) var hasOutput: Bool
     private var screen: TerminalView?
     private var delegate: TerminalDelegate?
     private var presentation: String?
@@ -110,7 +117,7 @@ enum BootstrapTerminalTheme {
         self.snapshot = Data(model.replay(id: record.id).suffix(128 * 1024)); self.hasOutput = !self.snapshot.isEmpty
         model.attachTerminal(owner: self.owner) { [weak self] task, bytes in
             guard let self, task == self.id else { return }
-            self.hasOutput = self.hasOutput || !bytes.isEmpty
+            if !self.hasOutput, !bytes.isEmpty { self.hasOutput = true }
             if self.model?.records.first(where: { $0.id == self.id })?.hasPrivateInput == true {
                 self.snapshot = Data()
                 if self.screen == nil { self.hasOutput = false }
@@ -135,12 +142,17 @@ enum BootstrapTerminalTheme {
         return view
     }
     /// Updating the existing renderer never clears task output or its replay snapshot.
-    func configure(fontSize: CGFloat, dark: Bool, increasedContrast: Bool) {
-        let view = self.view(), signature = "\(fontSize)-\(dark)-\(increasedContrast)"
+    func configure(fontSize: CGFloat, dark: Bool, increasedContrast: Bool, appearance: PanelAppearance = .legacy) {
+        let view = self.view(), signature = "\(fontSize)-\(dark)-\(increasedContrast)-\(appearance)"
         guard self.presentation != signature else { return }
         self.presentation = signature
         if view.font.pointSize != fontSize { view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
-        BootstrapTerminalTheme.apply(to: view, dark: dark, increasedContrast: increasedContrast)
+        BootstrapTerminalTheme.apply(to: view, dark: dark || appearance == .tileGrid, increasedContrast: increasedContrast)
+        if appearance == .tileGrid {
+            view.nativeBackgroundColor = MimicTheme.native("terminal", dark: dark)
+            view.nativeForegroundColor = MimicTheme.native("terminalText", dark: dark)
+            view.caretColor = view.nativeForegroundColor
+        }
     }
     /// A mounted screen may keep its scrollback, but echoed input cannot become replay data.
     func discardReplayAfterPrivateInput() { self.snapshot = Data(); if self.screen == nil { self.hasOutput = false } }
@@ -160,6 +172,7 @@ struct BootstrapTerminalContainer: NSViewRepresentable {
     var fontSize: CGFloat = 12
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.mimicPanelAppearance) private var appearance
     func makeNSView(context: Context) -> NSView { NSView() }
     func updateNSView(_ host: NSView, context: Context) {
         let terminal = self.model.bootstrapTerminal(for: self.record).view()
@@ -171,7 +184,7 @@ struct BootstrapTerminalContainer: NSViewRepresentable {
             terminal.autoresizingMask = [.width, .height]
         }
         let session = self.model.bootstrapTerminal(for: self.record)
-        session.configure(fontSize: self.fontSize, dark: self.colorScheme == .dark, increasedContrast: self.contrast == .increased)
+        session.configure(fontSize: self.fontSize, dark: self.colorScheme == .dark, increasedContrast: self.contrast == .increased, appearance: self.appearance)
         session.setInputEnabled(false)
         if self.visible { terminal.frame = host.bounds }
         terminal.isHidden = !self.visible

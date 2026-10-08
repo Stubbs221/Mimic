@@ -139,7 +139,8 @@ private struct CollapseHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
-/// Retains the original subtree through its exit, then removes it. Reopening cancels that removal.
+/// Mounts content on its first expansion; retained disclosures preserve that subtree after closing.
+/// Other disclosures keep the subtree through their exit, then remove it. Reopening cancels removal.
 /// Only the outside height is interpolated, so an embedded terminal never shrinks its PTY.
 struct MimicCollapse<Content: View>: View {
     let expanded: Bool
@@ -155,7 +156,7 @@ struct MimicCollapse<Content: View>: View {
 
     init(expanded: Bool, source: MimicMotionSource = .automatic, retainsContent: Bool = false, @ViewBuilder content: () -> Content) {
         self.expanded = expanded; self.source = source; self.retainsContent = retainsContent; self.content = content()
-        self._mounted = State(initialValue: expanded || retainsContent); self._revealed = State(initialValue: expanded)
+        self._mounted = State(initialValue: expanded); self._revealed = State(initialValue: expanded)
     }
 
     var body: some View {
@@ -178,7 +179,7 @@ struct MimicCollapse<Content: View>: View {
             self.revision = UUID(); self.removal?.cancel()
             if expanded {
                 if self.mounted { self.reveal(true) }
-                else { self.mounted = true; if self.naturalHeight > 0 || self.source == .keyboard { self.reveal(true) } }
+                else { self.mounted = true; if self.naturalHeight > 0 || self.source == .keyboard || !self.motion.policy(self.source).moves { self.reveal(true) } }
             } else {
                 self.reveal(false)
                 let delay = self.motion.policy(self.source).duration(.disclosure), revision = self.revision

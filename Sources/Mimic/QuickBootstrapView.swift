@@ -35,7 +35,7 @@ struct QuickBootstrapView: View {
             if let activity = model.quickBootstrapActivity {
                 let record = activity.record(in: self.model.records)
                 MimicChrome { HStack(spacing: MimicMetrics.medium) {
-                    Text(text("quick.bootstrap." + record.options.platform.rawValue)).font(MimicMetrics.heading).allowsHitTesting(false)
+                    Text(text("quick.bootstrap." + record.options.platform.rawValue)).mimicFont(.heading).allowsHitTesting(false)
                     Spacer(minLength: 0)
                     BootstrapIconButton(symbol: "terminal", label: text("terminal.show"), action: { self.model.showHistory(id: record.id, focusTerminal: true) }, inControlBar: true)
                         .disabled(!self.model.records.contains { $0.id == record.id })
@@ -46,12 +46,12 @@ struct QuickBootstrapView: View {
                 HStack {
                     BootstrapStateText(model: self.model, record: record)
                     Spacer(minLength: 4)
-                    TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in
                         Text(record.startedAt == nil ? "" : duration(record)).font(MimicMetrics.secondary.monospacedDigit()).foregroundStyle(.secondary)
                     }.mimicImmediate()
                 }.allowsHitTesting(false)
                 if let error = activity.error {
-                    Text(error).font(MimicMetrics.secondary).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).mimicStatus(error).allowsHitTesting(false)
+                    Text(error).mimicFont(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).mimicStatus(error).allowsHitTesting(false)
                 } else if activity.isPreparing(in: self.model.records) {
                     BootstrapFillBar(value: 0)
                 } else if record.status == .queued {
@@ -60,11 +60,11 @@ struct QuickBootstrapView: View {
                 } else if record.status == .running {
                     BootstrapExecutionProgress(model: self.model, record: record, compact: true, showState: false).allowsHitTesting(false)
                 } else if let error = record.error {
-                    Text(error).font(MimicMetrics.secondary).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).mimicStatus(error).allowsHitTesting(false)
+                    Text(error).mimicFont(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).mimicStatus(error).allowsHitTesting(false)
                 }
             }
         }.padding(MimicMetrics.cardInsets).frame(width: MimicMetrics.cardWidth).fixedSize(horizontal: false, vertical: true)
-            .font(MimicMetrics.body).tint(.indigo).buttonStyle(MimicButtonStyle())
+            .mimicFont(.body).tint(.indigo).buttonStyle(MimicButtonStyle())
             .background(CardMouseSurface(open: self.showMimic))
             .modifier(QuickBootstrapFrame(framed: self.framed))
             .accessibilityIdentifier("bootstrap.quick.activity")
@@ -92,11 +92,22 @@ struct CardMouseSurface: NSViewRepresentable {
         override func accessibilityPerformPress() -> Bool { self.open(); return true }
         override func mouseDown(with event: NSEvent) {
             guard let window else { return }
-            let origin = window.frame.origin
-            let point = NSEvent.mouseLocation
-            (window as? PersistentBootstrapPanel)?.beginDrag?()
-            window.performDrag(with: event)
-            if hypot(NSEvent.mouseLocation.x - point.x, NSEvent.mouseLocation.y - point.y) < 4, hypot(window.frame.minX - origin.x, window.frame.minY - origin.y) < 4 { self.open() }
+            let point = event.locationInWindow
+            // Commit to one action before handing event tracking to AppKit.
+            while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+                let distance = hypot(next.locationInWindow.x - point.x, next.locationInWindow.y - point.y)
+                if distance >= 4 {
+                    if next.type == .leftMouseDragged {
+                        (window as? PersistentBootstrapPanel)?.beginDrag?()
+                        window.performDrag(with: event)
+                    }
+                    return
+                }
+                if next.type == .leftMouseUp {
+                    if self.bounds.contains(self.convert(next.locationInWindow, from: nil)) { self.open() }
+                    return
+                }
+            }
         }
     }
 }

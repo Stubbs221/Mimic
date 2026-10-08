@@ -10,13 +10,40 @@ extension MimicIntegration {
         guard let threadID = request.threadID else { throw failure("context") }
         let p = request.parameters
         let keys: [String: Set<String>] = [
+            "panel_run_tool": ["actionID", "parameters", "context", "requestID"],
+            "panel_save_tools_preferences": ["favorites", "expectedRevision"],
+            "panel_get_tool_configuration": ["actionID", "parameters", "context"],
             "panel_get_ci_details": ["identity", "refresh"],
             "panel_get_workspace": [], "panel_save_workspace": ["workspace"], "panel_save_layout": ["layout", "expectedRevision"],
-            "panel_setup": ["operation"], "panel_branches": [], "panel_switch_branch": ["branch", "context"],
+            "panel_setup": ["operation"], "panel_branches": [], "panel_switch_branch": ["branch", "context", "requestID"],
             "panel_preview_generator": ["actionID", "parameters", "context", "requestID"], "panel_generate": ["actionID", "parameters", "context", "requestID"], "panel_get_preview": ["taskID"],
             "panel_terminal_open": ["taskID", "publicKey"], "panel_terminal_poll": ["channelID"], "panel_terminal_send": ["channelID", "packet"], "panel_terminal_close": ["channelID"], "panel_secret_input": ["taskID"], "panel_bootstrap_control": ["taskID", "operation"]]
         guard let allowed = keys[request.method], Set(p.keys) == allowed else { throw failure("arguments") }
         switch request.method {
+        case "panel_run_tool": return try await local(p, threadID: threadID, preventToolRepeat: true)
+        case "panel_save_tools_preferences":
+            guard let revision = p["expectedRevision"]?.integer, let favorites = p["favorites"]?.array else { throw failure("arguments") }
+            let tools = try favorites.map { item -> ProjectTool in
+                guard let raw = item.string, let tool = ProjectTool(rawValue: raw) else { throw failure("arguments") }; return tool
+            }
+            guard (try? ToolsPreferences(favorites: tools).validate()) != nil else { throw failure("arguments") }
+            do { return try BridgeValue.encode(model.toolsPreferences.save(tools, expectedRevision: revision)) }
+            catch PanelLayoutError.conflict { throw failure("toolsConflict") }
+        case "panel_get_tool_configuration":
+            let current = try expected(p["context"] ?? .null, threadID: threadID)
+            guard let snapshot = model.activeProfile, let id = p["actionID"]?.string,
+                  let action = snapshot.profile.actions.first(where: { $0.id == id && $0.allowsMCP && $0.remote == nil }),
+                  snapshot.profile.interface?.bindings.contains(where: { $0.actionID == id && ProjectTool.allCases.flatMap(\.roles).contains($0.role) }) == true,
+                  let values = p["parameters"]?.object, values.values.allSatisfy({ $0.string != nil }),
+                  Set(values.keys).isSubset(of: Set(action.parameters.map(\.id))) else { throw failure("arguments") }
+            let execution = ProfileExecution(snapshot: snapshot, actionID: id, parameters: values.mapValues { $0.string! }, preview: action.presentation == .generator)
+            var missing = execution.missingTools(project: current)
+            for path in snapshot.profile.requiredFiles + action.requiredFiles {
+                if (try? ProfileValidation.checkoutPath(path, root: current.path)).map({ FileManager.default.fileExists(atPath: $0) }) != true { missing.append(path) }
+            }
+            let commands = try? execution.commands(project: current)
+            let tool = ProjectTool.allCases.first { $0.roles.contains(execution.binding!.role) }!
+            return .object(["effectsKey": .string(tool.effectsKey(execution: execution)), "missing": try BridgeValue.encode(missing), "command": commands.map { .string($0.map(\.display).joined(separator: "\n")) } ?? .null])
         case "panel_get_ci_details": return try self.panelCIDetails(threadID: threadID, parameters: p)
         case "panel_get_workspace": return try BridgeValue.encode(workspaceStore.load(threadID))
         case "panel_save_workspace":
@@ -57,12 +84,24 @@ extension MimicIntegration {
             guard let current = project(threadID) else { throw failure("context") }
             return .object(["branches": try BridgeValue.encode(try await model.panelBranches(current))])
         case "panel_switch_branch":
-            let current = try expected(p["context"] ?? .null, threadID: threadID)
             guard let branch = p["branch"]?.string, !branch.isEmpty, branch.utf8.count <= 1024 else { throw failure("arguments") }
-            try await model.switchPanelBranch(branch, project: current); return .object(["done": .bool(true)])
+            guard let id = p["requestID"]?.string.flatMap(UUID.init(uuidString:)) else { throw failure("arguments") }
+            // A lost reply can be retried after checkout has changed the current context.
+            if let old = try? model.branchSwitch.operation(id) {
+                guard old.sourceThreadID == threadID, old.target == branch,
+                      project(threadID)?.path == old.source.path,
+                      p["context"]?["checkoutId"].string == old.source.path,
+                      p["context"]?["branch"].string == old.source.branch,
+                      p["context"]?["sha"].string == old.source.commit else { throw failure("context") }
+                return Self.branchMetadata(old)
+            }
+            let current = try expected(p["context"] ?? .null, threadID: threadID)
+            if branch == current.branch { return .object(["unchanged": .bool(true)]) }
+            let op = try model.startBranchSwitch(branch, project: current, requestID: id, threadID: threadID)
+            return Self.branchMetadata(op)
         case "panel_preview_generator", "panel_generate":
             guard let actionID = p["actionID"]?.string, model.activeProfile?.profile.actions.contains(where: { $0.id == actionID && $0.presentation == .generator && $0.allowsMCP }) == true else { throw failure("arguments") }
-            return try await local(p, threadID: threadID, preview: request.method == "panel_preview_generator", allowGenerator: true)
+            return try await local(p, threadID: threadID, preview: request.method == "panel_preview_generator", allowGenerator: true, preventToolRepeat: true)
         case "panel_get_preview":
             guard let id = p["taskID"]?.string.flatMap(UUID.init(uuidString:)), let record = model.records.first(where: { $0.id == id && $0.project.path == project(threadID)?.path }),
                   let execution = record.profileExecution, execution.preview else { throw failure("notFound") }

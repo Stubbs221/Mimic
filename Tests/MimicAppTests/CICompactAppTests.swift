@@ -193,6 +193,8 @@ private actor CompactAppClient: GitLabService {
     @Test func nativeCompactGridSnapshotsAndOverlayFitLongValues() async throws {
         let fixture = try CompactAppFixture(twoRuns: true); defer { fixture.stop() }
         let model = fixture.model
+        let style = PanelAppearance(rawValue: ProcessInfo.processInfo.environment["MIMIC_PANEL_APPEARANCE"] ?? "legacy") ?? .legacy
+        let width: CGFloat = style == .tileGrid ? 528 : 488
         try await self.wait { model.ci.compactSummaries.count == 2 && model.ci.compactSummaries.allSatisfy { $0.completed == 1 } }
         let summary = try #require(model.ci.compactSummary)
         let compact = NSHostingView(rootView: CICompactBody(summary: summary).frame(width: 214))
@@ -202,9 +204,9 @@ private actor CompactAppClient: GitLabService {
         for dark in [false, true] { for contrast in [false, true] {
             let view = PanelGrid(model: model, layout: model.panelLayout)
                 .environment(\.colorScheme, dark ? .dark : .light).environment(MimicAppearancePreview(increasedContrast: contrast))
-                .environment(\.mimicMotionSettings, model.motionSettings).frame(width: 488)
+                .environment(\.mimicMotionSettings, model.motionSettings).frame(width: width).environment(\.mimicPanelAppearance, style)
             let host = NSHostingView(rootView: view), size = host.fittingSize
-            #expect(abs(size.width - 488) < 1)
+            #expect(abs(size.width - width) < 1)
             let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
             window.contentView = host; host.frame = NSRect(origin: .zero, size: size); host.layoutSubtreeIfNeeded()
@@ -214,7 +216,7 @@ private actor CompactAppClient: GitLabService {
             model.panelLayout.begin(); model.panelLayout.edit { try $0.resize(.ci, to: .full) }; model.panelLayout.finish()
             let wide = NSHostingView(rootView: PanelGrid(model: model, layout: model.panelLayout)
                 .environment(\.colorScheme, dark ? .dark : .light).environment(MimicAppearancePreview(increasedContrast: contrast))
-                .environment(\.mimicMotionSettings, model.motionSettings).frame(width: 488))
+                .environment(\.mimicMotionSettings, model.motionSettings).frame(width: width).environment(\.mimicPanelAppearance, style))
             let wideSize = wide.fittingSize
             let wideWindow = NSWindow(contentRect: NSRect(origin: .zero, size: wideSize), styleMask: [.borderless], backing: .buffered, defer: false)
             wideWindow.isReleasedWhenClosed = false; wideWindow.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)

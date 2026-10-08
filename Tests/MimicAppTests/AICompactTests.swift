@@ -214,12 +214,15 @@ struct AICompactTests {
         let output = ProcessInfo.processInfo.environment["MIMIC_AI_COMPACT_PREVIEW_DIR"].map { URL(fileURLWithPath: $0) }
         if let output { try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true) }
         for (state, values) in cases {
-            for width in [CGFloat(238), 488] {
+            let style = PanelAppearance(rawValue: ProcessInfo.processInfo.environment["MIMIC_PANEL_APPEARANCE"] ?? "legacy") ?? .legacy
+            let mini: CGFloat = style == .tileGrid ? 258 : 238
+            for width in [mini, style == .tileGrid ? 528 : 488] {
                 for dark in [false, true] {
                     for contrast in [false, true] {
                         let appearance: NSAppearance.Name = contrast ? (dark ? .accessibilityHighContrastDarkAqua : .accessibilityHighContrastAqua) : (dark ? .darkAqua : .aqua)
-                        let root = self.card(width == 238 ? Array(values.prefix(1)) : values, width: width)
+                        let root = self.card(width == mini ? Array(values.prefix(1)) : values, width: width)
                             .environment(\.colorScheme, dark ? .dark : .light)
+                            .environment(\.mimicPanelAppearance, style)
                             .environment(MimicAppearancePreview(reduceMotion: true, increasedContrast: contrast))
                         let view = NSHostingView(rootView: root)
                         let window = NSWindow(contentRect: NSRect(x: 250, y: 300, width: width, height: 160), styleMask: [.borderless], backing: .buffered, defer: false)

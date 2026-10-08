@@ -91,8 +91,8 @@ private struct AnalysisEditor: View {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
                                 Text(text("ai.state." + session.state.rawValue))
-                                TimelineView(.periodic(from: .now, by: 1)) { _ in
-                                    Text(String(format: text("ai.elapsed.format"), Int(max(0, (session.finishedAt ?? Date()).timeIntervalSince(session.startedAt ?? Date()))))).monospacedDigit()
+                                MimicActivityClock(running: true) { now in
+                                    Text(String(format: text("ai.elapsed.format"), Int(max(0, (session.finishedAt ?? now).timeIntervalSince(session.startedAt ?? now))))).monospacedDigit()
                                 }
                             }.foregroundStyle(.secondary).accessibilityIdentifier("ai.analysis.state")
                         } else if session.state == .cancelled { Text(text("ai.state.cancelled")).foregroundStyle(.secondary) }
@@ -152,33 +152,36 @@ struct AIIntegrationsSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MimicMetrics.large) {
-            SettingsField(title: text("settings.ai.default")) {
-                Picker(text("settings.ai.default"), selection: self.$settings.settings.provider) {
-                    Text("Codex").tag(AIProvider.codex); Text("Claude").tag(AIProvider.claude)
-                }.labelsHidden().accessibilityIdentifier("ai.settings.provider")
-                    .disabled(self.settings.checking != nil || self.analysis.isActive)
+            SettingsCard {
+                SettingsField(title: text("settings.ai.default")) {
+                    Picker(text("settings.ai.default"), selection: self.$settings.settings.provider) {
+                        Text("Codex").tag(AIProvider.codex); Text("Claude").tag(AIProvider.claude)
+                    }.labelsHidden().accessibilityIdentifier("ai.settings.provider")
+                        .disabled(self.settings.checking != nil || self.analysis.isActive)
+                }
             }
             ForEach(AIProvider.allCases, id: \.self) { provider in
-                Divider()
-                Text(provider == .codex ? "Codex" : "Claude").font(MimicMetrics.heading).accessibilityAddTraits(.isHeader)
-                if provider == .codex, let integration = self.model.integration {
-                    MimicIntegrationSettingsView(integration: integration, framed: false)
-                }
-                AIProviderSettingsView(provider: provider, settings: self.settings, analysis: self.analysis)
-                SettingsField(title: text("settings.usage.period")) {
-                    Picker(text("settings.usage.period"), selection: Binding(
-                        get: { self.usage.settings.preference(for: provider) },
-                        set: { self.usage.setPreference($0, for: provider) }
-                    )) {
-                        ForEach(AIUsagePreference.allCases, id: \.self) { preference in
-                            Text(text("usage.preference." + preference.rawValue)).tag(preference)
-                        }
-                    }.labelsHidden().accessibilityIdentifier("usage.preference." + provider.rawValue)
+                SettingsCard {
+                    Text(provider == .codex ? "Codex CLI" : "Claude CLI").mimicFont(.heading).accessibilityAddTraits(.isHeader)
+                    AIProviderSettingsView(provider: provider, settings: self.settings, analysis: self.analysis)
+                    SettingsField(title: text("settings.usage.period")) {
+                        Picker(text("settings.usage.period"), selection: Binding(
+                            get: { self.usage.settings.preference(for: provider) },
+                            set: { self.usage.setPreference($0, for: provider) }
+                        )) {
+                            ForEach(AIUsagePreference.allCases, id: \.self) { preference in
+                                Text(text("usage.preference." + preference.rawValue)).tag(preference)
+                            }
+                        }.labelsHidden().accessibilityIdentifier("usage.preference." + provider.rawValue)
+                    }
                 }
             }
-            Text(text("ai.cli.auth")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+            if let integration = self.model.integration {
+                SettingsCard { MimicIntegrationSettingsView(integration: integration, framed: false) }
+            }
+            Text(text("ai.cli.auth")).mimicFont(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-        }.font(MimicMetrics.body)
+        }.mimicFont(.body)
     }
 }
 
@@ -189,8 +192,8 @@ private struct AIProviderSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: MimicMetrics.medium) {
-            Text(text("settings.ai.analysis")).font(MimicMetrics.body.weight(.medium))
-            Text(text("settings.ai.analysis.detail")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+            Text(text("settings.ai.analysis")).mimicFont(.body, weight: .medium)
+            Text(text("settings.ai.analysis.detail")).mimicFont(.caption).foregroundStyle(.secondary)
             SettingsField(title: text("settings.ai.path")) {
                 HStack {
                     TextField(text("settings.ai.path.placeholder"), text: self.path).accessibilityIdentifier("ai.settings.path." + self.provider.rawValue)

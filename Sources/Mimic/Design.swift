@@ -35,7 +35,7 @@ enum PanelSection: Equatable {
 enum PanelPage: Equatable { case home, settings }
 
 enum SettingsGroup: String, CaseIterable, Identifiable {
-    case application, aiIntegrations, ci, environment
+    case application, appearance, environment, aiIntegrations, ci, diagnostics
     var id: String { self.rawValue }
     var title: String { text("settings.group." + self.rawValue) }
     var scrollID: String { "settings.group." + self.rawValue }
@@ -88,12 +88,12 @@ enum ActionPresentation {
 enum MimicMetrics {
     static let small: CGFloat = 4
     static let medium: CGFloat = 8
-    static let large: CGFloat = 12
-    static let documentInset: CGFloat = 16
-    static let panelWidth: CGFloat = 520
+    static let large: CGFloat = PanelDesignTokens.shared.metrics["gap"]!
+    static let documentInset: CGFloat = PanelDesignTokens.shared.metrics["inset"]!
+    static let panelWidth: CGFloat = PanelAppearance.legacy.panelWidth
     static let cardWidth: CGFloat = 320
     /// Width is configurable; every collapsed grid card shares one vertical rhythm.
-    static let collapsedCardHeight: CGFloat = 160
+    static let collapsedCardHeight: CGFloat = PanelDesignTokens.shared.metrics["collapsedHeight"]!
     static let cardInsets = EdgeInsets(top: 10, leading: 12, bottom: 12, trailing: 12)
     static let surfaceRadius: CGFloat = 10
     static let footerRow: CGFloat = 28
@@ -106,10 +106,11 @@ enum MimicMetrics {
 /// Content remains opaque; the same visible boundary is shared by document cards and the pinned card.
 struct MimicCardBackground: ViewModifier {
     private var accessibility = MimicAccessibility()
+    private var theme = MimicTheme()
     func body(content: Content) -> some View {
-        content.background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: MimicMetrics.surfaceRadius))
-            .overlay(RoundedRectangle(cornerRadius: MimicMetrics.surfaceRadius)
-                .strokeBorder(.primary.opacity(self.accessibility.increasedContrast ? 0.45 : 0.12), lineWidth: 1))
+        content.background(theme.tiled ? theme.color("surface") : Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: theme.tiled ? theme.cardRadius : MimicMetrics.surfaceRadius))
+            .overlay(RoundedRectangle(cornerRadius: theme.tiled ? theme.cardRadius : MimicMetrics.surfaceRadius)
+                .strokeBorder(.primary.opacity(self.accessibility.increasedContrast ? 0.45 : theme.tiled ? 0 : 0.12), lineWidth: 1))
     }
 }
 
@@ -190,7 +191,7 @@ struct StatusBadge: View {
     let status: TaskStatus
     var body: some View {
         Label(text("status." + self.status.rawValue), systemImage: ActionPresentation.statusSymbol(self.status))
-            .font(MimicMetrics.secondary.weight(.medium)).foregroundStyle(ActionPresentation.statusColor(self.status)).mimicStatus(self.status)
+            .mimicFont(.caption, weight: .medium).foregroundStyle(ActionPresentation.statusColor(self.status)).mimicStatus(self.status)
     }
 }
 
@@ -224,6 +225,7 @@ struct EmptyState: View {
 /// Solid native primary controls retain their accent over readable content; glass belongs to chrome.
 /// All controls preserve native keyboard semantics and immediate availability.
 struct MimicButtonStyle: PrimitiveButtonStyle {
+    private var theme = MimicTheme()
     var primary = false
     var selected = false
     var icon = false
@@ -238,14 +240,17 @@ struct MimicButtonStyle: PrimitiveButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         Group {
-            if self.primary || self.selected {
+            if theme.tiled {
+                Button(role: configuration.role, action: configuration.trigger) { configuration.label }
+                    .buttonStyle(TileGridButtonStyle(primary: primary, selected: selected, height: height))
+            } else if self.primary || self.selected {
                 Button(role: configuration.role, action: configuration.trigger) {
-                    configuration.label.font(MimicMetrics.body.weight(.semibold))
+                    configuration.label.mimicFont(.body, weight: .semibold)
                         .fixedSize(horizontal: true, vertical: true).frame(minHeight: max(20, self.height - 8))
                 }.buttonStyle(.borderedProminent).tint(.indigo)
             } else {
                 Button(role: configuration.role, action: configuration.trigger) {
-                    configuration.label.font(MimicMetrics.body.weight(.medium))
+                    configuration.label.mimicFont(.body, weight: .medium)
                         .fixedSize(horizontal: true, vertical: true)
                         .padding(.horizontal, self.icon ? 0 : MimicMetrics.medium)
                         .frame(width: self.icon ? 32 : nil, height: self.icon ? 32 : self.height)
@@ -258,12 +263,14 @@ struct MimicButtonStyle: PrimitiveButtonStyle {
 
 /// An edge-to-edge control band avoids nested floating capsules in the compact panels.
 struct MimicChrome<Content: View>: View {
+    private var theme = MimicTheme()
     @ViewBuilder var content: Content
     private var accessibility = MimicAccessibility()
     init(@ViewBuilder content: () -> Content) { self.content = content() }
     var body: some View {
         Group {
-            if #available(macOS 26.0, *), !self.accessibility.reduceTransparency, !self.accessibility.increasedContrast {
+            if theme.tiled { self.content.background(theme.color("paper")) }
+            else if #available(macOS 26.0, *), !self.accessibility.reduceTransparency, !self.accessibility.increasedContrast {
                 self.content.glassEffect(.regular, in: Rectangle())
             } else {
                 self.content.background(Color(nsColor: .controlBackgroundColor))

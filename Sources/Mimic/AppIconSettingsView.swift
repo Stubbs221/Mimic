@@ -14,15 +14,15 @@ struct AppIconSettingsView: View {
     var body: some View {
         SettingsFormContainer(framed: self.framed) {
             VStack(alignment: .leading, spacing: 8) {
-                Label(text("app.icon.title"), systemImage: "square.dashed").font(MimicMetrics.heading)
+                Label(text("app.icon.title"), systemImage: "square.dashed").mimicFont(.heading)
                 HStack(alignment: .top, spacing: 8) {
                     ForEach(AppIconStyle.allCases) { style in
                         self.choice(style)
                     }
                 }
-                Text(text("app.icon.detail")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                Text(text("app.icon.detail")).mimicFont(.caption).foregroundStyle(.secondary)
                 if let error = self.settings.error {
-                    Text(error).font(MimicMetrics.secondary).foregroundStyle(.orange)
+                    Text(error).mimicFont(.caption).foregroundStyle(.orange)
                         .accessibilityIdentifier("app.icon.error")
                 }
             }
@@ -42,7 +42,7 @@ struct AppIconSettingsView: View {
                 } else {
                     Image(systemName: "photo").frame(width: 64, height: 64).accessibilityHidden(true)
                 }
-                Text(text(style.localizationKey)).font(MimicMetrics.secondary)
+                Text(text(style.localizationKey)).mimicFont(.caption)
                     .multilineTextAlignment(.center).lineLimit(2).frame(minHeight: 28)
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(selected ? Color.accentColor : Color.secondary)

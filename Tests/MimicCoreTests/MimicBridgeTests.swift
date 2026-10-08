@@ -8,6 +8,33 @@ import Testing
 @testable import MimicCore
 
 struct MimicBridgeTests {
+    @Test @MainActor func videoPipelinesLeaveRoomForLiveness() async throws {
+        let directory = URL(fileURLWithPath: "/private/tmp/mcp-" + UUID().uuidString.prefix(8))
+        let path = directory.appendingPathComponent("m.sock").path
+        let listener = MimicBridgeListener(path: path)
+        defer { listener.stop(); try? FileManager.default.removeItem(at: directory) }
+        var handled = 0
+        try listener.start { request in
+            handled += 1
+            try? await Task.sleep(for: .milliseconds(200))
+            return .init(id: request.id, result: .bool(true))
+        }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0..<12 {
+                group.addTask {
+                    let reply = try await MimicSocket.call(.init(method: "fixture_video"), path: path)
+                    #expect(reply.result == .bool(true))
+                }
+            }
+            group.addTask {
+                try await Task.sleep(for: .milliseconds(50))
+                let reply = try await MimicSocket.call(.init(method: "bridge_ping"), path: path)
+                #expect(reply.result["version"].integer == 3)
+            }
+            try await group.waitForAll()
+        }
+        #expect(handled == 12, "Liveness must not invoke native app-state handling")
+    }
     @Test @MainActor func socketRoundTripIsPrivateAndVersioned() async throws {
         let directory = URL(fileURLWithPath: "/private/tmp/mcp-" + UUID().uuidString.prefix(8))
         let path = directory.appendingPathComponent("m.sock").path

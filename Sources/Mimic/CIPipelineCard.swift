@@ -78,7 +78,7 @@ struct CIPipelineCard: View {
                 }
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(self.title).font(MimicMetrics.body.weight(.semibold)).lineLimit(1).help(self.title)
+                    Text(self.title).mimicFont(.body, weight: .semibold).lineLimit(1).help(self.title)
                     Spacer(minLength: 4)
                     CIStatusBadge(status: self.entry.status).fixedSize()
                     if self.incomplete { Image(systemName: "exclamationmark.circle").foregroundStyle(.secondary).help(text("ci.checks.incomplete")) }
@@ -113,7 +113,7 @@ struct CIPipelineCard: View {
             }
             if let error = self.entry.run?.error, !["ci.error.credential", "jenkins.error.credential", "ci.error.authentication", "jenkins.error.authentication"].contains(error) { Text(text(error)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
             if self.isExpanded { self.details }
-        }.font(MimicMetrics.secondary).padding(.vertical, 6).accessibilityElement(children: .contain)
+        }.mimicFont(.caption).padding(.vertical, 6).accessibilityElement(children: .contain)
     }
 
     private var startLabel: String? {
@@ -124,7 +124,7 @@ struct CIPipelineCard: View {
     private var timing: some View {
         Group {
             if self.entry.status == "running", let started = self.entry.pipeline?.startedAt {
-                TimelineView(.periodic(from: .now, by: 1)) { timeline in self.timeRow(ciElapsed(timeline.date.timeIntervalSince(started))) }
+                MimicActivityClock(running: true) { now in self.timeRow(ciElapsed(now.timeIntervalSince(started))) }
             } else {
                 let duration = self.entry.pipeline?.duration ?? self.entry.pipeline.flatMap { pipeline in
                     guard let started = pipeline.startedAt, let finished = pipeline.finishedAt, finished >= started else { return nil as Double? }
@@ -157,7 +157,7 @@ struct CIPipelineCard: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(text("ci.checks.current") + " " + job.name).lineLimit(2).help(job.name)
                     Spacer(minLength: 2)
-                    if let started = job.startedAt { TimelineView(.periodic(from: .now, by: 1)) { timeline in Text(ciElapsed(timeline.date.timeIntervalSince(started))).monospacedDigit().fixedSize() } }
+                    if let started = job.startedAt { MimicActivityClock(running: true) { now in Text(ciElapsed(now.timeIntervalSince(started))).monospacedDigit().fixedSize() } }
                 }
             } else if summary.running.count > 1 { Text(String(format: text("ci.checks.parallel"), summary.running.count)).help(summary.running.map(\.name).joined(separator: "\n")) }
             if summary.complete, summary.total > 0 {

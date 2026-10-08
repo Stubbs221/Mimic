@@ -62,6 +62,19 @@ class ReleaseTests(unittest.TestCase):
                     release.appcast(config, '1.3.1', build, archive, 'fixture-signature', prior)
             release.appcast(config, '1.3.1', '131', archive, 'fixture-signature', prior)
 
+    def test_new_feed_preserves_previous_items_and_embeds_notes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            archive = root / 'Mimic-1.3.1.zip'; archive.write_bytes(b'fixture')
+            config = metadata.load_configuration(metadata.ROOT / 'Distribution/Updates.plist')
+            prior = root / 'previous.xml'
+            release.appcast(config, '1.3.0', '130', archive, 'old-signature').write(prior)
+            feed = release.appcast(config, '1.3.1', '131', archive, 'new-signature', prior, 'Fixes & improvements')
+            items = feed.findall('./channel/item')
+            self.assertEqual([item.findtext('{' + release.SPARKLE + '}version') for item in items], ['131', '130'])
+            self.assertEqual(items[1].find('enclosure').get('{' + release.SPARKLE + '}edSignature'), 'old-signature')
+            self.assertEqual(items[0].findtext('description'), 'Fixes & improvements')
+
 
 if __name__ == '__main__':
     unittest.main()

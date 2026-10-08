@@ -51,22 +51,23 @@ public struct GenerationPlan: Codable, Sendable {
 
 // MARK: - Simulators
 
-/// A concrete iOS device; commands always use its UUID, never the ambiguous `booted` selector.
+/// A concrete Apple simulator device; commands always use its UUID, never the ambiguous `booted` selector.
 public struct SimulatorDevice: Codable, Identifiable, Equatable, Sendable {
     public let id: UUID
     public let name: String
     public let runtime: String
     public let state: String
+    public let deviceTypeIdentifier: String?
     public var isBooted: Bool { self.state == "Booted" }
-    public init(id: UUID, name: String, runtime: String, state: String) {
-        self.id = id; self.name = name; self.runtime = runtime; self.state = state
+    public init(id: UUID, name: String, runtime: String, state: String, deviceTypeIdentifier: String? = nil) {
+        self.id = id; self.name = name; self.runtime = runtime; self.state = state; self.deviceTypeIdentifier = deviceTypeIdentifier
     }
 }
 
 public enum SimulatorCatalog {
-    private struct Device: Decodable { let udid: UUID; let name: String; let state: String; let isAvailable: Bool }
+    private struct Device: Decodable { let udid: UUID; let name: String; let state: String; let isAvailable: Bool; let deviceTypeIdentifier: String? }
     private struct Envelope: Decodable { let devices: [String: [Device]] }
-    /// Excludes tvOS, watchOS and unavailable runtimes; the list operation changes no device state.
+    /// Includes available iOS and tvOS devices; the list operation changes no device state.
     public static func parse(_ data: Data) throws -> [SimulatorDevice] {
         let envelope = try JSONDecoder().decode(Envelope.self, from: data)
         return envelope.devices.flatMap { runtime, devices -> [SimulatorDevice] in
@@ -74,7 +75,7 @@ public enum SimulatorCatalog {
             guard let range = runtime.range(of: "." + platform + "-") else { return [] }
             let version = platform + " " + runtime[range.upperBound...].replacingOccurrences(of: "-", with: ".")
             return devices.filter { $0.isAvailable }.map {
-                SimulatorDevice(id: $0.udid, name: $0.name, runtime: version, state: $0.state)
+                SimulatorDevice(id: $0.udid, name: $0.name, runtime: version, state: $0.state, deviceTypeIdentifier: $0.deviceTypeIdentifier)
             }
         }.sorted { first, second in
             if first.isBooted != second.isBooted { return first.isBooted }

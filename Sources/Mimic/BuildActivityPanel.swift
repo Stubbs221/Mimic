@@ -26,7 +26,7 @@ import MimicCore
         window.isMovableByWindowBackground = true; window.delegate = self
         motion = MimicWindowMotion(window: window, settings: model.motionSettings)
         window.beginDrag = { [weak self] in self?.motion.beginDrag() }
-        window.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: motion.presentation, settings: model.motionSettings) {
+        window.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: motion.presentation, settings: model.motionSettings, appearance: model.appearance) {
             BuildOverlayView(builds: model.builds, hide: { [weak self] in self?.hide() }, measured: { [weak self] height in
                 DispatchQueue.main.async {
                     guard let self, height > 0, abs(self.naturalHeight - height) > 0.5 else { return }
@@ -78,6 +78,8 @@ final class BuildFloatingPanel: NSPanel {
 }
 
 struct BuildOverlayView: View {
+    private var theme = MimicTheme()
+    @Environment(\.mimicTextScale) private var textScale
     @ObservedObject var builds: BuildCoordinator
     let hide: () -> Void
     var measured: (CGFloat) -> Void = { _ in }
@@ -89,17 +91,22 @@ struct BuildOverlayView: View {
                 HStack { Text(buildTitle(record)).font(.system(size: 13, weight: .semibold)); Spacer(); Button { builds.pinned.toggle() } label: { Image(systemName: builds.pinned ? "pin.fill" : "pin") }.buttonStyle(.plain).accessibilityLabel(text("build.pin")).accessibilityValue(text(builds.pinned ? "build.pinned" : "build.unpinned")); Button(action: hide) { Image(systemName: "xmark") }.buttonStyle(.plain).accessibilityLabel(text("build.hide")) }
                 Text(URL(fileURLWithPath: record.project.path).lastPathComponent + " · " + record.project.branch).font(.system(size: 11)).lineLimit(1).truncationMode(.middle).help(record.project.path)
                 Text(record.parameters.backend == .cli ? record.parameters.scheme + " · " + record.parameters.destinationID : record.parameters.workspaceTab + " · " + text("build.xcode.settings")).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
-                HStack { Text(record.source + " · " + text("build.backend." + record.parameters.backend.rawValue)).lineLimit(1); Spacer(); TimelineView(.periodic(from: .now, by: 1)) { _ in Text(buildDuration(record)).monospacedDigit() } }.font(.system(size: 11)).foregroundStyle(.secondary)
+                HStack { Text(record.source + " · " + text("build.backend." + record.parameters.backend.rawValue)).lineLimit(1); Spacer(); MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in Text(buildDuration(record)).monospacedDigit() } }.font(.system(size: 11)).foregroundStyle(.secondary)
                 HStack { Text(text(record.phase)).lineLimit(1).foregroundStyle(buildColor(record)); Spacer(); if builds.pendingCount > 0 { Text(text("build.queued") + ": \(builds.pendingCount)") } }.font(.system(size: 11))
                 VStack(alignment: .leading, spacing: 3) {
                     if record.tracking != .live { Text(text("build.tracking." + record.tracking.rawValue)).foregroundStyle(.secondary).lineLimit(1) }
                     ForEach(Array(builds.lastLines(record.id).enumerated()), id: \.offset) { _, line in Text(line).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading) }
                     Spacer(minLength: 0)
                 }.font(.system(size: 10, design: .monospaced)).padding(8).frame(maxWidth: .infinity, minHeight: 88, maxHeight: 88, alignment: .topLeading).background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6)).transaction { $0.animation = nil }.accessibilityIdentifier("build.overlay.log")
-                HStack { Button(text("build.output")) { builds.showResult(record.id) }; Spacer(); if record.canCancel { Button(text("build.stop")) { builds.cancel(record.id) } }; Button(text("build.hide"), action: hide) }.controlSize(.small)
+                (theme.tiled && textScale > 1.2 ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6)) : AnyLayout(HStackLayout())) {
+                    Button(text("build.output")) { builds.showResult(record.id) }
+                    Spacer(minLength: 0)
+                    if record.canCancel { Button(text("build.stop")) { builds.cancel(record.id) } }
+                    Button(text("build.hide"), action: hide)
+                }.controlSize(.small).buttonStyle(MimicAuxiliaryButtonStyle())
             }.padding(MimicMetrics.cardInsets).frame(width: 360).fixedSize(horizontal: false, vertical: true)
-                .background { if reduceTransparency || contrast == .increased { Color(nsColor: .windowBackgroundColor) } else if #available(macOS 26.0, *) { Rectangle().fill(.clear).glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12)) } else { Rectangle().fill(.regularMaterial) } }
-                .clipShape(RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(.primary.opacity(contrast == .increased ? 0.5 : 0.12)))
+                .background { if theme.tiled { theme.color("surface") } else if reduceTransparency || contrast == .increased { Color(nsColor: .windowBackgroundColor) } else if #available(macOS 26.0, *) { Rectangle().fill(.clear).glassEffect(.regular, in: RoundedRectangle(cornerRadius: theme.tiled ? 18 : 12)) } else { Rectangle().fill(.regularMaterial) } }
+                .clipShape(RoundedRectangle(cornerRadius: theme.tiled ? 18 : 12)).overlay(RoundedRectangle(cornerRadius: theme.tiled ? 18 : 12).stroke(.primary.opacity(contrast == .increased ? 0.5 : 0.12)))
                 .accessibilityIdentifier("build.overlay")
                 .background(GeometryReader { proxy in Color.clear.preference(key: BuildOverlayHeight.self, value: proxy.size.height) })
                 .onPreferenceChange(BuildOverlayHeight.self) { self.measured($0) }

@@ -5,6 +5,7 @@
 //  Created by Василий Маслов on 01.10.2026.
 import AppKit
 import Combine
+import Observation
 import SwiftUI
 import MimicCore
 
@@ -12,10 +13,12 @@ import MimicCore
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let model: TaskCoordinator
     private var status: NSStatusItem!
+    private let expressMenu = ExpressMenuController()
     private var panel: NSPanel!
     private var panelMotion: MimicWindowMotion!
     private var interfaceMapWindow: NSWindow?
     private var setupWindow: NSWindow?
+    private var screenObserver: NSObjectProtocol?
     private var setupObserver: NSObjectProtocol?
     private var launchObserver: NSObjectProtocol?
     private var iconAppearanceObservation: NSKeyValueObservation?
@@ -69,10 +72,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.panelMotion = MimicWindowMotion(window: self.panel, settings: self.model.motionSettings)
         #if DEBUG
         if (Bundle.main.bundleIdentifier == "local.vmaslov.MimicGlassPreview" || Bundle.main.bundleIdentifier == "local.vmaslov.MimicRedesignPreview" || Bundle.main.bundleIdentifier == "local.vmaslov.MimicMotionPreview") {
-            self.panel.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: self.panelMotion.presentation, settings: self.model.motionSettings) { LiquidGlassPreviewPanel(model: self.model) })
-        } else { self.panel.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: self.panelMotion.presentation, settings: self.model.motionSettings) { MimicPanel(model: self.model) }) }
+            self.panel.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: self.panelMotion.presentation, settings: self.model.motionSettings, appearance: self.model.appearance) { LiquidGlassPreviewPanel(model: self.model) })
+        } else { self.panel.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: self.panelMotion.presentation, settings: self.model.motionSettings, appearance: self.model.appearance) { MimicPanel(model: self.model) }) }
         #else
-        self.panel.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: self.panelMotion.presentation, settings: self.model.motionSettings) { MimicPanel(model: self.model) })
+        self.panel.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: self.panelMotion.presentation, settings: self.model.motionSettings, appearance: self.model.appearance) { MimicPanel(model: self.model) })
         #endif
         self.panel.level = .floating; self.panel.hidesOnDeactivate = false; self.panel.delegate = self
         self.panelMotion.visibilityChanged = { [weak self] in self?.model.panelVisibilityChanged($0) }
@@ -86,6 +89,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         self.activityPanel.open = { [weak self] in self?.openBesideActivity() }
         self.installClickMonitors()
+        self.observeAppearance()
+        self.screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let screen = self.panel.screen ?? NSScreen.main else { return }
+                self.model.panelLayout.cancelDrag()
+                self.panel.setFrame(BootstrapActivityPanel.clamped(self.panel.frame, to: screen.visibleFrame), display: true)
+                self.expressMenu.close(returnFocus: false)
+            }
+        }
         self.model.releasePanelFocus = { [weak self] in self?.panel.makeFirstResponder(nil) }
         self.model.showPanel = { [weak self] in
             guard let self else { return }
@@ -157,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// Route deactivation through the same visibility owner instead of AppKit ordering out behind it.
-    func applicationDidResignActive(_: Notification) { self.hidePanels(source: .automatic) }
+    func applicationDidResignActive(_: Notification) { self.hidePanels(source: .automatic); expressMenu.close(returnFocus: false) }
 
     // MARK: - Status item and anchored panels
 
@@ -166,7 +178,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if NSApp.currentEvent?.type == .rightMouseUp {
             self.hidePanels()
             guard let button = self.status.button else { return }
-            self.quickMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+            if model.appearance.selection == .tileGrid, let window = button.window {
+                let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
+                expressMenu.show(menu: quickMenu(), model: model, anchor: anchor, screen: window.screen?.visibleFrame ?? NSScreen.main!.visibleFrame)
+            } else { self.quickMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button) }
         } else { self.togglePanel() }
     }
 
@@ -214,17 +229,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func showMainPanel(source: MimicMotionSource) {
+        expressMenu.close()
+        let width = CGFloat(model.appearance.selection.panelWidth)
         if !self.panel.isVisible {
-            if self.activityPanel.window.isVisible {
-                self.panel.setFrame(self.activityPanel.adjacentFrame(size: NSSize(width: MimicMetrics.panelWidth, height: 660)), display: true)
-            } else {
-                guard let button = self.status.button, let window = button.window, let screen = window.screen ?? NSScreen.main else { return }
-                let rect = window.convertToScreen(button.convert(button.bounds, to: nil)), visible = screen.visibleFrame
-                let height = min(660, visible.height - 20)
-                self.panel.setFrame(NSRect(x: min(max(rect.midX - 220, visible.minX), visible.maxX - 440), y: max(visible.minY, rect.minY - height), width: 440, height: height), display: true)
-            }
+            // The main panel belongs to the status item, independently of the movable activity window.
+            guard let button = self.status.button, let window = button.window, let screen = window.screen ?? NSScreen.main else { return }
+            let rect = window.convertToScreen(button.convert(button.bounds, to: nil)), visible = screen.visibleFrame
+            let height = min(660, visible.height - 20)
+            self.panel.setFrame(NSRect(x: min(max(rect.midX - width / 2, visible.minX), visible.maxX - width), y: max(visible.minY, rect.minY - height), width: width, height: height), display: true)
         }
         self.panelMotion.setVisible(true, source: source, key: true)
+    }
+
+    /// Re-arm observation without replacing any hosting view or task-owned renderer.
+    private func observeAppearance() {
+        withObservationTracking { _ = model.appearance.selection } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.model.panelLayout.cancelDrag()
+                self.expressMenu.close()
+                let old = self.panel.frame, width = CGFloat(self.model.appearance.selection.panelWidth)
+                let visible = self.panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? old
+                self.panel.setFrame(.init(x: min(max(old.midX - width / 2, visible.minX), visible.maxX - width), y: old.minY, width: width, height: old.height), display: true)
+                self.observeAppearance()
+            }
+        }
     }
 
     private func showQuickActivity() {
@@ -236,7 +265,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func openBesideActivity() { self.showMainPanel(source: .current) }
 
     private func hidePanels(source: MimicMotionSource = .current) {
-        self.model.panelLayout.cancelDrag()
+        self.model.panelLayout.cancelPresentation()
+        if self.model.appearance.selection == .tileGrid, self.model.expandedSection == .branches { self.model.expandedSection = nil }
         AIUsageTrendPopoverController.dismissAll()
         self.model.aiUsage.panelDidClose()
         self.panelMotion.setVisible(false, source: source)
@@ -249,7 +279,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                   event.window === self.panel || NSApp.keyWindow === self.panel || AIUsageTrendPopoverController.owns(event.window) || event.window == nil else { return event }
             if AIUsageTrendPopoverController.handleKey(event) { return nil }
             guard event.keyCode == 53 else { return event }
-            if self.model.panelLayout.cancelDrag() { return nil }
+            if self.model.panelLayout.cancelPresentation() { return nil }
+            if self.model.appearance.selection == .tileGrid, self.model.expandedSection == .branches {
+                self.model.expandedSection = nil
+                return nil
+            }
             self.hidePanels(source: .keyboard)
             return nil
         }
@@ -270,7 +304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if self.interfaceMapWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 700), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = text("interface.map.title")
-            window.contentView = NSHostingView(rootView: InterfaceMapView())
+            window.contentView = NSHostingView(rootView: InterfaceMapView().modifier(MimicAppearanceRoot(store: model.appearance)))
             window.isReleasedWhenClosed = false
             window.setContentSize(NSSize(width: 560, height: 700))
             window.contentMinSize = NSSize(width: 440, height: 420)
@@ -326,6 +360,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_: Notification) {
         self.model.aiUsage.stop()
+        expressMenu.close(returnFocus: false)
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         if let setupObserver { DistributedNotificationCenter.default().removeObserver(setupObserver) }
         if let launchObserver { DistributedNotificationCenter.default().removeObserver(launchObserver) }
         self.model.integration?.stop(); self.model.remoteTests.stop()

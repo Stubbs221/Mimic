@@ -140,7 +140,10 @@ final class AIUsageCoordinator: ObservableObject {
     }
     func tick() async {
         guard !self.stopped, !self.sleeping else { return }
-        self.currentDate = self.clock()
+        let interval = FramePerformanceTrace.begin("AI usage tick")
+        defer { FramePerformanceTrace.end("AI usage tick", interval) }
+        let now = self.clock()
+        if self.currentDate != now { self.currentDate = now }
         self.checkRevisions()
         if !self.scanning {
             self.scanning = true
@@ -149,7 +152,8 @@ final class AIUsageCoordinator: ObservableObject {
             else { result = AIUsageScanResult(activity: await self.scan()) }
             self.scanning = false
             guard !self.stopped, !self.sleeping else { return }
-            self.histories = result.histories; self.unknownModels = result.unknownModels
+            if self.histories != result.histories { self.histories = result.histories }
+            if self.unknownModels != result.unknownModels { self.unknownModels = result.unknownModels }
             if let activity = result.activity { self.record(activity) }
         }
         for provider in [self.activeProvider] {

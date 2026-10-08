@@ -12,7 +12,7 @@ const browser=await chromium.launch({headless:true,executablePath:process.env.MI
 try{
  const page=await browser.newPage();await page.goto(`http://127.0.0.1:${server.address().port}/`);
  const result=await page.evaluate(async()=>{
-  const channels=new Map(),inputs=[],errors=[],closed=[];let lateOpen=true;
+  const channels=new Map(),inputs=[],errors=[],closed=[];let lateOpen=true,outputMode='normal';
   const decode=value=>Uint8Array.from(atob(value),c=>c.charCodeAt(0)),encode=value=>btoa(Array.from(value,b=>String.fromCharCode(b)).join('')),utf8=new TextEncoder(),pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   async function tool(name,args){
    if(name==='panel_terminal_open'){
@@ -24,7 +24,7 @@ try{
    if(name==='panel_terminal_close'){closed.push(args.channelID);channels.delete(args.channelID);return{};}
    const channel=channels.get(args.channelID);
    if(name==='panel_terminal_poll'){
-    const sequence=++channel.sent,iv=crypto.getRandomValues(new Uint8Array(12)),aad=utf8.encode(`${channel.id}|${channel.taskID}|${channel.threadID}|output|${sequence}`),data=utf8.encode(JSON.stringify({bytes:sequence===1?btoa(channel.taskID+'\r\n'):'',reset:false,canInput:true})),cipher=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:aad},channel.key,data)),combined=new Uint8Array(12+cipher.length);combined.set(iv);combined.set(cipher,12);return{sequence,data:encode(combined)};
+    const sequence=++channel.sent,iv=crypto.getRandomValues(new Uint8Array(12)),aad=utf8.encode(`${channel.id}|${channel.taskID}|${channel.threadID}|output|${sequence}`),data=utf8.encode(JSON.stringify({bytes:outputMode==='first'?btoa('FIRST REAL OUTPUT\r\n'+Array.from({length:100},(_,i)=>'row '+i+'\r\n').join('')):outputMode==='normal'&&sequence===1?btoa(channel.taskID+'\r\n'):'',reset:false,canInput:true,outputAvailable:outputMode==='normal'||outputMode==='first',finished:outputMode==='finished'})),cipher=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv,additionalData:aad},channel.key,data)),combined=new Uint8Array(12+cipher.length);combined.set(iv);combined.set(cipher,12);return{sequence,data:encode(combined)};
    }
    if(name==='panel_terminal_send'){
     const packet=args.packet,combined=decode(packet.data),aad=utf8.encode(`${channel.id}|${channel.taskID}|${channel.threadID}|input|${packet.sequence}`),plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:combined.slice(0,12),additionalData:aad},channel.key,combined.slice(12)),value=JSON.parse(new TextDecoder().decode(plain));if(value.input)inputs.push({task:channel.taskID,input:value.input});return{};
@@ -35,9 +35,23 @@ try{
   const identity=terminal.channel.taskID,discarded=closed.length;
   let release;terminal.inputQueue=new Promise(resolve=>release=resolve);terminal.terminal.input('OLD-TASK-INPUT',true);await terminal.attach('next');release();await pause(100);
   terminal.terminal.input('CURRENT-TASK-INPUT',true);await pause(100);
-  const nextIdentity=terminal.channel.taskID;await terminal.dispose();
-  return{identity,nextIdentity,discarded,inputs,errors,remaining:channels.size};
+  const nextIdentity=terminal.channel.taskID;
+  terminal.setBootstrapPlaceholder({example:'Пример вывода',queued:'Ожидание запуска…',waiting:'Ожидание вывода…',unavailable:'Вывод этого запуска недоступен'},'tvos');
+  outputMode='empty';terminal.setTaskStatus('queued');await terminal.attach('empty');
+  const queued=terminal.placeholder.host.innerText;
+  terminal.setTaskStatus('running');const waiting=terminal.placeholder.host.innerText;
+  const noExampleInBuffer=!terminal.terminal.buffer.active.getLine(0)?.translateToString().includes('mimic bootstrap');
+  const screen=terminal.host.querySelector('.xterm');outputMode='first';await terminal.poll();await pause(100);
+  const firstHidden=terminal.placeholder.host.hidden;terminal.terminal.scrollToLine(10);const scroll=terminal.terminal.buffer.active.viewportY;
+  outputMode='empty';await terminal.poll();terminal.setVisibility(false);terminal.setVisibility(true);terminal.setBootstrapPresentation(12,true);await pause(50);
+  const emptyHidden=terminal.placeholder.host.hidden,retainedScroll=terminal.terminal.buffer.active.viewportY===scroll;
+  outputMode='finished';await terminal.poll();terminal.setTaskStatus('succeeded');const finishedHidden=terminal.placeholder.host.hidden;
+  const sameScreen=terminal.host.querySelector('.xterm')===screen;
+  await terminal.attach('restored-no-output');const unavailable=terminal.placeholder.host.innerText;
+  await terminal.dispose();
+  return{identity,nextIdentity,discarded,inputs,errors,remaining:channels.size,queued,waiting,noExampleInBuffer,firstHidden,emptyHidden,finishedHidden,retainedScroll,sameScreen,unavailable};
  });
  assert.equal(result.identity,'current','late open must not replace the current task');assert(result.discarded>=1,'stale server subscription must close');assert.equal(result.nextIdentity,'next');assert.deepEqual(result.inputs,[{task:'next',input:'CURRENT-TASK-INPUT'}],'queued input must never cross task identity');assert.equal(result.remaining,0);assert.deepEqual(result.errors,[]);
- console.log('PASS: late terminal open discarded, stale subscription closed, queued input isolated per task, encrypted input and dispose');
+ assert.equal(result.queued,'Ожидание запуска…');assert.equal(result.waiting,'Ожидание вывода…');assert(result.noExampleInBuffer);assert(result.firstHidden&&result.emptyHidden&&result.finishedHidden);assert(result.sameScreen&&result.retainedScroll);assert(result.unavailable.includes('$ mimic bootstrap tvos')&&result.unavailable.includes('Вывод этого запуска недоступен'));
+ console.log('PASS: late terminal open discarded, stale subscription closed, queued input isolated per task, encrypted input, first-output placeholder removal, empty polls, scroll retention and dispose');
 }finally{await browser.close();server.close();}

@@ -95,11 +95,28 @@ if [ "$APP" != "$DESTINATION" ]; then
     fail destination
   fi
 fi
+# Remove only installer-owned Mimic backups after replacement and launch succeed.
+# Keep unrelated bundles, symlinks, and the source bundle intact.
+cleanup_backups() {
+  local CANDIDATE CANDIDATE_BUNDLE CANDIDATE_NAME CANDIDATE_EXECUTABLE
+  for CANDIDATE in "$DEST_PARENT"/Mimic.backup.*.app; do
+    [ -d "$CANDIDATE" ] && [ ! -L "$CANDIDATE" ] || continue
+    [ "$CANDIDATE" != "$DESTINATION" ] && [ "$CANDIDATE" != "$APP" ] || continue
+    CANDIDATE_BUNDLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CANDIDATE/Contents/Info.plist" 2>/dev/null || true)"
+    case "$CANDIDATE_BUNDLE" in local.vmaslov.Mimic|local.vmaslov.IVIToolbox) ;; *) continue ;; esac
+    CANDIDATE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$CANDIDATE/Contents/Info.plist" 2>/dev/null || true)"
+    CANDIDATE_EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$CANDIDATE/Contents/Info.plist" 2>/dev/null || true)"
+    [ "$CANDIDATE_NAME" = Mimic ] && [ "$CANDIDATE_EXECUTABLE" = Mimic ] || continue
+    /bin/rm -rf "$CANDIDATE"
+  done
+}
 if "$BACKGROUND"; then
   message background
   /usr/bin/open -a "$DESTINATION" --args --mcp-background
+  cleanup_backups
   exit 0
 fi
 message opening
 # Calling the executable forwards to the existing instance, or launches the app's event loop.
 "$DESTINATION/Contents/MacOS/$EXECUTABLE" --setup >/dev/null 2>&1 &
+cleanup_backups

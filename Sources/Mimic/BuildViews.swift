@@ -13,7 +13,7 @@ struct BuildToolRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button { model.toggleSection(.builds) } label: {
-                HStack { Image(systemName: "hammer").frame(width: 24); Text(text("build.title")).font(MimicMetrics.heading).accessibilityAddTraits(.isHeader); Spacer(); Image(systemName: model.expandedSection == .builds ? "chevron.down" : "chevron.right").font(.system(size: 9)) }.contentShape(Rectangle())
+                HStack { Image(systemName: "hammer").frame(width: 24); Text(text("build.title")).mimicFont(.heading).accessibilityAddTraits(.isHeader); Spacer(); Image(systemName: model.expandedSection == .builds ? "chevron.down" : "chevron.right").font(.system(size: 9)) }.contentShape(Rectangle())
             }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets(top: 10, leading: MimicMetrics.medium, bottom: 10, trailing: MimicMetrics.medium))).accessibilityIdentifier("build.toggle").accessibilityValue(disclosureValue(model.expandedSection == .builds))
             MimicCollapse(expanded: model.expandedSection == .builds, source: model.navigationSource) { BuildConfigurationView(model: model, builds: model.builds) }
         }.id(PanelSection.builds.scrollID)
@@ -110,7 +110,7 @@ struct BuildResultView: View {
     @State private var diagnostic = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack { Text(text("build.status." + record.status.rawValue)).foregroundStyle(buildColor(record)); Spacer(); TimelineView(.periodic(from: .now, by: 1)) { _ in Text(buildDuration(record)).monospacedDigit() } }
+            HStack { Text(text("build.status." + record.status.rawValue)).foregroundStyle(buildColor(record)); Spacer(); MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in Text(buildDuration(record)).monospacedDigit() } }
             Text(record.project.path + "\n" + record.project.branch + " · " + record.project.commit).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
             Text(record.parameters.backend == .cli ? record.parameters.scheme + " · " + record.parameters.configuration + "\n" + record.parameters.destinationID : record.parameters.workspaceTab + " · " + text("build.xcode.settings")).font(.system(size: 11)).textSelection(.enabled)
             if !record.parameters.testIdentifiers.isEmpty { Text(record.parameters.testIdentifiers.joined(separator: "\n")).font(.system(size: 11, design: .monospaced)).textSelection(.enabled) }

@@ -15,7 +15,9 @@ let package = Package(
         .executable(name: "TaskHost", targets: ["TaskHost"]),
         .executable(name: "MimicMCP", targets: ["MimicMCP"]),
         .executable(name: "MimicCLI", targets: ["MimicCLI"]),
-        .executable(name: "MimicAppleProbe", targets: ["MimicAppleProbe"])
+        .executable(name: "MimicAppleProbe", targets: ["MimicAppleProbe"]),
+        .executable(name: "SimulatorVideoHost", targets: ["SimulatorVideoHost"]),
+        .executable(name: "SimulatorInputHost", targets: ["SimulatorInputHost"])
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.0"),
@@ -27,6 +29,8 @@ let package = Package(
         .target(name: "MimicCore", dependencies: ["ZIPFoundation"], resources: [.process("Resources")]),
         .target(name: "XcodeMCPTransport", dependencies: ["MimicCore", .product(name: "MCP", package: "swift-sdk")]),
         .target(name: "AppleSimulatorMCP", dependencies: ["MimicCore", "XcodeMCPTransport", .product(name: "MCP", package: "swift-sdk")]),
+        .executableTarget(name: "SimulatorVideoHost"),
+        .executableTarget(name: "SimulatorInputHost", cSettings: [.unsafeFlags(["-fobjc-arc", "-fblocks"])], linkerSettings: [.linkedFramework("Foundation"), .linkedFramework("CoreGraphics")]),
         .executableTarget(name: "MimicAppleProbe", dependencies: ["MimicCore", "AppleSimulatorMCP"]),
         .executableTarget(name: "TaskHost"),
         .executableTarget(name: "MimicMCP", dependencies: ["MimicCore", .product(name: "MCP", package: "swift-sdk")], resources: [.process("Resources")]),

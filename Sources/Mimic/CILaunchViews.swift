@@ -15,7 +15,7 @@ struct CILaunchButton: View {
     var body: some View {
         Button(action: self.action) {
             Label(text("ci.launch." + self.kind.rawValue), systemImage: "play.fill")
-                .font(MimicMetrics.secondary.weight(.medium))
+                .mimicFont(.caption, weight: .medium)
                 .padding(.horizontal, MimicMetrics.medium).frame(height: MimicMetrics.footerRow)
         }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).disabled(self.disabled)
             .background(PanelControlRegion())
@@ -30,11 +30,11 @@ struct CILaunchPreferencesView: View {
     var body: some View {
         SettingsFormContainer(framed: self.framed) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(text("ci.launch.preferences")).font(MimicMetrics.heading)
-                Toggle(text("ci.launch.showQualityGates"), isOn: self.$preferences.qualityGates).accessibilityIdentifier("ci.launch.showQualityGates")
-                Toggle(text("ci.launch.showBeta"), isOn: self.$preferences.beta).accessibilityIdentifier("ci.launch.showBeta")
-                Text(text("ci.launch.preferences.detail")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
-            }.font(MimicMetrics.body)
+                Text(text("ci.launch.preferences")).mimicFont(.heading)
+                SettingsSwitch(title: text("ci.launch.showQualityGates"), isOn: self.$preferences.qualityGates, identifier: "ci.launch.showQualityGates")
+                SettingsSwitch(title: text("ci.launch.showBeta"), isOn: self.$preferences.beta, identifier: "ci.launch.showBeta")
+                Text(text("ci.launch.preferences.detail")).mimicFont(.caption).foregroundStyle(.secondary)
+            }.mimicFont(.body)
         }
     }
 }
@@ -64,7 +64,7 @@ struct CILaunchActions: View {
                 }
             }
             if let kind = self.launch.selected { self.form(kind) }
-        }.font(MimicMetrics.secondary)
+        }.mimicFont(.caption)
             .onAppear { self.launch.setVisible(self.presented, preserveDraft: !self.presented) }
             .onChange(of: self.presented) { _, value in self.launch.setVisible(value, preserveDraft: !value) }
             .onDisappear { self.launch.setVisible(false) }
@@ -72,7 +72,7 @@ struct CILaunchActions: View {
 
     private func form(_ kind: RemoteCIKind) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(text(kind.localizationKey)).font(MimicMetrics.body.weight(.semibold))
+            Text(text(kind.localizationKey)).mimicFont(.body, weight: .semibold)
             TextField(text("ci.launch.branch"), text: self.$launch.branch).textFieldStyle(.roundedBorder)
                 .accessibilityLabel(text("ci.launch.branch")).accessibilityIdentifier("ci.launch.branch")
                 .onChange(of: self.launch.branch) { _, query in self.launch.searchBranches(query) }

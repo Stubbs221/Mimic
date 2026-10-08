@@ -9,13 +9,14 @@ import MimicCore
 
 /// The transparent anchor stays confined to the sparkline, so the native arrow targets its center.
 struct AIUsageTrendPopoverAnchor: NSViewRepresentable {
+    @Environment(\.mimicPanelAppearance) private var appearance
     let provider: AIProvider
     let state: AIUsageTrendPopoverState
     func makeCoordinator() -> AIUsageTrendPopoverController { AIUsageTrendPopoverController(provider: self.provider, state: self.state) }
     func makeNSView(context: Context) -> NSView {
         let view = AIUsageTrendAnchorView(); context.coordinator.attach(view); return view
     }
-    func updateNSView(_ nsView: NSView, context: Context) { context.coordinator.synchronize() }
+    func updateNSView(_ nsView: NSView, context: Context) { context.coordinator.appearance(appearance); context.coordinator.synchronize() }
     static func dismantleNSView(_ nsView: NSView, coordinator: AIUsageTrendPopoverController) { coordinator.detach() }
 }
 
@@ -46,6 +47,9 @@ final class AIUsageTrendPopoverController: NSObject, NSPopoverDelegate {
         self.state.presentationChanged = { [weak self] in self?.synchronize() }
         self.state.contentChanged = { [weak self] in self?.resize() }
         Self.live.add(self)
+    }
+    func appearance(_ value: PanelAppearance) {
+        hosting.rootView = AIUsageTrendDetail(appearance: value, provider: provider, state: state)
     }
     var detailWindow: NSWindow? { self.popover.isShown ? self.hosting.window : nil }
     func attach(_ view: NSView) { self.anchor = view }

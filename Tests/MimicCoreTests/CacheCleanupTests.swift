@@ -36,8 +36,55 @@ private struct CleanupFixture {
 }
 
 struct CacheCleanupTests {
+    @Test @MainActor
+    func silentCleanupCompletesThroughTaskHost() async throws {
+        let fixture = try CleanupFixture(); defer { fixture.cleanUp() }
+        let command = try CommandSpec.make(action: .derivedDataCleanup, project: ProjectContext(path: fixture.checkout.path), options: .standard(), environment: [:], cleanupHome: fixture.home.path)
+        let helper = URL(fileURLWithPath: ProcessInfo.processInfo.environment["MIMIC_HOST"] ?? FileManager.default.currentDirectoryPath + "/.build/debug/TaskHost")
+        let session = PTYSession()
+        var finished = false
+        var result: HostEvent?
+        session.onCompletion = { result = $0; finished = true }
+        try session.start(helper: helper, command: command)
+        defer { if session.running { session.cancel() } }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !finished, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(finished)
+        #expect(result?.code == 0)
+        #expect(!session.running)
+    }
+
+    @Test
+    func derivedDataWorkersFinishBeforeSuccessAndIncludeHiddenEntries() throws {
+        let fixture = try CleanupFixture(); defer { fixture.cleanUp() }
+        let target = fixture.home.appendingPathComponent("Library/Developer/Xcode/DerivedData")
+        for name in [".hidden", "one", "two", "three", "four", "five", "six", "seven", "eight"] {
+            let directory = target.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data("fixture".utf8).write(to: directory.appendingPathComponent("file"))
+        }
+        let result = try fixture.run(.derivedDataCleanup)
+        #expect(result.0 == 0)
+        #expect(!FileManager.default.fileExists(atPath: target.path))
+        #expect(result.1.contains("removed 10/10 cache entries"))
+        #expect(result.1.contains("cleanup complete"))
+        #expect(try fixture.run(.derivedDataCleanup).0 == 0)
+    }
+
+    @Test
+    func derivedDataSymlinkDoesNotDeleteItsDestination() throws {
+        let fixture = try CleanupFixture(); defer { fixture.cleanUp() }
+        let target = fixture.home.appendingPathComponent("Library/Developer/Xcode/DerivedData")
+        let retained = fixture.home.appendingPathComponent("Library/Developer/Xcode/DerivedData-keep")
+        try FileManager.default.removeItem(at: target)
+        try FileManager.default.createSymbolicLink(at: target, withDestinationURL: retained)
+        #expect(try fixture.run(.derivedDataCleanup).0 == 0)
+        #expect(FileManager.default.fileExists(atPath: retained.appendingPathComponent("marker").path))
+        #expect(!FileManager.default.fileExists(atPath: target.path))
+    }
+
     @Test(arguments: [MimicAction.fullCleanup, .derivedDataCleanup])
-    func removesOnlyRequestedCachesAndRunsScriptsInOrder(_ action: MimicAction) throws {
+    func removesOnlyRequestedCachesWithoutRunningProjectScripts(_ action: MimicAction) throws {
         let fixture = try CleanupFixture(); defer { fixture.cleanUp() }
         let result = try fixture.run(action)
         #expect(result.0 == 0)
@@ -46,14 +93,14 @@ struct CacheCleanupTests {
             #expect(FileManager.default.fileExists(atPath: fixture.home.appendingPathComponent(target + "/marker").path) == shouldRemain)
             #expect(FileManager.default.fileExists(atPath: fixture.home.appendingPathComponent(target + "-keep/marker").path))
         }
-        #expect(fixture.events == (action == .fullCleanup ? "bootstrap:0\nlogin:--login-retry\n" : ""))
+        #expect(fixture.events.isEmpty)
     }
 
     @Test
-    func failedBootstrapStopsBeforeLogin() throws {
+    func cleanupDoesNotDependOnBootstrapExitStatus() throws {
         let fixture = try CleanupFixture(bootstrapExit: 37); defer { fixture.cleanUp() }
-        #expect(try fixture.run(.fullCleanup).0 == 37)
-        #expect(fixture.events == "bootstrap:0\n")
+        #expect(try fixture.run(.fullCleanup).0 == 0)
+        #expect(fixture.events.isEmpty)
     }
 
     @Test

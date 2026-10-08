@@ -13,7 +13,7 @@ import MimicCore
         window.isReleasedWhenClosed = false
         let root = NSHostingView(rootView: CIPipelineCard(state: state, entry: CIFeedEntry(pipeline: pipeline)).frame(width: 400))
         window.contentView = root
-        let bridge = PanelDragBridge(cancellationID: 0, enabled: true, candidate: { _ in .init(block: .ci, header: false) }, click: { _ in }, lift: { _, _, _, _ in }, move: { _, _, _, _ in }, end: { _, _, _ in }, cancel: {})
+        let bridge = PanelDragBridge(cancellationID: 0, enabled: true, candidate: { _ in .init(block: .ci) }, click: { _ in }, lift: { _, _, _, _ in }, move: { _, _, _, _ in }, end: { _, _, _ in }, cancel: {})
         let view = PanelDragBridge.TrackingView(callbacks: bridge)
         view.frame = root.bounds; root.addSubview(view); window.orderFront(nil)
         root.layoutSubtreeIfNeeded()
@@ -35,7 +35,7 @@ import MimicCore
         window.isReleasedWhenClosed = false
         let root = NSHostingView(rootView: CILaunchButton(kind: .uiTests, action: {}).frame(width: 400, height: 240))
         window.contentView = root
-        let bridge = PanelDragBridge(cancellationID: 0, enabled: true, candidate: { _ in .init(block: .ci, header: false) }, click: { _ in }, lift: { _, _, _, _ in }, move: { _, _, _, _ in }, end: { _, _, _ in }, cancel: {})
+        let bridge = PanelDragBridge(cancellationID: 0, enabled: true, candidate: { _ in .init(block: .ci) }, click: { _ in }, lift: { _, _, _, _ in }, move: { _, _, _, _ in }, end: { _, _, _ in }, cancel: {})
         let view = PanelDragBridge.TrackingView(callbacks: bridge)
         view.frame = root.bounds; root.addSubview(view); window.orderFront(nil)
         root.layoutSubtreeIfNeeded()
@@ -48,44 +48,77 @@ import MimicCore
         #expect(!backgroundIsControl)
         #expect(view.receive(background) == nil)
     }
-    @Test func resizeRequiresMovementAndAContinuousStationarySecond() {
+    @Test func tallHeaderOwnsItsWholeButtonButNotAdjacentControls() async throws {
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 400, height: 180), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let root = NSHostingView(rootView: VStack {
+            Button {} label: { Text("Длинный заголовок\\nВторая строка").frame(width: 360, height: 80) }
+                .buttonStyle(.plain).background(PanelDragHeaderRegion())
+            Button("Отдельное действие") {}.background(PanelControlRegion())
+        }.frame(width: 400, height: 180))
+        window.contentView = root
+        var clicks = 0
+        let bridge = PanelDragBridge(cancellationID: 0, enabled: true, candidate: { _ in .init(block: .utils) }, click: { _ in clicks += 1 }, lift: { _, _, _, _ in }, move: { _, _, _, _ in }, end: { _, _, _ in }, cancel: {})
+        let view = PanelDragBridge.TrackingView(callbacks: bridge); view.frame = root.bounds; root.addSubview(view)
+        window.orderFront(nil); root.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+        defer { view.stop(); window.close() }
+        func marker<T: NSView>(_ type: T.Type, in node: NSView) -> T? {
+            if let result = node as? T { return result }
+            return node.subviews.compactMap { marker(type, in: $0) }.first
+        }
+        let header = try #require(marker(PanelDragHeaderRegion.MarkerView.self, in: root))
+        let control = try #require(marker(PanelControlRegion.MarkerView.self, in: root))
+        let headerPoint = header.convert(CGPoint(x: header.bounds.midX, y: header.bounds.maxY - 4), to: nil)
+        let controlPoint = control.convert(CGPoint(x: control.bounds.midX, y: control.bounds.midY), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let headerEvent = try #require(NSEvent.mouseEvent(with: type, location: headerPoint, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+            #expect(view.receive(headerEvent) == nil)
+            let controlEvent = try #require(NSEvent.mouseEvent(with: type, location: controlPoint, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 1))
+            #expect(view.receive(controlEvent) === controlEvent)
+        }
+        #expect(clicks == 1)
+    }
+    @Test func stationaryLiftStartsHalfSecondDwellAndAllowsFiftyPoints() {
         var resize = PanelDragResize(size: .mini, pointer: .zero)
-        let changed1 = resize.update(zone: .center, pointer: .zero, time: 5); #expect(!changed1)
-        let changed2 = resize.update(zone: .center, pointer: .zero, time: 10); #expect(!changed2)
-        let changed3 = resize.update(zone: .center, pointer: CGPoint(x: 20, y: 0), time: 10); #expect(!changed3)
-        let changed4 = resize.update(zone: .center, pointer: CGPoint(x: 28, y: 0), time: 10.999); #expect(!changed4)
-        let changed5 = resize.update(zone: .center, pointer: CGPoint(x: 28, y: 0), time: 11); #expect(changed5)
-        #expect(resize.size == .full)
-        let changed6 = resize.update(zone: .right, pointer: CGPoint(x: 80, y: 0), time: 12); #expect(!changed6)
-        let changed7 = resize.update(zone: .right, pointer: CGPoint(x: 88.1, y: 0), time: 12.8); #expect(!changed7)
-        let changed8 = resize.update(zone: .right, pointer: CGPoint(x: 88.1, y: 0), time: 13.7); #expect(!changed8)
-        let changed9 = resize.update(zone: .right, pointer: CGPoint(x: 88.1, y: 0), time: 13.8); #expect(changed9)
+        let changed1 = resize.update(zone: .center, pointer: .zero, time: 10); #expect(!changed1)
+        #expect(resize.pending == .center)
+        let changed2 = resize.update(zone: .center, pointer: CGPoint(x: 30, y: 40), time: 10.499); #expect(!changed2)
+        #expect(resize.progress > 0.99)
+        let changed3 = resize.update(zone: .center, pointer: CGPoint(x: 30, y: 40), time: 10.5); #expect(changed3)
+        #expect(resize.size == .full && resize.pending == nil)
+        let changed4 = resize.update(zone: .right, pointer: .zero, time: 11); #expect(!changed4)
+        let changed5 = resize.update(zone: .right, pointer: CGPoint(x: 50.1, y: 0), time: 11.49); #expect(!changed5)
+        #expect(resize.progress == 0)
+        let changed6 = resize.update(zone: .right, pointer: CGPoint(x: 50.1, y: 0), time: 11.989); #expect(!changed6)
+        let changed7 = resize.update(zone: .right, pointer: CGPoint(x: 50.1, y: 0), time: 11.99); #expect(changed7)
         #expect(resize.size == .mini)
     }
-    @Test func passingThroughZonesAndLeavingNeverAccumulatesDwell() {
-        var resize = PanelDragResize(size: .mini, pointer: CGPoint(x: 90, y: 0))
-        let changed10 = resize.update(zone: .center, pointer: CGPoint(x: 70, y: 0), time: 0); #expect(!changed10)
-        let changed11 = resize.update(zone: .left, pointer: CGPoint(x: 10, y: 0), time: 0.8); #expect(!changed11)
-        let changed12 = resize.update(zone: .center, pointer: CGPoint(x: 60, y: 0), time: 1); #expect(!changed12)
-        let changed13 = resize.update(zone: nil, pointer: CGPoint(x: 60, y: 0), time: 1.8); #expect(!changed13)
-        let changed14 = resize.update(zone: .center, pointer: CGPoint(x: 60, y: 0), time: 2); #expect(!changed14)
-        let changed15 = resize.update(zone: .center, pointer: CGPoint(x: 60, y: 0), time: 2.999); #expect(!changed15)
-        let changed16 = resize.update(zone: .center, pointer: CGPoint(x: 60, y: 0), time: 3); #expect(changed16)
-        #expect(PanelDragResize.Zone.resolve(x: 20, width: 100) == .left)
-        #expect(PanelDragResize.Zone.resolve(x: 80, width: 100) == .right)
-        #expect(PanelDragResize.Zone.resolve(x: 20.1, width: 100) == .center)
+    @Test func changingZonesOrLeavingNeverAccumulatesDwell() {
+        var resize = PanelDragResize(size: .full, pointer: .zero)
+        let changed8 = resize.update(zone: .left, pointer: .zero, time: 0); #expect(!changed8)
+        let changed9 = resize.update(zone: .right, pointer: .zero, time: 0.4); #expect(!changed9)
+        let changed10 = resize.update(zone: nil, pointer: .zero, time: 0.8); #expect(!changed10)
+        #expect(resize.pending == nil && resize.progress == 0)
+        let changed11 = resize.update(zone: .right, pointer: .zero, time: 1); #expect(!changed11)
+        let changed12 = resize.update(zone: .right, pointer: .zero, time: 1.499); #expect(!changed12)
+        let changed13 = resize.update(zone: .right, pointer: .zero, time: 1.5); #expect(changed13)
+        #expect(PanelDragResize.Zone.resolve(x: 30, width: 100) == .left)
+        #expect(PanelDragResize.Zone.resolve(x: 70, width: 100) == .right)
+        #expect(PanelDragResize.Zone.resolve(x: 30.1, width: 100) == .center)
         #expect(PanelDragResize.Zone.resolve(x: -1, width: 100) == nil)
     }
-    @Test func movingWithinOneZoneResetsAndMorphRetargetsItsPresentedSize() {
+    @Test func continuousTravelResetsDwellAndMorphRetargetsPresentedSize() {
         var resize = PanelDragResize(size: .mini, pointer: .zero)
-        for tick in 0..<10 { let changed17 = resize.update(zone: .center, pointer: CGPoint(x: 20 + tick * 9, y: 0), time: Double(tick) * 0.2); #expect(!changed17) }
+        for tick in 0..<10 {
+            let changed14 = resize.update(zone: .center, pointer: CGPoint(x: tick * 30, y: 0), time: Double(tick) * 0.2); #expect(!changed14)
+        }
         #expect(resize.size == .mini)
-        let morph = PanelDragMorph(from: CGSize(width: 488, height: 136), to: CGSize(width: 238, height: 112), started: 1, duration: 0.2)
+        let morph = PanelDragMorph(from: CGSize(width: 488, height: 160), to: CGSize(width: 238, height: 160), started: 1, duration: 0.2)
         #expect(morph.scale(at: 1).width == 488.0 / 238)
         #expect(abs(morph.scale(at: 1.2).width - 1) < 0.000001)
-        #expect(abs(morph.scale(at: 1.2).height - 1) < 0.000001)
         let current = morph.scale(at: 1.1)
-        let reverse = PanelDragMorph(from: CGSize(width: 238 * current.width, height: 112 * current.height), to: CGSize(width: 488, height: 136), started: 1.1, duration: 0.2)
+        let reverse = PanelDragMorph(from: CGSize(width: 238 * current.width, height: 160), to: CGSize(width: 488, height: 160), started: 1.1, duration: 0.2)
         #expect(abs(reverse.scale(at: 1.1).width * 488 - current.width * 238) < 0.001)
         #expect(PanelDragMorph(from: morph.from, to: morph.to, started: 1, duration: 0).scale(at: 1) == CGSize(width: 1, height: 1))
     }
@@ -107,8 +140,8 @@ import MimicCore
         gesture.press(at: .zero, time: 0, eligible: false)
         let excluded = gesture.activate(time: 1, pressureStage: 2); #expect(!gesture.ownsPress); #expect(!excluded)
         gesture.press(at: .zero, time: 0, eligible: true)
-        gesture.move(to: CGPoint(x: 8, y: 0)); #expect(gesture.phase == .waiting)
-        gesture.move(to: CGPoint(x: 8.1, y: 0)); let movedActivation = gesture.activate(time: 1, pressureStage: 2); #expect(!movedActivation)
+        gesture.move(to: CGPoint(x: 12, y: 0)); #expect(gesture.phase == .waiting)
+        gesture.move(to: CGPoint(x: 12.1, y: 0)); let movedActivation = gesture.activate(time: 1, pressureStage: 2); #expect(!movedActivation)
         let moved = gesture.release(); #expect(!moved.drop && !moved.click)
         gesture.press(at: .zero, time: 0, eligible: true); let short = gesture.release(); #expect(short.click)
         gesture.press(at: .zero, time: 0, eligible: true); gesture.activate(time: 1); gesture.cancel()
@@ -119,7 +152,7 @@ import MimicCore
         window.isReleasedWhenClosed = false
         let root = NSView(frame: CGRect(x: 0, y: 0, width: 400, height: 240)); window.contentView = root
         var clicks = 0, lifts = 0
-        let bridge = PanelDragBridge(cancellationID: 0, enabled: true, candidate: { point in .init(block: .utils, header: point.y < 48) }, click: { _ in clicks += 1 }, lift: { _, _, _, _ in lifts += 1 }, move: { _, _, _, _ in }, end: { _, _, _ in }, cancel: {})
+        let bridge = PanelDragBridge(cancellationID: 0, enabled: true, candidate: { point in .init(block: .utils) }, click: { _ in clicks += 1 }, lift: { _, _, _, _ in lifts += 1 }, move: { _, _, _, _ in }, end: { _, _, _ in }, cancel: {})
         let view = PanelDragBridge.TrackingView(callbacks: bridge); view.frame = root.bounds; root.addSubview(view)
         let button = NSButton(frame: CGRect(x: 20, y: 50, width: 120, height: 30)), field = NSTextField(frame: CGRect(x: 20, y: 100, width: 120, height: 30))
         root.addSubview(button); root.addSubview(field); window.orderFront(nil)
@@ -136,6 +169,13 @@ import MimicCore
         #expect(clicks == 2)
         _ = view.receive(headerDown); _ = view.receive(try event(.leftMouseDragged, CGPoint(x: 70, y: 215))); _ = view.receive(headerUp)
         #expect(clicks == 2); #expect(lifts == 0)
+        // Expanded hosted content must retain presses even when accessibility exposes no control.
+        let content = PanelControlRegion.MarkerView(frame: CGRect(x: 200, y: 40, width: 180, height: 140))
+        root.addSubview(content)
+        let contentDown = try event(.leftMouseDown, surfacePoint), contentUp = try event(.leftMouseUp, surfacePoint)
+        #expect(view.receive(contentDown) === contentDown)
+        #expect(view.receive(contentUp) === contentUp)
+        #expect(clicks == 2); #expect(lifts == 0)
     }
     @Test func measuredCollapsedHeightsKeepDragTargetsAligned() {
         let layout = PanelLayout.standard(for: .desktop)
@@ -146,13 +186,42 @@ import MimicCore
     }
     @Test func logicalTargetsRemainStableAndScrollSpeedIsBounded() {
         let layout = PanelLayout.standard(for: .desktop), cells = PanelDragGeometry.compactCells(layout: layout, width: 488)
-        #expect(cells[1].frame.width == 238); #expect(cells[1].frame.height == 112)
-        #expect(PanelDragGeometry.target(point: CGPoint(x: 300, y: 160), block: .ci, layout: layout, cells: cells) == .slot(row: layout.rows[1].id, slot: 1))
+        #expect(cells[1].frame.width == 238); #expect(cells[1].frame.height == 160)
+        #expect(PanelDragGeometry.target(point: CGPoint(x: 300, y: 200), block: .ci, layout: layout, cells: cells) == .slot(row: layout.rows[1].id, slot: 1))
         #expect(PanelDragGeometry.target(point: CGPoint(x: 20, y: 100), block: .ci, layout: layout, cells: cells) == .boundary(before: layout.rows[1].id))
         #expect(PanelDragGeometry.target(point: CGPoint(x: -1, y: 10), block: .ci, layout: layout, cells: cells) == nil)
         #expect(PanelDragGeometry.scrollSpeed(y: 24, height: 600) == -200)
         #expect(PanelDragGeometry.scrollSpeed(y: 576, height: 600) == 200)
         #expect(PanelDragGeometry.scrollSpeed(y: 300, height: 600) == 0)
         #expect(PanelDragGeometry.scrollSpeed(y: 650, height: 600) == 400)
+    }
+    @Test func currentPlaceholderRetainsTargetAfterReflowAndResolvesNewSize() throws {
+        var layout = PanelLayout.standard(for: .desktop)
+        let target = PanelInsertionTarget.slot(row: layout.rows[2].id, slot: 1)
+        try layout.insert(.utils, at: target)
+        let cells = PanelDragGeometry.compactCells(layout: layout, width: 488)
+        let source = try #require(cells.first { $0.row == layout.rows[2].id && $0.slot == 1 })
+        let point = CGPoint(x: source.frame.minX - 11, y: source.frame.midY)
+        #expect(PanelDragGeometry.retainedTarget(point: point, block: .utils, layout: layout, cells: cells, current: target, size: .mini, resized: false) == target)
+        let full = PanelDragGeometry.retainedTarget(point: point, block: .utils, layout: layout, cells: cells, current: target, size: .full, resized: true)
+        #expect(full == .boundary(before: source.row))
+        try layout.insert(.utils, at: full!, size: .full)
+        let resized = PanelDragGeometry.compactCells(layout: layout, width: 488)
+        let row = try #require(layout.rows.first { $0.blocks.contains(.utils) })
+        #expect(resized.first { $0.row == row.id }?.frame.width == 488)
+    }
+    @Test func unchangedGeometryDoesNotPublishPerPointerFrame() async {
+        let store = PanelFrameStore()
+        let frames = ["utils": CGRect(x: 0, y: 172, width: 238, height: 160)]
+        var publications = 0
+        let observation = store.objectWillChange.sink { publications += 1 }
+        for _ in 0..<100 { store.record(frames) }
+        #expect(store.logical == frames)
+        await Task.yield()
+        #expect(store.snapshot == frames && publications == 1)
+        for _ in 0..<100 { store.record(frames) }
+        await Task.yield()
+        #expect(publications == 1)
+        withExtendedLifetime(observation) {}
     }
 }

@@ -9,6 +9,8 @@ import Foundation
 /// A read-only query owns one process group, an absolute deadline and a finite stdout budget.
 /// This synchronous API runs on a worker; cancellation is checked between bounded nonblocking reads.
 enum ReadOnlyProcess {
+    /// Existing short queries retain their eight-second budget. Catalogue callers distinguish timeout from exit failure.
+    static let timeoutExitCode: Int32 = -2
     static func capture(_ executable: String, _ arguments: [String], directory: String?, environment: [String: String]?, timeout: TimeInterval = 8, maximumBytes: Int = 2 * 1024 * 1024) -> (Int32, String) {
         let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(0, timeout) * 1_000_000_000)
         guard !Task.isCancelled else { return (-1, "") }
@@ -44,9 +46,11 @@ enum ReadOnlyProcess {
         // The local writer must close now so EOF describes only the owned group.
         close(writer); descriptors[1] = -1
         var data = Data(), buffer = [UInt8](repeating: 0, count: 64 * 1024)
-        var eof = false, status: Int32 = 0, failed = false, reaped = false
+        var eof = false, status: Int32 = 0, failed = false, reaped = false, timedOut = false
         while !failed {
-            if Task.isCancelled || DispatchTime.now().uptimeNanoseconds >= deadline { failed = true; break }
+            if Task.isCancelled || DispatchTime.now().uptimeNanoseconds >= deadline {
+                timedOut = !Task.isCancelled; failed = true; break
+            }
             if !eof {
                 let count = buffer.withUnsafeMutableBytes { read(reader, $0.baseAddress!, $0.count) }
                 if count > 0 {
@@ -91,6 +95,6 @@ enum ReadOnlyProcess {
             }
         }
         let code: Int32 = !failed && reaped && status & 0x7f == 0 ? (status >> 8) & 0xff : -1
-        return (code, String(decoding: data, as: UTF8.self))
+        return (timedOut ? timeoutExitCode : code, String(decoding: data, as: UTF8.self))
     }
 }

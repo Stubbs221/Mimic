@@ -65,6 +65,7 @@ private actor SettingsHTTP: CIHTTPTransport {
         self.model.integration = MimicIntegration(model: self.model, defaults: self.defaults)
         settings.selectCheckout(project.path)
         settings.address = "https://gitlab.example.test"; settings.projectPath = "team/mobile"
+        jenkins.address = "https://jenkins.example.com"
     }
     func cleanUp() {
         self.model.remoteTests.stop(); self.model.ci.setVisible(false)
@@ -103,7 +104,7 @@ struct SettingsPageTests {
         #expect(m.panelPage == .settings && m.expandedSection == .tasks && m.selectedTaskID == record.id)
         #expect(!m.panelScroll.isActive(staleHome) && m.terminalFocusTaskID == nil)
         let staleSettings = m.settingsScroll.request
-        #expect(m.settingsScroll.target == SettingsGroup.ci.scrollID && m.settingsScroll.source == .keyboard)
+        #expect(m.settingsScroll.target == "settings.top" && m.settingsScroll.source == .keyboard)
         m.returnHome(source: .keyboard)
         #expect(m.panelPage == .home && m.expandedSection == .tasks)
         #expect(!m.settingsScroll.isActive(staleSettings) && m.panelScrollTarget.isEmpty)
@@ -127,15 +128,37 @@ struct SettingsPageTests {
         m.toggleFooterCI()
         #expect(m.panelPage == .settings && m.settingsGroup == .ci)
         m.openSettings(group: .environment, source: .keyboard)
-        #expect(m.settingsGroup == .environment && m.settingsScroll.target == SettingsGroup.environment.scrollID)
+        #expect(m.settingsGroup == .environment && m.settingsScroll.target == "settings.top")
         m.toggleSettingsGroup(.aiIntegrations, source: .keyboard)
-        #expect(m.settingsGroup == .aiIntegrations && m.settingsScroll.target.isEmpty)
+        #expect(m.settingsGroup == .aiIntegrations && m.settingsScroll.target == "settings.top")
         m.toggleSettingsGroup(.aiIntegrations, source: .keyboard)
-        #expect(m.settingsGroup == nil)
+        #expect(m.settingsGroup == .aiIntegrations)
         m.toggleSettings(); m.toggleSettings()
-        #expect(m.settingsGroup == nil)
+        #expect(m.settingsGroup == .aiIntegrations)
         let restarted = TaskCoordinator(directory: f.directory, defaults: f.defaults)
         #expect(restarted.panelPage == .home && restarted.expandedSection == nil && restarted.settingsGroup == .application)
+    }
+
+    @Test func codexAppearanceEntryPreservesCategoryDrafts() async throws {
+        let f = try SettingsFixture(); defer { f.cleanUp() }
+        let m = f.model
+        m.ciSettings.enteredToken = "fixture-gitlab-draft"
+        m.jenkinsSettings.enteredToken = "fixture-jenkins-draft"
+        m.aiSettings.settings.codexModel = "fixture-model"
+        var presentations = 0; m.showPanel = { presentations += 1 }
+        for appearance in PanelAppearance.allCases {
+            m.appearance.select(appearance)
+            try await m.panelSetup("appearance", project: nil)
+            #expect(m.panelPage == .settings && m.settingsGroup == .appearance)
+            for group in SettingsGroup.allCases { m.openSettings(group: group, source: .keyboard) }
+            m.returnHome(); m.openSettings()
+            #expect(m.settingsGroup == .diagnostics)
+            #expect(m.ciSettings.enteredToken == "fixture-gitlab-draft")
+            #expect(m.jenkinsSettings.enteredToken == "fixture-jenkins-draft")
+            #expect(m.aiSettings.settings.codexModel == "fixture-model")
+        }
+        #expect(presentations == 2 && f.credentials.values.isEmpty)
+        #expect(await f.http.requests.isEmpty)
     }
 
     // MARK: - Shared CI lifecycle
@@ -240,18 +263,25 @@ struct SettingsPageTests {
         #expect(launch.selected == nil)
     }
 
-    @Test func nativeDocumentsRetainSeparateScrollOffsetsAndExcludeHiddenControls() async throws {
+    @Test(arguments: PanelAppearance.allCases)
+    func nativeDocumentsRetainSeparateScrollOffsetsAndExcludeHiddenControls(appearance: PanelAppearance) async throws {
         let f = try SettingsFixture(); defer { f.cleanUp() }
         let m = f.model
+        m.appearance.select(appearance)
+        m.activeProfile = try Profile11Fixture.snapshot(directory: f.directory)
         m.motionSettings.reduceMotionOverride = true
         m.revealSection(.tasks, source: .keyboard)
         let window = self.window()
         defer { window.close() }
-        let host = NSHostingView(rootView: MimicPanel(model: m).frame(width: 440, height: 420))
+        let host = NSHostingView(rootView: MimicPanel(model: m).frame(width: m.appearance.selection.panelWidth, height: 420).modifier(MimicAppearanceRoot(store: m.appearance)))
         window.contentView = host
         try await self.layout(host)
         let home = try #require(self.scroll(in: host, id: "page.home"))
         let settings = try #require(self.scroll(in: host, id: "page.settings"))
+        // Legacy style models “Always show scroll bars”; hidden indicators must not reserve a gutter.
+        home.scrollerStyle = .legacy; settings.scrollerStyle = .legacy
+        home.tile(); settings.tile()
+        #expect(!home.hasVerticalScroller && !settings.hasVerticalScroller)
         #expect(!home.isHidden && settings.isHidden)
         home.contentView.scroll(to: NSPoint(x: 0, y: 90)); home.reflectScrolledClipView(home.contentView)
         let homeOffset = home.contentView.bounds.origin
@@ -283,17 +313,22 @@ struct SettingsPageTests {
         m.aiSettings.settings.claudePath = "/Users/fixture/Library/Application Support/Developer Tools/Claude/claude"
         m.diagnostic = "Не найден инструмент в /Applications/Developer Tools/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
         m.motionSettings.reduceMotionOverride = true
-        let output = URL(fileURLWithPath: "/private/tmp/MimicSettings-20261005")
+        let output = URL(fileURLWithPath: "/private/tmp/MimicSettings-20261008")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         for group in SettingsGroup.allCases {
             m.openSettings(group: group, source: .keyboard)
-            for dark in [false, true] {
-                for contrast in [false, true] {
-                    let view = MimicPanel(model: m).frame(width: 440, height: 420)
-                        .environment(MimicAppearancePreview(reduceMotion: true, increasedContrast: contrast))
-                        .environment(\.colorScheme, dark ? .dark : .light)
-                    try await self.render(view, size: NSSize(width: 440, height: 420), dark: dark,
-                                          name: group.rawValue + "-\(dark)-\(contrast)", output: output)
+            for width in [CGFloat(440), 520, 560] {
+                for dark in [false, true] {
+                    for scale in [CGFloat(1), 1.4] {
+                        let appearance: PanelAppearance = width == 520 ? .legacy : .tileGrid
+                        let view = SettingsDocument(model: m).frame(width: width, height: 720)
+                            .environment(\.mimicPanelAppearance, appearance)
+                            .environment(\.mimicTextScale, scale)
+                            .environment(MimicAppearancePreview(reduceMotion: true, increasedContrast: false))
+                            .environment(\.colorScheme, dark ? .dark : .light)
+                        try await self.render(view, size: NSSize(width: width, height: 720), dark: dark,
+                                              name: group.rawValue + "-\(Int(width))-\(dark)-\(scale)", output: output)
+                    }
                 }
             }
         }
@@ -322,7 +357,7 @@ struct SettingsPageTests {
         }
         m.projects = []; m.selectedProjectPath = ""
         m.openSettings(group: .ci, source: .keyboard)
-        try await self.render(MimicPanel(model: m).frame(width: 440, height: 420),
+        try await self.render(SettingsDocument(model: m).frame(width: 440, height: 420),
                               size: NSSize(width: 440, height: 420), dark: false, name: "empty-project", output: output)
         #expect(m.aiUsage.refreshing.isEmpty && m.records.isEmpty)
         #expect(await f.http.requests.isEmpty)

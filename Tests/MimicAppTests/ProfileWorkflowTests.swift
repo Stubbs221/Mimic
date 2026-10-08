@@ -11,10 +11,10 @@ import MimicCore
 @testable import Mimic
 
 @Suite(.serialized, .timeLimit(.minutes(1))) @MainActor struct ProfileWorkflowTests {
-    private func wait(_ condition: () -> Bool) async throws {
+    private func wait(_ label: String = "fixture", _ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(8))
         while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-        try #require(condition())
+        try #require(condition(), "Timed out: \(label)")
     }
     @Test func familiarGeneratorsUseReviewedProfilePreviewAndRejectStaleInputs() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ProfileWorkflow-" + UUID().uuidString).resolvingSymlinksInPath()
@@ -30,7 +30,7 @@ import MimicCore
         model.projects = [project]; model.selectedProjectPath = project.path
         for kind in GeneratorKind.allCases {
             model.generatorKind = kind; model.generatorName = "Header"; model.checkReadiness()
-            model.previewGeneration(); try await wait { !model.planningGeneration }
+            model.previewGeneration(); try await wait("preview \(kind)") { !model.planningGeneration }
             let plan = try #require(model.generationPlan), preview = try #require(model.records.last)
             #expect(preview.action == .generation); #expect(preview.generation?.kind == kind); #expect(plan.canGenerate)
             let execution = try model.profileExecution(.generation, generation: GenerationRequest(kind: kind, name: "Header", digest: plan.digest))
@@ -38,9 +38,11 @@ import MimicCore
             var rejected: TaskRecord?
             model.requestProfile(execution: execution) { rejected = $0 }
             #expect(rejected == nil); #expect(model.records.count == 1)
-            model.generatorName = "Header"; model.previewGeneration(); try await wait { !model.planningGeneration }
-            let count = model.records.count; model.generateFromPreview()
-            try await wait { model.records.count > count && !model.busy && model.pendingCount == 0 }
+            model.generatorName = "Header"; model.previewGeneration(); try await wait("preview \(kind)") { !model.planningGeneration }
+            let count = model.records.count
+            try await wait("preview idle \(kind)") { !model.toolActive(.generation) && !model.planningGeneration }
+            model.generateFromPreview()
+            try await wait("generate \(kind)") { model.records.count > count && !model.busy && model.pendingCount == 0 }
             let generated = try #require(model.records.last)
             #expect(generated.action == .generation); #expect(generated.generation?.kind == kind); #expect(generated.profileExecution?.snapshot == snapshot)
             #expect(generated.status == .succeeded); #expect(generated.logPath != nil)

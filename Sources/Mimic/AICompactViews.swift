@@ -188,10 +188,10 @@ private struct AICompactBody: View {
                     Text(self.summary.emptyStatus).foregroundStyle(.secondary).lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true).help(self.summary.metadata)
                 } else {
-                    ForEach(self.summary.windows) { window in AICompactWindowView(summary: window, now: self.now) }
+                    ForEach(self.summary.windows) { window in AICompactWindowView(summary: window, provider: summary.provider, now: self.now) }
                 }
             }
-        }.frame(maxHeight: .infinity, alignment: .topLeading).font(MimicMetrics.secondary)
+        }.frame(maxHeight: .infinity, alignment: .topLeading).mimicFont(.caption)
     }
 }
 
@@ -202,6 +202,7 @@ private struct AICompactTrendAnchor: PreferenceKey {
 }
 
 private struct AICompactTrendView: View {
+    private var theme = MimicTheme()
     let summary: AICompactProviderSummary
     let now: Date
     @StateObject private var hover: AIUsageTrendPopoverState
@@ -221,16 +222,16 @@ private struct AICompactTrendView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(self.todayReadout).font(MimicMetrics.secondary).monospacedDigit().foregroundStyle(.secondary)
+            Text(self.todayReadout).mimicFont(.caption).monospacedDigit().foregroundStyle(.secondary)
             if self.summary.points.isEmpty {
-                Text(text("usage.trend.empty")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                Text(text("usage.trend.empty")).mimicFont(.caption).foregroundStyle(.secondary)
                     .frame(height: 18)
             } else {
                 Button { self.hover.toggleExplicit() } label: {
                     let peak = self.summary.points.map(\.tokens).max() ?? 0
                     HStack(alignment: .bottom, spacing: 1) {
                         ForEach(self.summary.points, id: \.date) { point in
-                            RoundedRectangle(cornerRadius: 1).fill(Color.blue).frame(maxWidth: .infinity)
+                            RoundedRectangle(cornerRadius: 1).fill(theme.tiled ? theme.color(summary.provider == .codex ? "usagePurple" : "usageRose") : .blue).frame(maxWidth: .infinity)
                                 .frame(height: AIUsageTrendFormat.barHeight(point.tokens, peak: peak, height: 18, floor: 0.18))
                         }
                     }.frame(height: 18, alignment: .bottom).contentShape(Rectangle())
@@ -249,7 +250,9 @@ private struct AICompactTrendView: View {
 }
 
 private struct AICompactWindowView: View {
+    private var theme = MimicTheme()
     let summary: AICompactWindowSummary
+    let provider: AIProvider
     let now: Date
     private var accessibility = MimicAccessibility()
     var body: some View {
@@ -265,7 +268,7 @@ private struct AICompactWindowView: View {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.06))
-                    Capsule().fill(self.summary.color).frame(width: geometry.size.width * self.summary.fraction)
+                    Capsule().fill(theme.tiled ? theme.usageColor(summary.pace, provider: provider) : self.summary.color).frame(width: geometry.size.width * self.summary.fraction)
                     Capsule().stroke(Color.primary.opacity(self.accessibility.increasedContrast ? 0.6 : 0.15), lineWidth: 0.5)
                     if let tick = self.summary.pace.tick {
                         RoundedRectangle(cornerRadius: 1).fill(Color.secondary).frame(width: 2, height: 6)

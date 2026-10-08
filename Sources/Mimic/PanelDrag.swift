@@ -6,10 +6,30 @@
 import AppKit
 import SwiftUI
 import MimicCore
+import os
 
-/// Layout reports logical frames before applying the dragged card's presentation position.
-struct PanelFrameSink: LayoutValueKey {
-    static let defaultValue: (@Sendable (CGRect) -> Void)? = nil
+/// Publishes at most one changed geometry snapshot per layout pass, never one Task per card per tick.
+@MainActor final class PanelFrameStore: ObservableObject {
+    @Published private(set) var snapshot: [String: CGRect] = [:]
+    private struct Pending: Sendable { var frames: [String: CGRect] = [:]; var scheduled = false }
+    private nonisolated let buffer = OSAllocatedUnfairLock(initialState: Pending())
+    nonisolated var logical: [String: CGRect] { buffer.withLock { $0.frames } }
+    // SwiftUI may measure off the main actor. Only the eventual observation belongs to the UI actor.
+    nonisolated func record(_ frames: [String: CGRect]) {
+        let publish = buffer.withLock { pending in
+            guard pending.frames != frames else { return false }
+            pending.frames = frames
+            guard !pending.scheduled else { return false }
+            pending.scheduled = true
+            return true
+        }
+        guard publish else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let next = buffer.withLock { pending in pending.scheduled = false; return pending.frames }
+            if snapshot != next { snapshot = next }
+        }
+    }
 }
 
 /// Marks hosted controls whose accessibility hit test can return only the hosting container.
@@ -29,6 +49,20 @@ struct PanelControlRegion: NSViewRepresentable {
     func updateNSView(_ nsView: MarkerView, context: Context) {}
 }
 
+/// Only the disclosure button may bypass control exclusion; nearby controls retain their own events.
+struct PanelDragHeaderRegion: NSViewRepresentable {
+    final class MarkerView: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        static func contains(_ point: NSPoint, in view: NSView) -> Bool {
+            guard !view.isHidden else { return false }
+            if view is MarkerView, view.bounds.intersection(view.visibleRect).contains(view.convert(point, from: nil)) { return true }
+            return view.subviews.contains { contains(point, in: $0) }
+        }
+    }
+    func makeNSView(context: Context) -> MarkerView { MarkerView() }
+    func updateNSView(_ nsView: MarkerView, context: Context) {}
+}
+
 /// Input-only state: pressure and the hold timer share one activation path and one mouse-up owner.
 struct PanelDragGesture {
     enum Phase: Equatable { case idle, waiting, dragging, cancelled }
@@ -39,11 +73,11 @@ struct PanelDragGesture {
     var ownsPress: Bool { phase != .idle }
     mutating func press(at point: CGPoint, time: TimeInterval, eligible: Bool) {
         guard eligible, phase == .idle else { return }
-        origin = point; self.point = point; deadline = time + 0.350; phase = .waiting
+        origin = point; self.point = point; deadline = time + PanelDesignTokens.shared.metrics["dragHoldMS"]! / 1000; phase = .waiting
     }
     @discardableResult mutating func move(to point: CGPoint) -> Bool {
         self.point = point
-        if phase == .waiting && hypot(point.x - origin.x, point.y - origin.y) > 8 { phase = .cancelled }
+        if phase == .waiting && hypot(point.x - origin.x, point.y - origin.y) > 12 { phase = .cancelled }
         return phase == .dragging
     }
     @discardableResult mutating func activate(time: TimeInterval, pressureStage: Int = 0) -> Bool {
@@ -60,7 +94,7 @@ struct PanelDragGesture {
 
 // MARK: - Deliberate size changes
 
-/// A size change requires one continuous, stationary second in a different zone.
+/// A size change requires half a second in one zone within 50 points of its dwell anchor.
 /// Pointer coordinates belong to the window, so document autoscroll cannot reset the dwell.
 struct PanelDragResize {
     enum Zone: Equatable {
@@ -69,25 +103,23 @@ struct PanelDragResize {
         var slot: Int { self == .right ? 1 : 0 }
         static func resolve(x: CGFloat, width: CGFloat) -> Self? {
             guard width > 0, x >= 0, x <= width else { return nil }
-            return x <= width * 0.2 ? .left : x >= width * 0.8 ? .right : .center
+            return x <= width * 0.3 ? .left : x >= width * 0.7 ? .right : .center
         }
     }
     private(set) var size: PanelBlockSize
-    private var lastPointer: CGPoint
-    private var moved = false
-    private var pending: Zone?
+    private(set) var pending: Zone?
+    private(set) var progress: Double = 0
     private var anchor = CGPoint.zero
     private var started: TimeInterval = 0
-    init(size: PanelBlockSize, pointer: CGPoint) { self.size = size; lastPointer = pointer }
+    init(size: PanelBlockSize, pointer: CGPoint) { self.size = size; anchor = pointer }
     @discardableResult mutating func update(zone: Zone?, pointer: CGPoint, time: TimeInterval) -> Bool {
-        if pointer != lastPointer { moved = true }
-        lastPointer = pointer
-        guard moved, let zone, zone.size != size else { pending = nil; return false }
-        if pending != zone || hypot(pointer.x - anchor.x, pointer.y - anchor.y) > 8 {
-            pending = zone; anchor = pointer; started = time; return false
+        guard let zone, zone.size != size else { pending = nil; progress = 0; return false }
+        if pending != zone || hypot(pointer.x - anchor.x, pointer.y - anchor.y) > 50 {
+            pending = zone; anchor = pointer; started = time; progress = 0; return false
         }
-        guard time - started >= 1 else { return false }
-        size = zone.size; pending = nil; return true
+        progress = min(1, max(0, (time - started) / 0.5))
+        guard progress >= 1 else { return false }
+        size = zone.size; pending = nil; progress = 0; return true
     }
 }
 
@@ -112,7 +144,7 @@ struct PanelDragGeometry {
     static func compactCells(layout: PanelLayout, width: CGFloat, rowHeights: [UUID: CGFloat] = [:]) -> [Cell] {
         var cells: [Cell] = [], y: CGFloat = 0
         for row in layout.rows {
-            let height: CGFloat = max(row.slots == [.bootstrap] ? 136 : 112, rowHeights[row.id] ?? 0)
+            let height: CGFloat = rowHeights[row.id] ?? MimicMetrics.collapsedCardHeight
             for slot in row.slots.indices {
                 let itemWidth = row.size == .full ? width : (width - 12) / 2
                 cells.append(Cell(row: row.id, slot: slot, frame: CGRect(x: CGFloat(slot) * (itemWidth + 12), y: y, width: itemWidth, height: height), full: row.size == .full))
@@ -133,6 +165,23 @@ struct PanelDragGeometry {
         let index = rows.firstIndex(of: cell.row)!
         return .boundary(before: point.y < cell.frame.midY ? cell.row : rows.indices.contains(index + 1) ? rows[index + 1] : nil)
     }
+    /// The logical source frame is the visible destination placeholder. Reflow cannot steal its hit region.
+    static func retainedTarget(point: CGPoint, block: PanelBlockKind, layout: PanelLayout, cells: [Cell],
+                               current: PanelInsertionTarget?, size: PanelBlockSize, resized: Bool) -> PanelInsertionTarget? {
+        if let row = layout.rows.first(where: { $0.blocks.contains(block) }),
+           let slot = row.slots.firstIndex(of: block),
+           let cell = cells.first(where: { $0.row == row.id && $0.slot == slot }),
+           cell.frame.insetBy(dx: -12, dy: -12).contains(point) {
+            if !resized, let current {
+                switch current {
+                case .slot(let id, _): if layout.rows.contains(where: { $0.id == id }) { return current }
+                case .boundary(let id): if id == nil || layout.rows.contains(where: { $0.id == id }) { return current }
+                }
+            }
+            return size == .mini ? .slot(row: row.id, slot: resized ? (point.x < (cells.map(\.frame.maxX).max() ?? 0) / 2 ? 0 : 1) : slot) : .boundary(before: row.id)
+        }
+        return target(point: point, block: block, layout: layout, cells: cells, size: size)
+    }
     static func scrollSpeed(y: CGFloat, height: CGFloat) -> CGFloat {
         if y < 48 { return -400 * min(1, max(0, (48 - y) / 48)) }
         if y > height - 48 { return 400 * min(1, max(0, (y - height + 48) / 48)) }
@@ -145,7 +194,7 @@ struct PanelDragGeometry {
 /// A scoped event bridge consumes only eligible card presses. Controls keep AppKit/SwiftUI tracking;
 /// short surface clicks invoke the existing disclosure, while a captured drag follows window events.
 struct PanelDragBridge: NSViewRepresentable {
-    struct Candidate { let block: PanelBlockKind; let header: Bool }
+    struct Candidate { let block: PanelBlockKind }
     let cancellationID: Int
     let enabled: Bool
     let candidate: (CGPoint) -> Candidate?
@@ -211,8 +260,9 @@ struct PanelDragBridge: NSViewRepresentable {
             let point = convert(windowPoint, from: nil)
             switch event.type {
             case .leftMouseDown:
-                guard !gesture.ownsPress, isVisible(point), let item = callbacks.candidate(point),
-                      item.header || !isControl(at: event.locationInWindow) else { return event }
+                guard !gesture.ownsPress, isVisible(point), let item = callbacks.candidate(point) else { return event }
+                let header = window.contentView.map { PanelDragHeaderRegion.MarkerView.contains(event.locationInWindow, in: $0) } == true
+                guard header || !isControl(at: event.locationInWindow) else { return event }
                 selected = item; gesture.press(at: point, time: now, eligible: true)
                 lastTick = now
                 timer = Timer.scheduledTimer(withTimeInterval: 1 / 60, repeats: true) { [weak self] _ in
@@ -297,6 +347,7 @@ struct PanelCardPalette {
 }
 
 struct PanelCardBackground: ViewModifier {
+    private var theme = MimicTheme()
     let block: PanelBlockKind
     @Environment(\.colorScheme) private var scheme
     private var accessibility = MimicAccessibility()
@@ -308,8 +359,9 @@ struct PanelCardBackground: ViewModifier {
         return fill
     }
     func body(content: Content) -> some View {
-        let fill = resolvedFill
-        content.background(Color(nsColor: fill), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(accessibility.increasedContrast ? 0.45 : 0.12), lineWidth: 1))
+        let fill = theme.tiled ? MimicTheme.native("surface", dark: scheme == .dark) : resolvedFill
+        content.background(Color(nsColor: fill), in: RoundedRectangle(cornerRadius: theme.cardRadius))
+            .shadow(color: .black.opacity(theme.tiled ? 0.035 : 0), radius: 10, y: 5)
+            .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).strokeBorder(.primary.opacity(accessibility.increasedContrast ? 0.45 : theme.tiled ? 0 : 0.12), lineWidth: 1))
     }
 }

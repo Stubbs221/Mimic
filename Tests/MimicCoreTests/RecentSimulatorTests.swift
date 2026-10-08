@@ -13,6 +13,15 @@ struct RecentSimulatorTests {
     }
 
     @Test
+    func forgetSurvivesEncodingWithoutChangingOtherXcodeHistory() throws {
+        let device = self.device("iPad", version: "iOS 27")
+        var usage = SimulatorUsage(); usage.record(device.id, developer: "A"); usage.record(device.id, developer: "B")
+        usage.forget(device.id, developer: "A")
+        let restored = try JSONDecoder().decode(SimulatorUsage.self, from: JSONEncoder().encode(usage))
+        #expect(restored.dates["A"]?[device.id] == nil && restored.dates["B"]?[device.id] != nil)
+    }
+
+    @Test
     func firstUseSortsNumericRuntimeAndName() {
         let old = self.device("iPhone Old", version: "iOS 9.3"), newer = self.device("iPhone B", version: "iOS 26.1"), newest = self.device("iPhone A", version: "iOS 26.1")
         #expect(SimulatorUsage().recent([old, newer, newest], developer: "/Xcode").map(\.id) == [newest.id, newer.id, old.id])

@@ -2,6 +2,20 @@
 import SwiftUI
 import MimicCore
 
+/// Polling a CI run updates its card without rebuilding the grid or the hidden settings document.
+struct CICompactSummaryView: View {
+    @ObservedObject var state: CIState
+    let full: Bool
+    let open: (CICompactSummary) -> Void
+    var body: some View {
+        if state.compactSummaries.isEmpty {
+            Text(text("ci.compact.empty")).mimicFont(.caption).foregroundStyle(.secondary)
+        } else {
+            CICompactRuns(summaries: Array(state.compactSummaries.prefix(full ? 2 : 1)), open: open)
+        }
+    }
+}
+
 /// Each run owns its status and evidence; compact layout never infers time or completion.
 struct CICompactBody: View {
     let summary: CICompactSummary
@@ -25,16 +39,16 @@ struct CICompactBody: View {
             if self.fillsAvailableHeight { Spacer(minLength: 4) }
             VStack(alignment: .leading, spacing: 4) {
                 if self.summary.active { CICompactProgress(summary: self.summary) }
-                TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                MimicActivityClock(running: summary.status == "running" && !summary.stale && summary.startedAt != nil) { now in
                     HStack(spacing: 8) {
                         Label(self.summary.startedAt.map { ciDate($0) } ?? "—", systemImage: "clock")
                             .help(text("ci.time.begin") + " · " + (self.summary.startedAt?.formatted(date: .complete, time: .complete) ?? "—"))
                             .accessibilityLabel(text("ci.time.begin"))
                             .accessibilityValue(self.summary.startedAt.map { ciDate($0) } ?? "—")
                         Spacer(minLength: 0)
-                        Label(self.elapsed(timeline.date), systemImage: "timer")
+                        Label(self.elapsed(now), systemImage: "timer")
                             .help(text("ci.time.duration")).accessibilityLabel(text("ci.time.duration"))
-                            .accessibilityValue(self.elapsed(timeline.date))
+                            .accessibilityValue(self.elapsed(now))
                     }.monospacedDigit().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }.mimicImmediate()
                 if let current = self.current {
@@ -43,7 +57,7 @@ struct CICompactBody: View {
                 }
             }
         }.frame(maxHeight: self.fillsAvailableHeight ? .infinity : nil, alignment: .topLeading)
-            .font(MimicMetrics.secondary).transaction { $0.animation = nil }
+            .mimicFont(.caption).transaction { $0.animation = nil }
     }
     private func elapsed(_ now: Date) -> String {
         let value = self.summary.status == "running" && !self.summary.stale
@@ -62,12 +76,13 @@ struct CICompactBody: View {
 
 /// Completion belongs inside a run, rather than on the outside edge of its container.
 struct CICompactProgress: View {
+    private var theme = MimicTheme()
     let summary: CICompactSummary
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            MimicProgressBar(value: self.summary.fraction, color: FooterCIStatus.pipelineColor(self.summary.status), label: text("ci.checks.progress"))
+            MimicProgressBar(value: self.summary.fraction, color: theme.tiled ? theme.color("usageOlive") : FooterCIStatus.pipelineColor(self.summary.status), label: text("ci.checks.progress"))
             Text(self.summary.fraction == nil ? text("ci.compact.progress.unknown") : "\(self.summary.completed ?? 0)/\(self.summary.total ?? 0)")
-                .font(MimicMetrics.secondary).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+                .mimicFont(.caption).monospacedDigit().foregroundStyle(.secondary).fixedSize()
         }
     }
 }
@@ -78,7 +93,7 @@ struct CIProjectName: View {
         HStack(spacing: 4) {
             Text("·")
             Text(URL(fileURLWithPath: self.checkout).lastPathComponent).lineLimit(1).truncationMode(.middle)
-        }.font(MimicMetrics.secondary).foregroundStyle(.secondary).help(self.checkout)
+        }.mimicFont(.caption).foregroundStyle(.secondary).help(self.checkout)
     }
 }
 
@@ -109,7 +124,7 @@ struct CIActivitySection: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.seal").foregroundStyle(PanelCardPalette.color(.ci))
-                Text(text("panel.block.ci")).font(MimicMetrics.heading)
+                Text(text("panel.block.ci")).mimicFont(.heading)
                 CIProjectName(checkout: self.summary.checkout)
                 Spacer(minLength: 0)
                 BootstrapIconButton(symbol: "xmark", label: text("ci.compact.hide"), action: self.hide, inControlBar: true)

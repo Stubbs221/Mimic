@@ -36,7 +36,7 @@ struct TaskHistoryContent: View {
                 Label("\(self.model.summary.succeeded + self.model.builds.records.filter { $0.project.path == self.model.selectedProjectPath && $0.status == .succeeded }.count) " + text("summary.success"), systemImage: "checkmark.circle").foregroundStyle(.secondary)
                 Spacer()
                 Label("\(self.model.summary.failed + self.model.builds.records.filter { $0.project.path == self.model.selectedProjectPath && [.failed, .interrupted].contains($0.status) }.count) " + text("summary.failed"), systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
-            }.font(MimicMetrics.secondary)
+            }.mimicFont(.caption)
             TextField(text("tasks.search"), text: self.$model.taskSearch).textFieldStyle(.roundedBorder).accessibilityIdentifier("tasks.search")
             Picker(text("tasks.filter"), selection: self.$model.taskFilter) {
                 ForEach(TaskHistoryFilter.allCases, id: \.self) { filter in Text(text("filter." + filter.rawValue)).tag(filter) }
@@ -83,12 +83,12 @@ struct TaskDetails: View {
                     if let name = self.record.generation?.name ?? self.record.simulator?.name { Text(name).font(.system(size: 12)).foregroundStyle(.secondary) }
                     HStack(spacing: MimicMetrics.medium) {
                         Label(taskResultStatus(self.record), systemImage: ActionPresentation.statusSymbol(self.record.status)).foregroundStyle(ActionPresentation.statusColor(self.record.status)).mimicStatus(self.record.status)
-                        TimelineView(.periodic(from: .now, by: 1)) { _ in Text(duration(self.record)).monospacedDigit().foregroundStyle(.secondary) }.mimicImmediate()
+                        MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in Text(duration(self.record)).monospacedDigit().foregroundStyle(.secondary) }.mimicImmediate()
                     }.font(.system(size: 12)).accessibilityIdentifier("task.result.status")
                 }
                 Spacer(minLength: 0)
             }
-            if let progress = self.model.profileProgress[self.record.id], self.record.status == .running { Text(progress).font(MimicMetrics.secondary) }
+            if let progress = self.model.profileProgress[self.record.id], self.record.status == .running { Text(progress).mimicFont(.caption) }
             TaskTechnicalData(model: self.model, record: self.record)
             if self.failed { DiagnosticOutputView(snapshot: self.model.diagnosticSnapshot(for: self.record), sensitive: self.record.metadataOnly) }
             else if let error = self.record.error { Text(DiagnosticText.clean(error)).font(.system(size: 12)).foregroundStyle(.orange).textSelection(.enabled) }
@@ -141,9 +141,9 @@ struct LegacyHistoryRow: View {
                                 Image(systemName: ActionPresentation.statusSymbol(record.status)).foregroundStyle(ActionPresentation.statusColor(record.status)).padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(taskResultTitle(record)).font(.system(size: 12, weight: .semibold))
-                                    if let name = record.generation?.name ?? record.simulator?.name { Text(name).font(MimicMetrics.secondary).lineLimit(2).help(name) }
-                                    Text(URL(fileURLWithPath: record.project.path).lastPathComponent + " · " + record.project.branch).font(MimicMetrics.secondary).foregroundStyle(.secondary).lineLimit(2).help(record.project.path + " · " + record.project.branch)
-                                    HStack { Text(text("status." + record.status.rawValue)); Spacer(); Text(record.createdAt, style: .time) }.font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                                    if let name = record.generation?.name ?? record.simulator?.name { Text(name).mimicFont(.caption).lineLimit(2).help(name) }
+                                    Text(URL(fileURLWithPath: record.project.path).lastPathComponent + " · " + record.project.branch).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(2).help(record.project.path + " · " + record.project.branch)
+                                    HStack { Text(text("status." + record.status.rawValue)); Spacer(); Text(record.createdAt, style: .time) }.mimicFont(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 0)
                                 Image(systemName: self.model.selectedTaskID == record.id ? "chevron.down" : "chevron.right").font(.system(size: 9)).foregroundStyle(.secondary)

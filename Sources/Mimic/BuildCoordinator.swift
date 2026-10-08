@@ -27,7 +27,7 @@ import os
     private let inspect: @Sendable (ProjectContext) async throws -> ProjectContext
     private let resolveDeveloper: @Sendable (ProjectContext) async throws -> String
     private let makeCommand: @Sendable (BuildActivity, String?) throws -> CommandSpec
-    private let discover: @Sendable (ProjectContext, String) async throws -> BuildCatalogue
+    private let discover: @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue
     private var outputs: [UUID: BuildOutput] = [:]
     private var savedTails: [UUID: [String]] = [:]
     private var workers: [UUID: BuildOutputWorker] = [:]
@@ -65,8 +65,8 @@ import os
     }, makeCommand: @escaping @Sendable (BuildActivity, String?) throws -> CommandSpec = { record, resultPath in
         var project = record.project; project.developerDirectory = record.selectedDeveloperDirectory
         return try record.parameters.command(project: project, resultBundlePath: resultPath)
-    }, discover: @escaping @Sendable (ProjectContext, String) async throws -> BuildCatalogue = { project, scheme in
-        try await Task.detached { try BuildCatalogue.inspect(project: project, scheme: scheme) }.value
+    }, discover: @escaping @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue = { project, scheme, tests, profileID, profileRevision in
+        try await BuildDiscovery.shared.catalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: profileID, profileRevision: profileRevision)
     }) {
         self.store = BuildHistoryStore(directory: directory); self.helper = helper; self.defaults = defaults; self.inspect = inspect; self.discover = discover; self.resolveDeveloper = resolveDeveloper; self.makeCommand = makeCommand
         do {
@@ -76,7 +76,7 @@ import os
         } catch { message = text("history.error") }
     }
     /// Preflight awaits happen before a queued record exists; development replacement must wait for them too.
-    private(set) var admittingCount = 0
+    @Published private(set) var admittingCount = 0
     var busy: Bool { launchID != nil || records.contains { $0.status == .unknown && $0.queueReleased != true } }
     var hasPending: Bool { busy || records.contains { $0.status.isPending } }
     var next: BuildActivity? { records.filter { $0.status == .queued }.min { $0.createdAt < $1.createdAt } }
@@ -105,25 +105,26 @@ import os
     // MARK: - Configuration and admission
 
     func refreshCatalogue(project: ProjectContext, scheme: String? = nil) async {
-        let token = UUID(); catalogueRevision = token; loading = true; message = ""
+        let token = UUID(), profile = currentProfile(); catalogueRevision = token; loading = true; message = ""
+        defer { if catalogueRevision == token { loading = false } }
         do {
             let developer = try await resolveDeveloper(project)
             let key = "build.configuration." + project.path + "|" + developer
-            guard catalogueRevision == token, currentProject() == project else { return }
+            guard catalogueRevision == token, currentProject() == project, currentProfile() == profile else { return }
             if draftKey != key {
                 draftKey = key
                 draft = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(BuildParameters.self, from: $0) } ?? .init()
             }
             let chosen = scheme ?? draft.scheme
             var captured = project; captured.developerDirectory = developer
-            let result = try await discover(captured, chosen)
-            guard catalogueRevision == token, currentProject() == project else { return }
+            let result = try await discover(captured, chosen, draft.operation == .test, profile?.id, profile?.revision)
+            guard catalogueRevision == token, currentProject() == project, currentProfile() == profile else { return }
             catalogue = result; catalogueContext = project; catalogueScheme = chosen
             if !result.schemes.contains(draft.scheme) { draft.scheme = "" }
             if !result.configurations.contains(draft.configuration) { draft.configuration = result.configurations.contains("Debug") ? "Debug" : "" }
             if !result.destinations.contains(where: { $0.id == draft.destinationID }) { draft.destinationID = "" }
             if !result.testPlans.contains(draft.testPlan) { draft.testPlan = "" }
-        } catch { if catalogueRevision == token { message = text("build.error.catalogue"); catalogue = .init(); catalogueContext = nil } }
+        } catch { if catalogueRevision == token { message = text("build.error." + ((error as? BuildError)?.rawValue ?? "catalogue")); catalogue = .init(); catalogueContext = nil } }
         if catalogueRevision == token { loading = false }
     }
     func restoreDraft(project: ProjectContext) async {
@@ -200,7 +201,7 @@ import os
                 guard actual == record.project, accepts(record.project), developer == record.selectedDeveloperDirectory else { throw BuildError.context }
                 if record.parameters.backend == .cli {
                     var captured = record.project; captured.developerDirectory = record.selectedDeveloperDirectory
-                    let catalog = try await discover(captured, record.parameters.scheme)
+                    let catalog = try await discover(captured, record.parameters.scheme, record.parameters.operation == .test, record.profileID, record.profileRevision)
                     guard !Task.isCancelled, launchID == record.id else { return }
                     try catalog.validate(record.parameters)
                     try await verifyStartContext(record)

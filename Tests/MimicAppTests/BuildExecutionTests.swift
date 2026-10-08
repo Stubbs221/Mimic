@@ -16,7 +16,7 @@ import MimicCore
     init(script: String = "printf 'TAIL'; exit 0", inspect: (@Sendable (ProjectContext) async throws -> ProjectContext)? = nil) throws {
         defaults = try #require(UserDefaults(suiteName: suite))
         let helper = URL(fileURLWithPath: ProcessInfo.processInfo.environment["MIMIC_HOST"] ?? "/private/tmp/MimicBuildImplementation-20261004/debug/TaskHost")
-        coordinator = BuildCoordinator(directory: root, helper: helper, defaults: defaults, inspect: inspect ?? { $0 }, resolveDeveloper: { $0.developerDirectory! }, makeCommand: { _, _ in .init(executable: "/bin/bash", arguments: ["-c", script], directory: "/private/tmp", environment: ["PATH": "/usr/bin:/bin", "TERM": "xterm-256color"]) }, discover: { _, _ in
+        coordinator = BuildCoordinator(directory: root, helper: helper, defaults: defaults, inspect: inspect ?? { $0 }, resolveDeveloper: { $0.developerDirectory! }, makeCommand: { _, _ in .init(executable: "/bin/bash", arguments: ["-c", script], directory: "/private/tmp", environment: ["PATH": "/usr/bin:/bin", "TERM": "xterm-256color"]) }, discover: { _, _, _, _, _ in
             var catalogue = BuildCatalogue(); catalogue.schemes = ["Fixture"]; catalogue.configurations = ["Debug"]; catalogue.destinations = [.init(id: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", name: "Fixture iPhone")]; return catalogue
         })
         let context = project

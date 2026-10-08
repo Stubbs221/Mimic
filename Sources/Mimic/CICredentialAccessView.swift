@@ -25,7 +25,7 @@ struct CICredentialAccessView: View {
                     Button(text("credentials.allow")) { Task { await self.action() } }
                         .disabled(self.session.granting.contains(self.id))
                 }
-            }.font(MimicMetrics.secondary)
+            }.mimicFont(.caption)
         } else if self.alwaysShow {
             Button(text("credentials.reload")) { Task { await self.action() } }
                 .disabled(self.session.granting.contains(self.id))

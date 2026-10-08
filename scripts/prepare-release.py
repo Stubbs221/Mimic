@@ -2,6 +2,7 @@
 # Created by Василий Маслов on 06.10.2026.
 """Qualify an already signed app and prepare immutable, signed GitHub release assets. Never publishes."""
 import argparse
+import copy
 import pathlib
 import plistlib
 import shutil
@@ -24,18 +25,21 @@ def run(*arguments):
     return subprocess.run([str(arg) for arg in arguments], check=True, capture_output=True, text=True).stdout.strip()
 
 
-def appcast(config, version, build, archive, signature, previous=None):
+def appcast(config, version, build, archive, signature, previous=None, notes=None):
     if previous:
         old = ET.parse(previous)
         builds = [int(node.text) for node in old.findall('.//{' + SPARKLE + '}version')]
         if builds and int(build) <= max(builds):
             raise ValueError('The release build must exceed every previously published build.')
     rss = ET.Element('rss', version='2.0')
+    rss.append(ET.Comment(' Created by Василий Маслов on ' + datetime.now().astimezone().strftime('%d.%m.%Y') + '. '))
     channel = ET.SubElement(rss, 'channel')
     ET.SubElement(channel, 'title').text = 'Mimic'
     ET.SubElement(channel, 'link').text = 'https://github.com/' + config['repository']
     item = ET.SubElement(channel, 'item')
     ET.SubElement(item, 'title').text = 'Mimic ' + version
+    if notes:
+        ET.SubElement(item, 'description', **{'{' + SPARKLE + '}format': 'plain-text'}).text = notes
     ET.SubElement(item, 'pubDate').text = format_datetime(datetime.now(timezone.utc), usegmt=True)
     ET.SubElement(item, '{' + SPARKLE + '}version').text = build
     ET.SubElement(item, '{' + SPARKLE + '}shortVersionString').text = version
@@ -43,11 +47,19 @@ def appcast(config, version, build, archive, signature, previous=None):
     ET.SubElement(item, '{' + SPARKLE + '}hardwareRequirements').text = 'arm64'
     ET.SubElement(item, 'enclosure', url='https://github.com/' + config['repository'] + '/releases/download/v' + version + '/' + archive.name,
                   length=str(archive.stat().st_size), type='application/octet-stream', **{'{' + SPARKLE + '}edSignature': signature})
+    if previous:
+        for older in old.findall('./channel/item'):
+            channel.append(copy.deepcopy(older))
     ET.indent(rss)
     return ET.ElementTree(rss)
 
 
 def prepare(args):
+    # The release may target an older commit while the working checkout already contains the next version.
+    global ROOT
+    if getattr(args, 'source_root', None):
+        ROOT = args.source_root.resolve()
+        metadata.ROOT = ROOT
     app = args.app.resolve()
     config = metadata.load_configuration(args.config)
     value = metadata.version()
@@ -65,6 +77,8 @@ def prepare(args):
         if run('/usr/bin/lipo', '-archs', executable) != 'arm64':
             raise ValueError('The first stable release must contain Apple Silicon executables only.')
     tools = args.sparkle_tools.resolve()
+    if args.previous_appcast:
+        run(tools / 'sign_update', '--account', config['keyAccount'], '--verify', args.previous_appcast)
     if run(tools / 'generate_keys', '--account', config['keyAccount'], '-p') != config['publicKey']:
         raise ValueError('The selected Keychain account must match the app public key.')
     if args.notarize:
@@ -91,7 +105,8 @@ def prepare(args):
     run('/usr/bin/ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', setup, pathlib.Path(str(setup) + '.zip'))
     signature = run(tools / 'sign_update', '--account', config['keyAccount'], '-p', archive)
     feed = args.output / 'appcast.xml'
-    appcast(config, value['version'], value['build'], archive, signature, args.previous_appcast).write(feed, encoding='utf-8', xml_declaration=True)
+    notes = args.notes.read_text() if getattr(args, 'notes', None) else None
+    appcast(config, value['version'], value['build'], archive, signature, args.previous_appcast, notes).write(feed, encoding='utf-8', xml_declaration=True)
     run(tools / 'sign_update', '--account', config['keyAccount'], feed)
     run(tools / 'sign_update', '--account', config['keyAccount'], '--verify', archive, signature)
     run(tools / 'sign_update', '--account', config['keyAccount'], '--verify', feed)
@@ -106,6 +121,8 @@ def main():
     parser.add_argument('--config', type=pathlib.Path, default=ROOT / 'Distribution/Updates.plist')
     parser.add_argument('--sparkle-tools', type=pathlib.Path, default=ROOT / '.build/artifacts/sparkle/Sparkle/bin')
     parser.add_argument('--previous-appcast', type=pathlib.Path)
+    parser.add_argument('--source-root', type=pathlib.Path, help='Pinned source snapshot supplying version and setup resources')
+    parser.add_argument('--notes', type=pathlib.Path, help='Public release notes embedded in the signed feed')
     parser.add_argument('--notarize', action='store_true')
     parser.add_argument('--keychain-profile')
     args = parser.parse_args()

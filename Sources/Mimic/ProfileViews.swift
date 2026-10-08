@@ -20,18 +20,18 @@ struct ProfileSection: View {
         Surface {
             VStack(alignment: .leading, spacing: MimicMetrics.large) {
                 HStack {
-                    Text(self.model.activeProfile?.profile.title ?? text("profile.empty")).font(MimicMetrics.heading)
+                    Text(self.model.activeProfile?.profile.title ?? text("profile.empty")).mimicFont(.heading)
                     Spacer()
                     Button(text("profile.import")) { self.model.importProfile() }.disabled(self.model.importingProfile)
                     if self.model.importingProfile { ProgressView().controlSize(.small) }
                 }
                 if let snapshot = self.model.activeProfile {
-                    Text(snapshot.profile.version + " · " + String(snapshot.revision.prefix(12))).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                    Text(snapshot.profile.version + " · " + String(snapshot.revision.prefix(12))).mimicFont(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text(text("profile.empty.description")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                    Text(text("profile.empty.description")).mimicFont(.caption).foregroundStyle(.secondary)
                 }
                 Button(text("profile.apple.choose")) { self.model.chooseAppleTarget() }.disabled(self.model.project == nil || self.model.busy)
-                if let target = self.model.project?.appleTarget { Text(target.path).font(MimicMetrics.secondary).textSelection(.enabled) }
+                if let target = self.model.project?.appleTarget { Text(target.path).mimicFont(.caption).textSelection(.enabled) }
             }
         }
     }
@@ -42,8 +42,8 @@ struct ProfileSetupView: View {
     @ObservedObject var model: TaskCoordinator
     var body: some View {
         VStack(alignment: .leading, spacing: MimicMetrics.large) {
-            Text(text("profile.setup.title")).font(MimicMetrics.heading)
-            Text(text("profile.setup.description")).font(MimicMetrics.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(text("profile.setup.title")).mimicFont(.heading)
+            Text(text("profile.setup.description")).mimicFont(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ProfileSection(model: self.model)
             Button(text("setup.title")) { self.model.showSetup?() }
         }.accessibilityIdentifier("profile.setup")

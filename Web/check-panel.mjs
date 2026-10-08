@@ -1,5 +1,6 @@
 // Created by Василий Маслов on 06.10.2026.
 import assert from 'node:assert/strict';
+import {panelCommand} from './check-chrome-helpers.mjs';
 import {readFile} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {createRequire} from 'node:module';
@@ -15,7 +16,7 @@ try{
  page.on('pageerror',error=>errors.push(error.message));await page.goto(url);
  const block=kind=>page.locator(`.panel-block[data-block="${kind}"]`);
  const title=kind=>block(kind).locator('.block-title');
- await page.getByRole('button',{name:'Настроить панель',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Новое действие',exact:true}).waitFor();
  assert(await block('bootstrap').getByRole('button',{name:'iOS',exact:true}).isVisible(),'default bootstrap exposes primary action');
  assert(await page.locator('.block-chevron').count()===0,'card chevrons are removed');
  for(const kind of ['bootstrap','builds']){
@@ -30,7 +31,7 @@ try{
  const field=block('builds').locator('input,select,textarea').first();await field.click();
  assert(await title('builds').getAttribute('aria-expanded')==='true','nested field keeps disclosure');
  await title('builds').press('Enter');
- await page.getByRole('button',{name:'Настроить панель',exact:true}).click();
+ await panelCommand(page,'Настроить панель');
  await block('builds').click({position:{x:5,y:5}});
  assert(await title('builds').getAttribute('aria-expanded')==='false','editing surface does not expand');
  await page.keyboard.press('Escape');
@@ -40,7 +41,7 @@ try{
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`no horizontal overflow ${width} ${theme}`);
   await title('builds').click();
   assert(await block('utils').evaluate(node=>node.hidden&&node.inert&&node.getAttribute('aria-hidden')==='true'));
-  const bounds=await block('builds').boundingBox();assert(bounds.width>=width-28,'right mini expands left across row');
+  const bounds=await block('builds').boundingBox(),gridBounds=await page.locator('.panel-grid').boundingBox();assert(Math.abs(bounds.width-gridBounds.width)<1,'expanded build fills the grid width');
   await title('builds').click();assert(await title('utils').isVisible());
  }
  await page.setViewportSize({width:440,height:1050});await page.emulateMedia({reducedMotion:'no-preference',colorScheme:'light'});
@@ -51,29 +52,30 @@ try{
  await identifiers.evaluate(node=>{window.fixtureInputIdentity=node;});await page.waitForTimeout(5300);
  assert.equal(await identifiers.inputValue(),'FixtureTests/Smoke/testExample\nFixtureTests/Other');
  assert(await identifiers.evaluate(node=>node===window.fixtureInputIdentity&&document.activeElement===node),'poll preserves focus and form identity');
- await title('builds').click();await page.getByRole('button',{name:'Настроить панель',exact:true}).click();
+ await title('builds').click();await panelCommand(page,'Настроить панель');
  await block('utils').locator('.placement-menu summary').click();await block('utils').getByRole('button',{name:'Убрать с панели',exact:true}).click();
  assert(await block('utils').evaluate(n=>n.hidden));assert.equal(await page.locator('.empty-slot').count(),1);
  // Drag a mini block into the free half without overwriting its neighbour.
+ await page.setViewportSize({width:520,height:1050});await page.waitForFunction(()=>!document.querySelector('.panel-grid').classList.contains('single-column'));
  await page.waitForTimeout(250);const source=await block('ci').locator('.drag-handle').boundingBox(),destination=await page.locator('.empty-slot').boundingBox();
  await page.mouse.move(source.x+source.width/2,source.y+source.height/2);await page.mouse.down();await page.waitForTimeout(380);await page.mouse.move(destination.x+destination.width/2,destination.y+destination.height/2,{steps:8});
  assert.equal(await page.locator('[data-drag-active]').count(),1);await page.mouse.up();
  assert.equal(await block('ci').evaluate(n=>n.style.gridRow),await block('builds').evaluate(n=>n.style.gridRow));
  await page.getByRole('button',{name:'Отмена',exact:true}).click();assert(await title('utils').isVisible());
- await page.getByRole('button',{name:'Настроить панель',exact:true}).click();
+ await panelCommand(page,'Настроить панель');
  const grip=await block('builds').locator('.drag-handle').boundingBox();await page.mouse.move(grip.x+5,grip.y+5);await page.mouse.down();await page.waitForTimeout(380);await page.mouse.move(30,40);await page.keyboard.press('Escape');await page.mouse.up();assert.equal(await page.locator('[data-drag-active]').count(),0);
  await block('utils').locator('.placement-menu summary').click();await block('utils').getByRole('button',{name:'Убрать с панели',exact:true}).click();await page.getByRole('button',{name:'Готово',exact:true}).click();await page.waitForTimeout(100);
  assert(await block('utils').evaluate(n=>n.hidden));
  await title('builds').click();assert.equal(await identifiers.inputValue(),'FixtureTests/Smoke/testExample\nFixtureTests/Other');await title('builds').click();
  await page.getByRole('button',{name:'Новое действие',exact:true}).click();await page.locator('.block-catalog').getByRole('button',{name:'UI-компонент',exact:true}).click();
- await page.getByRole('button',{name:'Предпросмотр',exact:true}).click();await page.locator('.preview-files').filter({hasText:'Sources/Fixture.swift'}).waitFor();
+ await page.getByRole('button',{name:'Проверить будущие файлы',exact:true}).click();await page.locator('.preview-files').filter({hasText:'Sources/Fixture.swift'}).waitFor();
  await page.getByRole('button',{name:'Создать файлы',exact:true}).click();
  await page.getByRole('button',{name:'Новое действие',exact:true}).click();await page.locator('.block-catalog').getByRole('button',{name:'Beta',exact:true}).click();
  await page.getByRole('button',{name:'Получить параметры Jenkins',exact:true}).click();assert(await block('beta').getByRole('button',{name:'Запустить',exact:true}).isEnabled());
  assert.equal(await block('beta').locator('select[id$="-target"] option').count(),2,'choices supplied only by server produce a select');
- await title('beta').click();await page.getByRole('button',{name:'История',exact:true}).click();await page.locator('.item').filter({hasText:'Bootstrap iOS'}).first().click();await page.getByRole('button',{name:'Терминал',exact:true}).click();await page.locator('.xterm').waitFor();await page.waitForTimeout(900);assert((await page.locator('.xterm-screen').innerText()).includes('Mimic fixture terminal')||await page.locator('.xterm-screen canvas').count()>0);
- const terminal=page.locator('.terminal-host');await terminal.evaluate(node=>window.fixtureTerminalIdentity=node);await page.waitForTimeout(5100);assert(await terminal.evaluate(node=>node===window.fixtureTerminalIdentity),'terminal instance remains attached across polls');
- await page.getByRole('button',{name:'Настроить панель',exact:true}).click();await page.getByRole('button',{name:'Сбросить',exact:true}).click();await page.getByRole('button',{name:'Готово',exact:true}).click();assert(await title('utils').isVisible());
+ await title('beta').click();await page.getByRole('button',{name:'История',exact:true}).click();await page.locator('.item').filter({hasText:'Bootstrap iOS'}).first().click();await page.getByRole('button',{name:'Терминал',exact:true}).click();await page.locator('.card:has([data-action=cancel]) .xterm').waitFor();await page.waitForTimeout(900);assert((await page.locator('.card:has([data-action=cancel]) .xterm-screen').innerText()).includes('Mimic fixture terminal')||await page.locator('.card:has([data-action=cancel]) .xterm-screen canvas').count()>0);
+ const terminal=page.locator('.card:has([data-action=cancel]) .terminal-host');await terminal.evaluate(node=>window.fixtureTerminalIdentity=node);await page.waitForTimeout(5100);assert(await terminal.evaluate(node=>node===window.fixtureTerminalIdentity),'terminal instance remains attached across polls');
+ await panelCommand(page,'Настроить панель');await page.getByRole('button',{name:'Сбросить',exact:true}).click();await page.getByRole('button',{name:'Готово',exact:true}).click();assert(await title('utils').isVisible());
  await page.screenshot({path:process.env.MIMIC_PANEL_SCREENSHOT??'/private/tmp/MimicPanel-acceptance.png',fullPage:true});
  for(const data of ['worst','empty','large']){
   await page.goto(url+'&data='+data);await page.setViewportSize({width:360,height:1050});await page.getByRole('button',{name:'История',exact:true}).click();

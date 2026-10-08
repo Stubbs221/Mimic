@@ -9,6 +9,10 @@ import Foundation
 public struct SimulatorUsage: Codable, Sendable {
     public private(set) var dates: [String: [UUID: Date]] = [:]
     public init() { }
+    /// Removes successful-use history only for this Xcode; running devices remain discoverable.
+    public mutating func forget(_ id: UUID, developer: String) {
+        self.dates[developer]?[id] = nil
+    }
     public mutating func record(_ id: UUID, developer: String, at date: Date = Date()) {
         self.dates[developer, default: [:]][id] = date
         let newest = self.dates[developer, default: [:]].sorted { $0.value > $1.value }.prefix(100)

@@ -10,6 +10,7 @@ import MimicCore
 
 /// The inline chart and native detail consume the same ordered calendar points.
 struct AIUsageTrendView: View {
+    private var theme = MimicTheme()
     let provider: AIProvider
     let points: [AIUsageDailyPoint]
     let unknownModels: [String]
@@ -28,7 +29,7 @@ struct AIUsageTrendView: View {
                 Button { self.hover.toggleExplicit() } label: {
                     HStack(alignment: .bottom, spacing: 1) {
                         ForEach(self.points, id: \.date) { point in
-                            RoundedRectangle(cornerRadius: 1).fill(Color.blue)
+                            RoundedRectangle(cornerRadius: 1).fill(theme.tiled ? theme.color(provider == .codex ? "usagePurple" : "usageRose") : .blue)
                                 .frame(minWidth: 2, maxWidth: .infinity)
                                 .frame(height: AIUsageTrendFormat.barHeight(point.tokens, peak: self.points.map(\.tokens).max() ?? 0, height: 18, floor: 0.18))
                         }
@@ -53,7 +54,7 @@ struct AIUsageTrendView: View {
                     .help(text("usage.trend.unknownModels") + " " + self.unknownModels.joined(separator: ", "))
                     .accessibilityLabel(text("usage.trend.unknownModels") + " " + self.unknownModels.joined(separator: ", "))
             }
-        }.font(MimicMetrics.secondary).padding(.vertical, 4).mimicImmediate()
+        }.mimicFont(.caption).padding(.vertical, 4).mimicImmediate()
             .accessibilityElement(children: .contain)
             .onChange(of: self.points) { _, points in self.hover.replacePoints(points) }
     }
@@ -61,6 +62,7 @@ struct AIUsageTrendView: View {
 
 /// A larger chart with full-height hover columns, keyboard selection and exact accessible values.
 struct AIUsageTrendDetail: View {
+    var appearance: PanelAppearance = .legacy
     let provider: AIProvider
     @ObservedObject var state: AIUsageTrendPopoverState
     var body: some View {
@@ -80,7 +82,8 @@ struct AIUsageTrendDetail: View {
             Text(AIUsageTrendFormat.source(self.provider)).font(.system(size: 10))
                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity)
-        }.padding(12).frame(width: 340).fixedSize(horizontal: false, vertical: true).mimicImmediate()
+        }.padding(12).background(appearance == .tileGrid ? Color(nsColor: MimicTheme.adaptive("surface")) : Color(nsColor: .windowBackgroundColor)).frame(width: 340).fixedSize(horizontal: false, vertical: true).mimicImmediate()
+            .environment(\.mimicPanelAppearance, appearance).modifier(MimicTextSizingRoot())
             .onContinuousHover { phase in
                 guard self.state.isPresented else { return }
                 if case .active = phase { self.state.detailHover(true) } else { self.state.detailHover(false) }
@@ -101,7 +104,7 @@ struct AIUsageTrendDetail: View {
             ForEach(points.indices, id: \.self) { index in
                 Color.clear.frame(maxWidth: .infinity).frame(height: 76)
                     .overlay(alignment: .bottom) {
-                        RoundedRectangle(cornerRadius: 1.5).fill(Color.blue)
+                        RoundedRectangle(cornerRadius: 1.5).fill(appearance == .tileGrid ? Color(nsColor: MimicTheme.adaptive(provider == .codex ? "usagePurple" : "usageRose")) : .blue)
                             .frame(height: AIUsageTrendFormat.barHeight(points[index].tokens, peak: peak, height: 76, floor: 0.06))
                             .padding(.horizontal, 1)
                             .opacity(self.state.activeIndex == nil || self.state.activeIndex == index ? 1 : 0.35)

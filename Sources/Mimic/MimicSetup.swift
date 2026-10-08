@@ -14,6 +14,10 @@ import UserNotifications
     var loginStatus: String { get }
     func setLogin(enabled: Bool) async throws
     func notifications(enabled: Bool) async -> String
+    func notificationStatus() async -> String
+}
+extension MimicSetupSystem {
+    func notificationStatus() async -> String { "setup.disabled" }
 }
 @MainActor struct NativeMimicSetupSystem: MimicSetupSystem {
     var loginStatus: String {
@@ -27,8 +31,18 @@ import UserNotifications
         if enabled { if SMAppService.mainApp.status != .enabled { try SMAppService.mainApp.register() } }
         else if SMAppService.mainApp.status != .notRegistered { try await SMAppService.mainApp.unregister() }
     }
+    func notificationStatus() async -> String {
+        guard Bundle.main.bundleIdentifier != nil else { return "setup.failed" }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral: return "setup.enabled"
+        case .denied: return "setup.denied"
+        default: return "setup.disabled"
+        }
+    }
     func notifications(enabled: Bool) async -> String {
         guard enabled else { return "setup.disabled" }
+        guard Bundle.main.bundleIdentifier != nil else { return "setup.failed" }
         do {
             let allowed = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
             return allowed ? "setup.enabled" : "setup.denied"
@@ -140,6 +154,7 @@ import UserNotifications
 }
 
 struct MimicSetupView: View {
+    private var theme = MimicTheme()
     @ObservedObject var setup: MimicSetupModel
     @ObservedObject var model: TaskCoordinator
     let uninstallMode: Bool
@@ -150,6 +165,16 @@ struct MimicSetupView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text(text("setup.title")).font(.title2.bold()).accessibilityAddTraits(.isHeader)
             Text(text(self.steps[self.setup.step])).font(.headline).accessibilityIdentifier("setup.step")
+            if model.appearance.selection == .tileGrid {
+                HStack(spacing: 5) {
+                    ForEach(Array(steps.enumerated()), id: \.offset) { index, key in
+                        VStack(spacing: 5) {
+                            Capsule().fill(index <= setup.step ? Color(nsColor: MimicTheme.adaptive("accent")) : Color(nsColor: MimicTheme.adaptive("line"))).frame(height: 3)
+                            Text(text(key)).font(.system(size: 10)).lineLimit(2)
+                        }.accessibilityHidden(true)
+                    }
+                }
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if self.uninstallMode && !self.setup.finished {
@@ -201,7 +226,10 @@ struct MimicSetupView: View {
                 }
             }
         }.padding(24).frame(minWidth: 560, minHeight: 520).disabled(self.model.updateReserved)
+            .buttonStyle(MimicAuxiliaryButtonStyle())
             .onChange(of: self.model.selectedProjectPath) { _, _ in self.setup.selectionChanged() }
+            .background(model.appearance.selection == .tileGrid ? Color(nsColor: MimicTheme.adaptive("paper")) : Color(nsColor: .windowBackgroundColor))
+            .modifier(MimicAppearanceRoot(store: model.appearance))
             .confirmationDialog(text("setup.uninstall"), isPresented: self.$confirming) {
                 Button(text("setup.uninstall"), role: .destructive) { Task { await self.setup.uninstall() } }
             } message: { Text(text("setup.uninstall.detail")) }

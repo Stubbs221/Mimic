@@ -1,6 +1,8 @@
+import tokens from '../Sources/MimicCore/Resources/panel-design-tokens.json';
 // Created by Василий Маслов on 06.10.2026.
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import {BootstrapTerminalPlaceholder,type BootstrapPlaceholderLabels} from './bootstrap-terminal-placeholder';
 type Tool=(name:string,args?:Record<string,unknown>)=>Promise<any>;
 const bytes=(value:string)=>Uint8Array.from(atob(value),c=>c.charCodeAt(0));
 const base64=(value:Uint8Array)=>btoa(Array.from(value,b=>String.fromCharCode(b)).join(''));
@@ -18,6 +20,17 @@ export class PrivateTerminal {
  private taskID:string|null=null;private finished=false;private status='running';private visible=true;
  private message=document.createElement('p');
  private presentation='';
+ private placeholder:BootstrapTerminalPlaceholder|null=null;private platform:'ios'|'tvos'='ios';private hasOutput=false;
+ setBootstrapPlaceholder(labels:BootstrapPlaceholderLabels,platform:'ios'|'tvos'){
+  if(!this.placeholder){this.placeholder=new BootstrapTerminalPlaceholder(labels);this.host.append(this.placeholder.host);}
+  this.platform=platform;this.updatePlaceholder();
+ }
+ private updatePlaceholder(){
+  if(!this.placeholder)return;
+  const state=this.hasOutput?null:this.finished?'unavailable':this.status==='queued'?'queued':this.status==='running'?'running':'unavailable';
+  this.placeholder.update(state,this.platform);this.message.hidden=true;this.host.dataset.placeholder=String(state!==null);
+  this.host.querySelector('.xterm')?.setAttribute('aria-hidden',String(state!==null));
+ }
  constructor(private tool:Tool,private onError:(error:unknown)=>void,private labels={waiting:'Waiting for output…',unavailable:'Output unavailable'}){
   this.host.className='terminal-host';this.terminal.options.disableStdin=true;this.terminal.loadAddon(this.fit);this.terminal.open(this.host);this.message.className='terminal-message';this.host.append(this.message);
   this.subscription=this.terminal.onData(input=>this.enqueue({input}));
@@ -27,14 +40,15 @@ export class PrivateTerminal {
  private aad(direction:string,sequence:number){const c=this.channel!;return utf8.encode(`${c.channelID}|${c.taskID}|${c.threadID}|${direction}|${sequence}`);}
  private enqueue(payload:Record<string,unknown>){const channel=this.channel;if(!channel||!this.canInput||!this.visible||this.status!=='running')return;this.inputQueue=this.inputQueue.then(()=>this.channel===channel?this.send(payload):undefined).catch(this.onError);}
  /** Bootstrap opts in to its own palette; history terminals retain their default styling. */
- setBootstrapPresentation(fontSize:number,dark:boolean,increasedContrast=false){
-  const signature=`${fontSize}-${dark}-${increasedContrast}`;if(signature===this.presentation)return;this.presentation=signature;
+ setBootstrapPresentation(fontSize:number,dark:boolean,increasedContrast=false,appearance:'tileGrid'|'legacy'='legacy'){
+  const tiled=appearance==='tileGrid',palette=tokens.palettes[dark?'dark':'light'];if(tiled)dark=true;
+  const signature=`${fontSize}-${dark}-${increasedContrast}-${appearance}-${palette.terminal}`;if(signature===this.presentation)return;this.presentation=signature;
   const buffer=this.terminal.buffer.active,row=buffer.viewportY,following=row===buffer.baseY;
   const foreground=increasedContrast?(dark?'#ffffff':'#000000'):(dark?'#DCE3ED':'#263445');
   const ansi=dark?['#202833','#F08D91','#9EC89B','#E3C182','#91B5E0','#C9A4DA','#8ECACE','#DCE3ED','#A6B3C5','#FFADB0','#B8DCAF','#F3D6A0','#B1CEF2','#DABCE8','#B1E1E3','#FFFFFF']
    :['#263445','#A42D36','#386B3C','#795717','#355F96','#79438D','#286970','#546274','#5C6879','#B2343F','#356C39','#7A5610','#315F9B','#814593','#216B72','#263445'];
   const keys=['black','red','green','yellow','blue','magenta','cyan','white','brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightMagenta','brightCyan','brightWhite'];
-  this.terminal.options.fontSize=fontSize;this.terminal.options.theme={background:dark?'#202833':'#F0F3F7',foreground,cursor:foreground,selectionBackground:dark?'#3D4C63':'#CCD8E8',...Object.fromEntries(keys.map((key,i)=>[key,ansi[i]]))};
+  this.terminal.options.fontSize=fontSize;this.terminal.options.theme={background:tiled?palette.terminal:dark?'#202833':'#F0F3F7',foreground:tiled?palette.terminalText:foreground,cursor:tiled?palette.terminalText:foreground,selectionBackground:dark?'#3D4C63':'#CCD8E8',...Object.fromEntries(keys.map((key,i)=>[key,ansi[i]]))};
   this.host.dataset.fontSize=String(fontSize);
   this.refit(row,following);
  }
@@ -42,9 +56,9 @@ export class PrivateTerminal {
   if(this.visible&&this.host.getBoundingClientRect().width>20){this.fit.fit();if(following)this.terminal.scrollToBottom();else this.terminal.scrollToLine(Math.min(row,this.terminal.buffer.active.baseY));this.enqueue({columns:this.terminal.cols,rows:this.terminal.rows});}
  }
  setVisibility(visible:boolean){this.visible=visible;this.host.inert=!visible;this.updateInput();if(visible)this.refit();if(!visible&&this.host.contains(document.activeElement))(document.activeElement as HTMLElement)?.blur();}
- setTaskStatus(status:string){this.status=status;this.updateInput();}
+ setTaskStatus(status:string){this.status=status;this.updateInput();this.updatePlaceholder();}
  private updateInput(){this.terminal.options.disableStdin=!this.visible||!this.canInput||this.status!=='running';}
- async attach(taskID:string){if(this.taskID===taskID)return;const closing=this.detach(),generation=this.generation;this.taskID=taskID;this.finished=false;this.message.hidden=false;this.message.textContent='';await closing;
+ async attach(taskID:string){if(this.taskID===taskID)return;const closing=this.detach(),generation=this.generation;this.taskID=taskID;this.finished=false;this.message.hidden=false;this.message.textContent='';this.updatePlaceholder();await closing;
   if(generation!==this.generation)return;
   const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);
   const publicKey=new Uint8Array(await crypto.subtle.exportKey('raw',pair.publicKey));
@@ -72,7 +86,8 @@ export class PrivateTerminal {
   this.canInput=output.canInput;this.finished=output.finished===true;this.updateInput();
   this.message.hidden=output.outputAvailable!==false||!!output.bytes;
   this.message.textContent=this.finished?this.labels.unavailable:this.labels.waiting;
+  this.hasOutput=this.hasOutput||!!output.bytes||output.outputAvailable===true;this.updatePlaceholder();
  }catch(e){if(this.channel===channel){this.channel=null;this.key=null;this.canInput=false;this.updateInput();this.onError(e);}}finally{this.polling=false;}}
- async detach(){this.generation++;this.taskID=null;this.finished=false;const channel=this.channel;this.channel=null;this.key=null;this.canInput=false;this.terminal.options.disableStdin=true;this.terminal.reset();if(channel)await this.tool('panel_terminal_close',{channelID:channel.channelID}).catch(()=>{});}
- async dispose(){clearInterval(this.timer);this.subscription.dispose();this.observer.disconnect();await this.detach();this.terminal.dispose();}
+ async detach(){this.generation++;this.taskID=null;this.finished=false;this.hasOutput=false;this.updatePlaceholder();const channel=this.channel;this.channel=null;this.key=null;this.canInput=false;this.terminal.options.disableStdin=true;this.terminal.reset();if(channel)await this.tool('panel_terminal_close',{channelID:channel.channelID}).catch(()=>{});}
+ async dispose(){clearInterval(this.timer);this.subscription.dispose();this.observer.disconnect();this.placeholder?.dispose();await this.detach();this.terminal.dispose();}
 }

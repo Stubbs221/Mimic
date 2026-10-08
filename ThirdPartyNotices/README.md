@@ -5,6 +5,8 @@ Original license text is retained without adding an authorship header. These lib
 
 Mimic's own license is [MIT](../LICENSE). Dependency licenses apply to their respective components; the root license does not replace them. App packaging includes this directory and Mimic's LICENSE, and the setup ZIP includes a separate copy of LICENSE.
 
+SimulatorInputHost uses the DTUHID protocol documented by facebook/idb's FBSimulatorHID implementation. Its [MIT license](idb-LICENSE) is retained with the bundled notices.
+
 ## Swift package inventory
 
 The pinned source licenses were compared with the local dependency checkouts during preparation.

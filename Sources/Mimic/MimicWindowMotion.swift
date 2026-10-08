@@ -6,6 +6,7 @@
 import AppKit
 import Observation
 import SwiftUI
+import MimicCore
 
 /// Hosting identity is stable. This presentation object contains no execution or CI state.
 @MainActor @Observable
@@ -17,12 +18,18 @@ final class MimicWindowPresentation {
 struct MimicWindowRoot<Content: View>: View {
     let presentation: MimicWindowPresentation
     let settings: MimicMotionSettings
+    let appearance: PanelAppearanceStore?
     let content: Content
-    init(presentation: MimicWindowPresentation, settings: MimicMotionSettings, @ViewBuilder content: () -> Content) {
-        self.presentation = presentation; self.settings = settings; self.content = content()
+    init(presentation: MimicWindowPresentation, settings: MimicMotionSettings, appearance: PanelAppearanceStore? = nil, @ViewBuilder content: () -> Content) {
+        self.presentation = presentation; self.settings = settings; self.appearance = appearance; self.content = content()
     }
     var body: some View {
         self.content.environment(\.mimicMotionSettings, self.settings)
+            .environment(\.mimicPresentationVisible, self.presentation.interactive)
+            .modifier(MimicTextSizingRoot())
+            .environment(\.mimicPanelAppearance, self.appearance?.selection ?? .legacy)
+            .foregroundStyle(Color(nsColor: self.appearance?.selection == .tileGrid ? MimicTheme.adaptive("ink") : .labelColor))
+            .tint(Color(nsColor: self.appearance?.selection == .tileGrid ? MimicTheme.adaptive("accent") : .systemIndigo))
             .offset(y: self.presentation.offset).allowsHitTesting(self.presentation.interactive)
             .accessibilityHidden(!self.presentation.interactive).preferredColorScheme(self.settings.previewColorScheme)
     }

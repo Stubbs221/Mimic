@@ -32,6 +32,13 @@ private struct GitFixture {
 }
 
 struct BranchTests {
+    @Test func staleRebaseHeadDoesNotBlockCompletedOperation() async throws {
+        let fixture = try GitFixture(); defer { fixture.remove() }
+        try Data((fixture.project.commit + "\n").utf8).write(to: fixture.root.appendingPathComponent(".git/REBASE_HEAD"))
+        let service = LocalGitBranchService()
+        #expect(try await !service.inspect(fixture.project).hasOperation)
+        #expect(try await service.switchBranch("feature/quoted-$value", project: fixture.project).project.branch == "feature/quoted-$value")
+    }
     @Test
     func ordinarySwitchUsesLiteralLocalName() async throws {
         let fixture = try GitFixture(); defer { fixture.remove() }

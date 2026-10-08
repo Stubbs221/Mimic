@@ -10,6 +10,8 @@ import MimicCore
 enum BootstrapCardMode { case mini, full, expanded }
 
 struct BootstrapCard: View {
+    private var theme = MimicTheme()
+    @Environment(\.mimicTextScale) private var textScale
     @ObservedObject var model: TaskCoordinator
     var mode = BootstrapCardMode.expanded
     var header: AnyView? = nil
@@ -41,11 +43,11 @@ struct BootstrapCard: View {
             BootstrapCardLayout(mode: self.mode) {
                 VStack(alignment: .leading, spacing: 4) {
                     if let header { header }
-                    else { Text("Bootstrap").font(MimicMetrics.heading).accessibilityAddTraits(.isHeader) }
+                    else { Text("Bootstrap").mimicFont(.heading).accessibilityAddTraits(.isHeader) }
                     if self.live, let record {
                         self.liveControls(record)
                     } else {
-                        VStack(spacing: 6) {
+                        (theme.tiled && textScale <= 1.2 ? AnyLayout(HStackLayout(spacing: 6)) : AnyLayout(VStackLayout(spacing: 6))) {
                             ForEach(BootstrapPlatform.allCases, id: \.self) { platform in
                                 Button { self.model.requestQuickBootstrap(platform: platform) } label: {
                                     Label(text("bootstrap.platform.short." + platform.rawValue), systemImage: platform == .ios ? "iphone" : "tv")
@@ -55,22 +57,22 @@ struct BootstrapCard: View {
                                     .help(text("quick.bootstrap." + platform.rawValue))
                                     .accessibilityIdentifier("bootstrap.launch." + platform.rawValue)
                             }
-                        }.frame(width: 104, alignment: .leading)
+                        }.frame(width: theme.tiled ? nil : 104, alignment: .leading)
                     }
                     if let record {
                         BootstrapStateText(model: self.model, record: record, compact: true)
                             .lineLimit(self.live ? 2 : 1)
                         if self.model.launchState != .blockedByXcode(record.id) { HStack(spacing: 4) {
                             if !self.live { Text(text("bootstrap.platform.short." + record.options.platform.rawValue)) }
-                            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                            MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in
                                 Text(record.startedAt == nil ? "" : duration(record)).monospacedDigit()
                             }.mimicImmediate()
-                        }.font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                        }.mimicFont(.caption).foregroundStyle(.secondary)
                             .accessibilityIdentifier("bootstrap.last.result") }
                         if self.live, self.model.launchState != .blockedByXcode(record.id) { BootstrapFillBar(value: self.progress.fraction, color: Color(red: 65 / 255, green: 108 / 255, blue: 155 / 255)) }
                     }
                     if !self.live {
-                        Text(text("bootstrap.xcode.launch.notice")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                        Text(text("bootstrap.xcode.launch.notice")).mimicFont(.caption).foregroundStyle(.secondary)
                             .lineLimit(1).help(text("bootstrap.xcode.notice"))
                     }
                     if self.mode == .expanded { self.details }
@@ -81,7 +83,7 @@ struct BootstrapCard: View {
                     .accessibilityHidden(self.mode == .mini)
             }
             if self.mode == .expanded, self.analysisVisible, let record, self.model.analysis.sessions[record.id] != nil {
-                HStack { Text(text("ai.analysis")).font(MimicMetrics.body.weight(.semibold)); Spacer(); Button(text("close")) { self.analysisVisible = false } }
+                HStack { Text(text("ai.analysis")).mimicFont(.body, weight: .semibold); Spacer(); Button(text("close")) { self.analysisVisible = false } }
                 AnalysisView(model: self.model, id: record.id)
             }
         }.accessibilityIdentifier("bootstrap.card")
@@ -89,7 +91,7 @@ struct BootstrapCard: View {
     }
 
     @ViewBuilder private func liveControls(_ record: TaskRecord) -> some View {
-        Text(text("bootstrap.platform.short." + record.options.platform.rawValue)).font(MimicMetrics.body.weight(.semibold))
+        Text(text("bootstrap.platform.short." + record.options.platform.rawValue)).mimicFont(.body, weight: .semibold)
         if self.model.launchState == .blockedByXcode(record.id) {
             Button(text("bootstrap.retry.check")) { self.model.retryBootstrap(id: record.id) }
                 .buttonStyle(BootstrapControlStyle(primary: true, fillsWidth: true))
@@ -106,7 +108,7 @@ struct BootstrapCard: View {
                 let completed = self.progress.completed.contains(stage)
                 let current = self.live && self.progress.stage == stage
                 Label(text("stage.short." + stage.rawValue), systemImage: completed ? "checkmark.circle.fill" : current ? "circle.dotted" : "circle")
-                    .font(MimicMetrics.secondary).foregroundStyle(completed ? Color.green : current ? .blue : .secondary)
+                    .mimicFont(.caption).foregroundStyle(completed ? Color.green : current ? .blue : .secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityValue(text(completed ? "stage.status.complete" : current ? "stage.status.running" : "stage.status.pending"))
             }
@@ -115,48 +117,39 @@ struct BootstrapCard: View {
             if self.model.launchState == .blockedByXcode(record.id) {
                 Button(text("bootstrap.xcode.activate")) { self.model.activateBlockingXcode() }.buttonStyle(BootstrapControlStyle())
             } else if self.model.launchState == .closingXcode(record.id) {
-                Text(text("bootstrap.xcode.dialog")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                Text(text("bootstrap.xcode.dialog")).mimicFont(.caption).foregroundStyle(.secondary)
             }
             if let error = record.error {
-                Text(error).font(MimicMetrics.secondary).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                Text(error).mimicFont(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
             if record.project.path != self.model.selectedProjectPath {
-                Text(record.project.path).font(MimicMetrics.secondary).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(record.project.path).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
-        Text(text("bootstrap.preparation.description")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+        Text(text("bootstrap.preparation.description")).mimicFont(.caption).foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true).padding(.top, 4)
     }
 
     private var terminal: some View {
-        ZStack(alignment: .topTrailing) {
-            ZStack {
-                Color(nsColor: BootstrapTerminalTheme.background)
-                if let record {
-                    BootstrapTerminalContainer(model: self.model, record: record, visible: self.mode != .mini, fontSize: self.mode == .expanded ? 12 : 10).id(record.id)
-                        .padding(.top, record.status == .failed || record.status == .interrupted ? 52 : 0)
-                    if !self.model.bootstrapTerminal(for: record).hasOutput {
-                        Text(text(record.status == .running || record.status == .queued ? "bootstrap.terminal.waiting" : "task.output.unavailable"))
-                            .font(MimicMetrics.secondary).foregroundStyle(Color(nsColor: BootstrapTerminalTheme.foreground)).padding(12).allowsHitTesting(false)
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(BootstrapProgress(options: .standard()).stages, id: \.self) { stage in
-                            Label(text("stage.short." + stage.rawValue), systemImage: "circle")
-                        }
-                    }.font(MimicMetrics.secondary).foregroundStyle(Color(nsColor: BootstrapTerminalTheme.foreground)).padding(12)
-                }
-            }
+        VStack(alignment: .trailing, spacing: 0) {
             if let record, record.status == .failed || record.status == .interrupted {
                 Button(text("bootstrap.error.agent")) {
                     self.model.panelLayout.expanded = .bootstrap
                     self.model.prepareAnalysis(record, inline: true); self.analysisVisible = true
-                }.buttonStyle(BootstrapControlStyle()).font(MimicMetrics.secondary)
+                }.buttonStyle(BootstrapControlStyle()).mimicFont(.caption)
                     .fixedSize(horizontal: false, vertical: true).padding(6)
-                    .background(Color(nsColor: BootstrapTerminalTheme.background), in: RoundedRectangle(cornerRadius: 8)).padding(6)
                     .accessibilityIdentifier("bootstrap.analyze")
             }
-        }.background(PanelControlRegion()).clipShape(RoundedRectangle(cornerRadius: 8)).accessibilityIdentifier("bootstrap.terminal")
+            if let record {
+                BootstrapTaskTerminal(model: self.model, record: record, visible: self.mode != .mini,
+                                      fontSize: self.mode == .expanded ? 12 : 10,
+                                      session: self.model.bootstrapTerminal(for: record)).id(record.id)
+            } else {
+                BootstrapTerminalPlaceholder(state: .idle, platform: self.model.bootstrapOptions.platform)
+            }
+        }
+        .background(theme.tiled ? theme.color("terminal") : Color(nsColor: BootstrapTerminalTheme.background))
+        .clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityIdentifier("bootstrap.terminal")
     }
 }
 
@@ -200,11 +193,11 @@ struct BootstrapQuitNotice: View {
         VStack(alignment: .leading, spacing: 8) {
             Button { self.source = .current; self.showingDetails.toggle() } label: {
                 Label(text(self.compact ? "bootstrap.xcode.compact" : "bootstrap.xcode.short"), systemImage: "info.circle")
-                    .font(MimicMetrics.secondary).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }.buttonStyle(.plain).help(text("bootstrap.xcode.notice")).accessibilityLabel(text("bootstrap.xcode.details"))
                 .accessibilityValue(disclosureValue(self.showingDetails))
             MimicCollapse(expanded: self.showingDetails, source: self.source) {
-                Text(text("bootstrap.xcode.notice")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                Text(text("bootstrap.xcode.notice")).mimicFont(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             }
         }
@@ -227,7 +220,7 @@ struct BootstrapPreparationView: View {
                     VStack(alignment: .leading, spacing: 8) { self.retryActions }
                 }.controlSize(.small)
             } else if self.model.launchState == .closingXcode(self.record.id) {
-                Text(text("bootstrap.xcode.dialog")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                Text(text("bootstrap.xcode.dialog")).mimicFont(.caption).foregroundStyle(.secondary)
             }
             if self.showCancel { BootstrapIconButton(symbol: "stop.fill", label: text("bootstrap.cancel.launch")) { self.model.cancel(id: self.record.id) } }
         }.accessibilityIdentifier("bootstrap.preparation")
@@ -252,16 +245,16 @@ struct BootstrapExecutionProgress: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if self.showState { HStack {
-                Text(self.progress.currentStep.map { text("bootstrap.step." + $0.rawValue) } ?? text("bootstrap.process.starting")).font(MimicMetrics.body.weight(.medium)).mimicStatus(self.progress.currentStep)
+                Text(self.progress.currentStep.map { text("bootstrap.step." + $0.rawValue) } ?? text("bootstrap.process.starting")).mimicFont(.body, weight: .medium).mimicStatus(self.progress.currentStep)
                 Spacer()
-                TimelineView(.periodic(from: .now, by: 1)) { _ in Text(duration(self.record)).font(MimicMetrics.secondary.monospacedDigit()).foregroundStyle(.secondary) }.mimicImmediate()
+                MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in Text(duration(self.record)).font(MimicMetrics.secondary.monospacedDigit()).foregroundStyle(.secondary) }.mimicImmediate()
             }
             }
             BootstrapFillBar(value: self.progress.fraction)
             if !self.compact { HStack(alignment: .top, spacing: MimicMetrics.medium) {
                 ForEach(self.progress.stages, id: \.self) { stage in
                     Label(text("stage.short." + stage.rawValue), systemImage: self.progress.completed.contains(stage) ? "checkmark.circle.fill" : self.progress.stage == stage ? "circle.dotted" : "circle")
-                        .font(MimicMetrics.secondary).foregroundStyle(self.progress.completed.contains(stage) ? Color.green : self.progress.stage == stage ? .indigo : .secondary)
+                        .mimicFont(.caption).foregroundStyle(self.progress.completed.contains(stage) ? Color.green : self.progress.stage == stage ? .indigo : .secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .mimicStatus(self.progress.completed.contains(stage) ? "complete" : self.progress.stage == stage ? "running" : "pending")
                         .accessibilityValue(text(self.progress.completed.contains(stage) ? "stage.status.complete" : self.progress.stage == stage ? "stage.status.running" : "stage.status.pending"))
@@ -304,7 +297,7 @@ struct BootstrapStateText: View {
         return ActionPresentation.statusColor(self.record.status)
     }
     var body: some View {
-        Label(self.title, systemImage: self.symbol).font(MimicMetrics.secondary.weight(.medium))
+        Label(self.title, systemImage: self.symbol).mimicFont(.caption, weight: .medium)
             .foregroundStyle(self.color)
             .fixedSize(horizontal: false, vertical: true).mimicStatus(self.title + self.symbol)
             .accessibilityIdentifier("bootstrap.phase")

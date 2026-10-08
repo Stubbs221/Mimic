@@ -32,7 +32,7 @@ struct AIUsageSection: View {
             Button { self.model.toggleSection(.usage) } label: {
                 HStack(spacing: MimicMetrics.medium) {
                     Image(systemName: "chart.bar").frame(width: 24)
-                    Text(text("usage.title")).font(MimicMetrics.heading).accessibilityAddTraits(.isHeader)
+                    Text(text("usage.title")).mimicFont(.heading).accessibilityAddTraits(.isHeader)
                     Spacer(minLength: 4)
                     Text(self.usage.activeProvider == .codex ? "Codex" : "Claude Code").foregroundStyle(.secondary)
                     Text(self.usage.percentage).monospacedDigit()
@@ -60,6 +60,7 @@ struct AIUsageSection: View {
 }
 
 private struct AIUsageProviderView: View {
+    private var theme = MimicTheme()
     let provider: AIProvider
     @ObservedObject var usage: AIUsageCoordinator
     private var snapshot: AIUsageSnapshot? { self.usage.snapshots[self.provider] }
@@ -71,7 +72,7 @@ private struct AIUsageProviderView: View {
                     HStack(spacing: MimicMetrics.medium) {
                         Text(self.provider == .codex ? "Codex" : "Claude Code").fontWeight(.semibold)
                         if self.usage.activeProvider == self.provider {
-                            Text(text("usage.lastUsed")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                            Text(text("usage.lastUsed")).mimicFont(.caption).foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 4)
                         Text(self.usage.percentage(for: self.provider)).monospacedDigit()
@@ -81,18 +82,18 @@ private struct AIUsageProviderView: View {
                     .accessibilityIdentifier("usage.provider.toggle." + self.provider.rawValue)
                     .accessibilityValue(disclosureValue(self.expanded))
                 if self.expanded {
-                    Text(self.snapshot?.plan ?? text("usage.plan.unknown")).font(MimicMetrics.secondary).foregroundStyle(.secondary).lineLimit(1)
+                    Text(self.snapshot?.plan ?? text("usage.plan.unknown")).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(1)
                     ForEach(AIUsagePeriod.allCases, id: \.self) { period in self.window(period) }
                     AIUsageTrendView(provider: self.provider, points: self.usage.histories[self.provider] ?? [], unknownModels: self.usage.unknownModels[self.provider] ?? [])
                         .accessibilityIdentifier("usage.trend." + self.provider.rawValue)
                     if let error = self.usage.errors[self.provider] {
-                        Text(text(error.localizationKey)).font(MimicMetrics.secondary).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(text(error.localizationKey)).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         if case .rateLimited = error, let retry = self.usage.nextRefresh[self.provider] {
-                            Text(text("usage.retry") + " " + retry.formatted(date: .omitted, time: .shortened)).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                            Text(text("usage.retry") + " " + retry.formatted(date: .omitted, time: .shortened)).mimicFont(.caption).foregroundStyle(.secondary)
                         }
                     }
                     if let fetched = self.snapshot?.fetchedAt {
-                        Text(text("usage.updated") + " " + fetched.formatted(date: .omitted, time: .shortened)).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                        Text(text("usage.updated") + " " + fetched.formatted(date: .omitted, time: .shortened)).mimicFont(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -114,7 +115,7 @@ private struct AIUsageProviderView: View {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.12))
-                    Capsule().fill(self.color(state)).frame(width: geometry.size.width * (remaining ?? 0) / 100)
+                    Capsule().fill(theme.tiled ? theme.usageColor(state, provider: provider) : self.color(state)).frame(width: geometry.size.width * (remaining ?? 0) / 100)
                     if let tick = state.tick {
                         RoundedRectangle(cornerRadius: 1).fill(Color.secondary)
                             .frame(width: 2, height: 10).offset(x: max(0, min(geometry.size.width - 2, geometry.size.width * tick - 1)))
@@ -128,12 +129,12 @@ private struct AIUsageProviderView: View {
                 Spacer(minLength: 4)
                 if let reset = window?.resetsAt {
                     Text(text("usage.reset") + " " + reset.formatted(date: .abbreviated, time: .shortened))
-                        .font(MimicMetrics.secondary).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
+                        .mimicFont(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
                 } else if remaining != nil {
-                    Text(text("usage.reset.unknown")).font(MimicMetrics.secondary).foregroundStyle(.secondary)
+                    Text(text("usage.reset.unknown")).mimicFont(.caption).foregroundStyle(.secondary)
                 }
             }
-            if state == .stale { Text(text("usage.stale")).font(MimicMetrics.secondary).foregroundStyle(.secondary) }
+            if state == .stale { Text(text("usage.stale")).mimicFont(.caption).foregroundStyle(.secondary) }
         }.accessibilityElement(children: .combine)
     }
     private func remainingText(_ remaining: Double?) -> String {
@@ -150,7 +151,7 @@ private struct AIUsageProviderView: View {
     @ViewBuilder private func warning(_ state: AIUsagePace.State) -> some View {
         switch state {
         case let .closeToLimit(spare, _, _):
-            Text(String(format: text("usage.pace.spare"), spare)).font(MimicMetrics.secondary).foregroundStyle(.secondary).help(self.tooltip(state))
+            Text(String(format: text("usage.pace.spare"), spare)).mimicFont(.caption).foregroundStyle(.secondary).help(self.tooltip(state))
         case .spent:
             self.flame(text("usage.pace.spent"), state: state)
         case let .runningOut(at, _, _):
@@ -162,7 +163,7 @@ private struct AIUsageProviderView: View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Image(systemName: "flame.fill").foregroundStyle(.red).accessibilityLabel(text("usage.pace.limit"))
             if let label { Text(label).foregroundStyle(.secondary).multilineTextAlignment(.trailing) }
-        }.font(MimicMetrics.secondary).help(self.tooltip(state))
+        }.mimicFont(.caption).help(self.tooltip(state))
     }
     private func tooltip(_ state: AIUsagePace.State) -> String {
         switch state {

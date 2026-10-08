@@ -66,6 +66,10 @@ def wait_for_exit(seconds):
         if owners:
             try:
                 prepare_exit()
+            except (FileNotFoundError, ConnectionRefusedError):
+                # The socket can disappear before the exiting owner, or appear after a new launch.
+                # Keep waiting within the same deadline; never bypass the installer's idle checks.
+                pass
             except (OSError, RuntimeError):
                 # Exit can race sending the reply. Accept only independently proven process disappearance.
                 if process_ids('Mimic') or process_ids('Mimic'):

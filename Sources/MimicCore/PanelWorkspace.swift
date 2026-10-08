@@ -6,8 +6,11 @@ public struct PanelWorkspace: Codable, Equatable, Sendable {
     public var checkout: String?
     public var expanded: PanelBlockKind?
     public var selection: String?
+    public var toolSelection: ProjectTool?
+    public var toolGenerator: GeneratorKind?
     public var drafts: [String: [String: String]]
-    public init(checkout: String? = nil, expanded: PanelBlockKind? = nil, selection: String? = nil, drafts: [String: [String: String]] = [:]) {
+    public init(checkout: String? = nil, expanded: PanelBlockKind? = nil, selection: String? = nil, drafts: [String: [String: String]] = [:], toolSelection: ProjectTool? = nil, toolGenerator: GeneratorKind? = nil) {
+        self.toolSelection = toolSelection; self.toolGenerator = toolGenerator
         self.checkout = checkout; self.expanded = expanded; self.selection = selection; self.drafts = drafts
     }
     public func validate() throws {

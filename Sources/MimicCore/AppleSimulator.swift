@@ -29,6 +29,8 @@ public enum AppleSimulatorAction: Sendable, Equatable {
     case swipe(x: Double, y: Double, endX: Double, endY: Double, duration: Double)
     case text(String)
     case home
+    case key(Key)
+    public enum Key: String, Sendable { case backspace, forwardDelete, `return` }
     case orientation(Orientation)
     public enum Orientation: String, Sendable { case portrait, landscapeLeft, landscapeRight, portraitUpsideDown }
 
@@ -48,6 +50,9 @@ public enum AppleSimulatorAction: Sendable, Equatable {
             // Escape every scalar, including backslashes. A user's literal Unicode escape stays literal.
             return "sender keyboard kbd " + value.unicodeScalars.map { "\\u{" + String($0.value, radix: 16, uppercase: true) + "}" }.joined()
         case .home: return "b h"
+        case .key(.backspace): return "sender keyboard kbd \\u{0008}"
+        case .key(.return): return "sender keyboard kbd \\u{000A}"
+        case .key(.forwardDelete): throw AppleSimulatorError.unsupported
         case let .orientation(value): return "orientation " + value.rawValue
         }
     }
