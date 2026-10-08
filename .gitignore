@@ -28,6 +28,8 @@ __pycache__/
 *.xcresult/
 *.trace/
 *.zip
+# Reviewed offline documentation; application packages remain private build artifacts.
+!docs/releases/1.4.0/Mimic-1.4.0-HTML.zip
 *.dmg
 *.pkg
 *.log
