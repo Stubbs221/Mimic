@@ -7,7 +7,7 @@
 
 [Русский](README.md) · [English](README.en.md)
 
-<a href="docs/MimicSetup.md"><img src="docs/images/badge-release.svg" alt="Mimic 1.4.0"></a>
+<a href="docs/MimicSetup.md"><img src="docs/images/badge-release.svg" alt="Mimic 1.5.0"></a>
 <a href="docs/MimicSetup.md"><img src="docs/images/badge-macos.svg" alt="macOS 14+"></a>
 <a href="docs/MimicSetup.md"><img src="docs/images/badge-architecture.svg" alt="Apple Silicon"></a>
 <a href="LICENSE"><img src="docs/images/badge-license.svg" alt="MIT"></a>
@@ -15,12 +15,12 @@
 <br><br>
 <img src="docs/images/readme-hero-en.png" alt="Mimic Tile Grid on macOS and in Codex, with working data redacted" width="1040">
 
-[**Download Mimic 1.4.0**](https://github.com/Stubbs221/Mimic/releases/tag/v1.4.0) · [**Get started**](docs/MimicSetup.md) · [What's new](CHANGELOG.md)
+[**Download Mimic 1.5.0**](https://github.com/Stubbs221/Mimic/releases/tag/v1.5.0) · [**Get started**](docs/MimicSetup.md) · [What's new](CHANGELOG.md)
 
 </div>
 
 > [!TIP]
-> **Mimic 1.4.0 · build 140 · October 8, 2026.** Developer ID signed and Apple notarized. Install the ready-to-use app or update from 1.3.1 in **Настройки → Основные**.
+> **Mimic 1.5.0 · build 150 · October 9, 2026.** Developer ID signed and Apple notarized. Install the ready-to-use app or update from 1.4.0 in **Настройки → Основные**.
 
 Mimic brings your team's familiar workflows together: project preparation, tools, builds, selected tests and CI. Open it from the menu bar or work beside your agent in Codex. **One executor, a shared queue and history, and a separate project context for each chat.**
 
@@ -30,29 +30,33 @@ Three illustrated documents in Russian, using the Mimic palette. **View PDFs on 
 
 | Document | PDF | HTML |
 | --- | --- | --- |
-| **A 2–3 minute introduction** — the essentials | [View](docs/releases/1.4.0/quick-preview.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.4.0/quick-preview.html) |
-| **Full overview** — features, diagrams and security | [View](docs/releases/1.4.0/overview.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.4.0/overview.html) |
-| **Guide** — installation, setup and everyday use | [View](docs/releases/1.4.0/guide.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.4.0/guide.html) |
+| **A 2–3 minute introduction** — the essentials | [View](docs/releases/1.5.0/quick-preview.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/quick-preview.html) |
+| **Full overview** — features, diagrams and security | [View](docs/releases/1.5.0/overview.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/overview.html) |
+| **Guide** — installation, setup and everyday use | [View](docs/releases/1.5.0/guide.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/guide.html) |
 
-[**All HTML in one ZIP**](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.4.0/Mimic-1.4.0-HTML.zip) — extract the three files together for navigation between documents. [About the materials](docs/releases/1.4.0/README.md).
+[**All HTML in one ZIP**](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/Mimic-1.5.0-HTML.zip) — extract the three files together for navigation between documents. [About the materials](docs/releases/1.5.0/README.md).
 
 ## Less switching. More doing.
 
 | 🧩 Your panel | 🛠 Your team's tools | 🚦 Checks at hand |
 | --- | --- | --- |
-| **Tile Grid** — tile order, sizing and independent macOS/Codex layouts. Light and dark themes, with the previous interface still available. | **Celestial, Babylon, Protobuf, SwiftFormat** and cleanup tools. Up to three shared favorites; Celestial previews the files first. | **Builds and selected tests** on a specific Simulator. Jenkins/GitLab: UI tests, Quality Gates, Beta, status and results. |
+| **Tile Grid** — tile order, sizing and independent macOS/Codex layouts. Light and dark themes, with the previous interface still available. | **Celestial, Babylon, Protobuf, SwiftFormat** and cleanup tools. Up to three shared favorites; Celestial previews the files first. | **Build, run and selected tests** on a specific Simulator. Jenkins/GitLab: UI tests, Quality Gates, Beta, status and results. |
 | **Bootstrap and terminals** — a sequential queue, stages, progress, cancellation and history. | **Branches and rebase** — optional rebase onto develop, a backup of local edits and conflict handoff to Codex. | **AI limits and statistics** — remaining capacity, reset times and usage trends for supported tools. |
 
-## The real interface
+## Interface and demonstration
 
 <table>
 <tr><th>Tools catalog</th><th>Simulator inside Codex</th></tr>
-<tr><td align="center"><a href="docs/images/tools.png"><img src="docs/images/tools.png" alt="The real Mimic 1.4.0 tools catalog, favorites, generators and cleanup" width="620"></a></td><td align="center"><a href="docs/images/simulator.png"><img src="docs/images/simulator.png" alt="The real Mimic test app running on a Simulator inside Codex" width="270"></a></td></tr>
+<tr><td align="center"><a href="docs/images/tools.png"><img src="docs/images/tools.png" alt="The real Mimic 1.5.0 tools catalog, favorites, generators and cleanup" width="620"></a></td><td align="center"><a href="docs/images/simulator.png"><img src="docs/images/simulator.png" alt="Simulator UI preview in 1.5.0 with a built-in demonstration screen" width="270"></a></td></tr>
 </table>
 
 Screen, taps, swipes, typing, Home and rotation stay inside the panel. Image and input sources are independent: MCP video or snapshots, continuous HID gestures or Apple MCP. Auto mode uses snapshots when video is unavailable. **The screen requires Xcode 27+** and available native Apple tools. WSS needs a separately configured trusted endpoint. [Connect a Simulator](docs/CodexPlugin.md#экран-симулятора).
 
-<sub>Real UI captures: macOS is the installed 1.4.0/140; Codex shows development Tile Grid before the final build. The device runs the Mimic test app. Working data is covered with opaque pixel redactions; favorite-order arrows belong to the app. [Image notes](docs/images/README.md).</sub>
+<sub>macOS captures show installed 1.5.0/150. Codex and Simulator are fresh previews of bundled 1.5.0 HTML with safe fixtures; the device screen is a demonstration. Working data has opaque pixel redactions. [Image notes](docs/images/README.md).</sub>
+
+## New in 1.5.0
+
+Standalone builds and separate launch of a ready app; a suite catalog and exact test identifiers. The agent check cycle links observations, actions and evidence, with Simulator recordings saved as artifacts. Compact cards and terminals are easier to use. [Agent checks](docs/AgentChecks.md).
 
 ## Get started
 
