@@ -8,6 +8,7 @@ extension MimicIntegration {
     /// Private UI operations do not expose drafts or terminal traffic to model-visible results.
     func panelRequest(_ request: MimicBridgeRequest) async throws -> BridgeValue {
         guard let threadID = request.threadID else { throw failure("context") }
+        if PanelBridge.buildTools.contains(request.method) { return try await panelBuildRequest(request) }
         let p = request.parameters
         let keys: [String: Set<String>] = [
             "panel_run_tool": ["actionID", "parameters", "context", "requestID"],

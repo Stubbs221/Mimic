@@ -4,7 +4,8 @@ import SwiftTerm
 import SwiftUI
 import MimicCore
 
-func buildTitle(_ record: BuildActivity) -> String { text("build.operation." + record.parameters.operation.rawValue) }
+func buildTitle(_ record: BuildActivity) -> String { text(record.actionKey) }
+func buildInitiator(_ record: BuildActivity) -> String { ["Codex", "Claude Code", "MCP"].contains(record.source) ? text("build.initiator.agent") + " · " + record.source : record.source }
 func buildDuration(_ record: BuildActivity) -> String { let seconds = Int(record.duration); return String(format: "%02d:%02d", seconds / 60, seconds % 60) }
 func buildColor(_ record: BuildActivity) -> SwiftUI.Color { record.status == .failed || record.status == .unknown || record.status == .interrupted ? .orange : record.status == .succeeded ? .green : .secondary }
 
@@ -24,42 +25,7 @@ struct BuildToolRow: View {
 struct BuildConfigurationView: View {
     @ObservedObject var model: TaskCoordinator
     @ObservedObject var builds: BuildCoordinator
-    private var identifiers: Binding<String> { Binding(get: { builds.draft.testIdentifiers.joined(separator: "\n") }, set: { builds.draft.testIdentifiers = $0.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }) }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Picker(text("build.backend"), selection: $builds.draft.backend) { Text(text("build.backend.cli")).tag(BuildBackend.cli); Text(text("build.backend.xcodeMCP")).tag(BuildBackend.xcodeMCP) }.accessibilityIdentifier("build.backend")
-            Picker(text("build.operation"), selection: $builds.draft.operation) { ForEach(BuildOperation.allCases, id: \.self) { Text(text("build.operation." + $0.rawValue)).tag($0) } }
-            if builds.draft.backend == .cli {
-                Picker(text("build.scheme"), selection: $builds.draft.scheme) { Text(text("build.choose")).tag(""); ForEach(builds.catalogue.schemes, id: \.self) { Text($0).tag($0) } }.accessibilityIdentifier("build.scheme")
-                Picker(text("build.configuration"), selection: $builds.draft.configuration) { Text(text("build.choose")).tag(""); ForEach(builds.catalogue.configurations, id: \.self) { Text($0).tag($0) } }
-                Picker(text("build.destination"), selection: $builds.draft.destinationID) { Text(text("build.choose")).tag(""); ForEach(builds.catalogue.destinations) { Text($0.name).tag($0.id).help($0.id) } }.accessibilityIdentifier("build.destination")
-                if builds.draft.operation == .test, !builds.catalogue.testPlans.isEmpty { Picker(text("build.testPlan"), selection: $builds.draft.testPlan) { Text(text("build.choose")).tag(""); ForEach(builds.catalogue.testPlans, id: \.self) { Text($0).tag($0) } } }
-                HStack { Button(text("refresh")) { Task { if let project = model.project { await builds.refreshCatalogue(project: project) } } }.disabled(builds.loading); if builds.loading { ProgressView().controlSize(.small) } }
-            } else {
-                XcodeBuildConfiguration(builds: builds, project: model.project)
-            }
-            if builds.draft.operation == .test {
-                Text(text("build.tests.hint")).font(.system(size: 11)).foregroundStyle(.secondary)
-                TextEditor(text: identifiers).font(.system(size: 11, design: .monospaced)).frame(height: 90).overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary)).accessibilityLabel(text("build.tests")).accessibilityIdentifier("build.tests")
-            }
-            Text(text("build.preparation.hint")).font(.system(size: 11)).foregroundStyle(.secondary)
-            if !builds.message.isEmpty {
-                Text(builds.message).foregroundStyle(.orange).textSelection(.enabled)
-                Button(text("build.bootstrap")) { model.openTool(.bootstrap) }
-            }
-            Text(builds.draft.backend == .cli ? builds.draft.scheme + " · " + builds.draft.configuration + "\n" + builds.draft.destinationID : builds.draft.workspaceTab + " · " + text("build.xcode.settings")).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).textSelection(.enabled)
-            Button(text("build.start")) { builds.submitDraft() }.buttonStyle(MimicButtonStyle(primary: true)).disabled(model.project == nil || builds.loading || !valid).accessibilityIdentifier("build.start")
-        }.padding(.leading, 32)
-        .task(id: model.project.map { $0.path + $0.branch + $0.commit + ($0.developerDirectory ?? "") }) { if let project = model.project { await builds.restoreDraft(project: project); await builds.refreshCatalogue(project: project) } }
-        .onChange(of: builds.draft) { _, _ in if let project = model.project { builds.saveDraft(project: project) } }
-        .onChange(of: builds.draft.scheme) { _, scheme in if !scheme.isEmpty, let project = model.project { Task { await builds.refreshCatalogue(project: project, scheme: scheme) } } }
-    }
-    private var valid: Bool {
-        var parameters = builds.draft
-        if parameters.operation == .build { parameters.testIdentifiers = []; parameters.testPlan = "" }
-        if parameters.backend == .xcodeMCP { parameters.scheme = ""; parameters.configuration = ""; parameters.destinationID = ""; parameters.testPlan = ""; return (try? parameters.validate()) != nil && builds.xcodeSimulatorConfirmed && builds.xcode.supports(parameters.operation) }
-        return (try? parameters.validate()) != nil
-    }
+    var body: some View { BuildCardView(model: model, builds: builds, full: true, extended: true) }
 }
 
 struct XcodeBuildConfiguration: View {

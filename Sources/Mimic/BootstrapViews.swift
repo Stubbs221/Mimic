@@ -16,6 +16,7 @@ struct BootstrapCard: View {
     var mode = BootstrapCardMode.expanded
     var header: AnyView? = nil
     @State private var analysisVisible = false
+    @State private var controlsWidth: CGFloat = 200
     private var record: TaskRecord? {
         if let activity = self.model.quickBootstrapActivity {
             if let error = activity.error {
@@ -26,118 +27,139 @@ struct BootstrapCard: View {
         }
         return self.model.bootstrapRecord
     }
-    private var live: Bool {
-        guard let record else { return false }
-        return record.status == .queued || record.status == .running
-    }
-    private var progress: BootstrapProgress {
-        guard let record else { return BootstrapProgress(options: .standard()) }
-        if self.model.bootstrapProgressID == record.id { return self.model.bootstrapProgress }
-        if let activity = self.model.quickBootstrapActivity, activity.request.id == record.id, let progress = activity.progress { return progress }
-        var progress = BootstrapProgress(options: record.options)
-        if record.status == .succeeded { progress.finish(succeeded: true) }
-        return progress
-    }
+    private var live: Bool { self.record.map { [.queued, .running].contains($0.status) } ?? false }
+    private var collapsedHeight: CGFloat { MimicMetrics.collapsedCardHeight * (self.theme.tiled ? max(1, self.textScale) : 1) - 24 }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            BootstrapCardLayout(mode: self.mode) {
-                VStack(alignment: .leading, spacing: 4) {
-                    if let header { header }
-                    else { Text("Bootstrap").mimicFont(.heading).accessibilityAddTraits(.isHeader) }
-                    if self.live, let record {
-                        self.liveControls(record)
-                    } else {
-                        (theme.tiled && textScale <= 1.2 ? AnyLayout(HStackLayout(spacing: 6)) : AnyLayout(VStackLayout(spacing: 6))) {
-                            ForEach(BootstrapPlatform.allCases, id: \.self) { platform in
-                                Button { self.model.requestQuickBootstrap(platform: platform) } label: {
-                                    Label(text("bootstrap.platform.short." + platform.rawValue), systemImage: platform == .ios ? "iphone" : "tv")
-                                        .frame(maxWidth: .infinity)
-                                }.buttonStyle(BootstrapControlStyle(primary: true, fillsWidth: true))
-                                    .disabled(!self.model.canRequestQuickBootstrap || self.model.checking)
-                                    .help(text("quick.bootstrap." + platform.rawValue))
-                                    .accessibilityIdentifier("bootstrap.launch." + platform.rawValue)
-                            }
-                        }.frame(width: theme.tiled ? nil : 104, alignment: .leading)
-                    }
-                    if let record {
-                        BootstrapStateText(model: self.model, record: record, compact: true)
-                            .lineLimit(self.live ? 2 : 1)
-                        if self.model.launchState != .blockedByXcode(record.id) { HStack(spacing: 4) {
-                            if !self.live { Text(text("bootstrap.platform.short." + record.options.platform.rawValue)) }
-                            MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in
-                                Text(record.startedAt == nil ? "" : duration(record)).monospacedDigit()
-                            }.mimicImmediate()
-                        }.mimicFont(.caption).foregroundStyle(.secondary)
-                            .accessibilityIdentifier("bootstrap.last.result") }
-                        if self.live, self.model.launchState != .blockedByXcode(record.id) { BootstrapFillBar(value: self.progress.fraction, color: Color(red: 65 / 255, green: 108 / 255, blue: 155 / 255)) }
-                    }
-                    if !self.live {
-                        Text(text("bootstrap.xcode.launch.notice")).mimicFont(.caption).foregroundStyle(.secondary)
-                            .lineLimit(1).help(text("bootstrap.xcode.notice"))
-                    }
-                    if self.mode == .expanded { self.details }
-                }.frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
-                self.terminal.frame(minWidth: 0, maxWidth: .infinity)
-                    .frame(height: self.mode == .mini ? 0 : self.mode == .full ? MimicMetrics.collapsedCardHeight - 32 : 240).clipped()
-                    .opacity(self.mode == .mini ? 0 : 1).allowsHitTesting(self.mode != .mini)
+        VStack(alignment: .leading, spacing: 12) {
+            BootstrapCardLayout(mode: self.mode, collapsedHeight: self.collapsedHeight) {
+                self.controls
+                self.terminal.frame(height: self.mode == .mini ? 0 : self.mode == .full ? nil : 240)
+                    .clipped().opacity(self.mode == .mini ? 0 : 1).allowsHitTesting(self.mode != .mini)
                     .accessibilityHidden(self.mode == .mini)
             }
-            if self.mode == .expanded, self.analysisVisible, let record, self.model.analysis.sessions[record.id] != nil {
-                HStack { Text(text("ai.analysis")).mimicFont(.body, weight: .semibold); Spacer(); Button(text("close")) { self.analysisVisible = false } }
-                AnalysisView(model: self.model, id: record.id)
+            if self.mode == .expanded {
+                if let record {
+                    BootstrapDetailsFooter(model: self.model, record: record) {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 8) { self.expandedActions(record) }.fixedSize(horizontal: true, vertical: false)
+                            VStack(alignment: .leading, spacing: 8) { self.expandedActions(record) }
+                        }
+                    }
+                } else { self.launchers }
+                MimicDisclosure(text("bootstrap.preparation.title")) {
+                    Text(text("bootstrap.preparation.description")).mimicFont(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.mimicFont(.caption).foregroundStyle(.secondary)
+                if self.analysisVisible, let record, self.model.analysis.sessions[record.id] != nil {
+                    HStack { Text(text("ai.analysis")).mimicFont(.body, weight: .semibold); Spacer(); Button(text("close")) { self.analysisVisible = false } }
+                    AnalysisView(model: self.model, id: record.id)
+                }
             }
         }.accessibilityIdentifier("bootstrap.card")
             .onChange(of: self.record?.id) { _, _ in self.analysisVisible = false }
     }
 
-    @ViewBuilder private func liveControls(_ record: TaskRecord) -> some View {
-        Text(text("bootstrap.platform.short." + record.options.platform.rawValue)).mimicFont(.body, weight: .semibold)
-        if self.model.launchState == .blockedByXcode(record.id) {
-            Button(text("bootstrap.retry.check")) { self.model.retryBootstrap(id: record.id) }
-                .buttonStyle(BootstrapControlStyle(primary: true, fillsWidth: true))
-        }
-        Button(text(record.status == .running ? "stop" : "bootstrap.cancel")) {
-            self.model.cancelQuickBootstrap(id: record.id)
-        }.buttonStyle(BootstrapControlStyle(primary: false, fillsWidth: true))
-            .accessibilityIdentifier("bootstrap.cancel")
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: self.mode == .expanded ? 12 : 4) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let header { header }
+                else { Text("Bootstrap").mimicFont(.heading).accessibilityAddTraits(.isHeader) }
+                if !self.live, self.mode != .expanded { self.launchers }
+                else if self.mode != .expanded, let record { self.liveControls(record) }
+            }
+            if self.mode != .expanded { Spacer(minLength: 4) }
+            if let record {
+                VStack(alignment: .leading, spacing: 4) {
+                    if self.mode == .expanded, record.status == .running {
+                        Label(text("status.running"), systemImage: ActionPresentation.statusSymbol(record.status))
+                            .mimicFont(.caption).foregroundStyle(ActionPresentation.statusColor(record.status))
+                    } else {
+                        BootstrapStateText(model: self.model, record: record, compact: self.mode != .expanded)
+                            .lineLimit(self.live ? 2 : 1)
+                    }
+                    HStack(spacing: 4) {
+                        Text(text("bootstrap.platform.short." + record.options.platform.rawValue))
+                        if self.model.launchState != .blockedByXcode(record.id) {
+                            MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in
+                                Text(record.startedAt == nil ? "" : duration(record)).monospacedDigit()
+                            }.mimicImmediate()
+                        }
+                    }.mimicFont(.caption).foregroundStyle(.secondary).accessibilityIdentifier("bootstrap.last.result")
+                    if self.live, self.mode != .expanded, self.model.launchState != .blockedByXcode(record.id) {
+                        BootstrapExecutionProgress(model: self.model, record: record, compact: true, showState: false)
+                    }
+                }
+            }
+            if !self.live, self.mode != .expanded {
+                // Preserve the terminal's insets when Full leaves a narrow controls column.
+                Label(text(self.mode == .full && self.controlsWidth < 160 ? "bootstrap.xcode.launch.narrow" : "bootstrap.xcode.launch.notice"), systemImage: "exclamationmark.circle")
+                    .mimicFont(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).help(text("bootstrap.xcode.notice"))
+                    .accessibilityElement(children: .ignore).accessibilityLabel(text("bootstrap.xcode.launch.notice"))
+                    .accessibilityIdentifier("bootstrap.notice")
+            }
+            if self.mode == .expanded, let record {
+                if record.status == .running { BootstrapExecutionProgress(model: self.model, record: record, showClock: false) }
+                else if record.status == .queued { BootstrapPreparationView(model: self.model, record: record, showCancel: false, showState: false, showRetryActions: false) }
+                if let error = record.error {
+                    Text(DiagnosticText.clean(error)).mimicFont(.caption).foregroundStyle(.orange).lineLimit(2).help(error).textSelection(.enabled)
+                }
+            }
+        }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { self.controlsWidth = $0 }
     }
 
-    @ViewBuilder private var details: some View {
-        HStack(alignment: .top, spacing: 8) {
-            ForEach(self.progress.stages, id: \.self) { stage in
-                let completed = self.progress.completed.contains(stage)
-                let current = self.live && self.progress.stage == stage
-                Label(text("stage.short." + stage.rawValue), systemImage: completed ? "checkmark.circle.fill" : current ? "circle.dotted" : "circle")
-                    .mimicFont(.caption).foregroundStyle(completed ? Color.green : current ? .blue : .secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityValue(text(completed ? "stage.status.complete" : current ? "stage.status.running" : "stage.status.pending"))
+    private var launchers: some View {
+        (self.theme.tiled && self.textScale <= 1.2 && self.controlsWidth >= 160 ? AnyLayout(HStackLayout(spacing: 6)) : AnyLayout(VStackLayout(spacing: 6))) {
+            ForEach(BootstrapPlatform.allCases, id: \.self) { platform in
+                Button { self.model.requestQuickBootstrap(platform: platform) } label: {
+                    Label(text("bootstrap.platform.short." + platform.rawValue), systemImage: platform == .ios ? "iphone" : "tv")
+                        .frame(maxWidth: .infinity)
+                }.buttonStyle(BootstrapControlStyle(primary: true, fillsWidth: true))
+                    .disabled(!self.model.canRequestQuickBootstrap || self.model.checking)
+                    .help(text("quick.bootstrap." + platform.rawValue))
+                    .accessibilityIdentifier("bootstrap.launch." + platform.rawValue)
+                    .background(PanelControlRegion())
             }
-        }.padding(.top, 4).accessibilityIdentifier("bootstrap.stages")
-        if let record {
+        }.frame(maxWidth: self.theme.tiled ? .infinity : 104, alignment: .leading)
+    }
+
+    @ViewBuilder private func liveControls(_ record: TaskRecord) -> some View {
+        if self.model.launchState == .blockedByXcode(record.id) {
+            Button(text("bootstrap.retry.check")) { self.model.retryBootstrap(id: record.id) }
+                .buttonStyle(BootstrapControlStyle(primary: true, fillsWidth: true)).background(PanelControlRegion())
+        }
+        Button(text(record.status == .running ? "stop" : "bootstrap.cancel")) { self.model.cancelQuickBootstrap(id: record.id) }
+            .buttonStyle(BootstrapControlStyle(primary: false, fillsWidth: true))
+            .accessibilityIdentifier("bootstrap.cancel").background(PanelControlRegion())
+    }
+
+    @ViewBuilder private func expandedActions(_ record: TaskRecord) -> some View {
+        if self.live {
             if self.model.launchState == .blockedByXcode(record.id) {
-                Button(text("bootstrap.xcode.activate")) { self.model.activateBlockingXcode() }.buttonStyle(BootstrapControlStyle())
-            } else if self.model.launchState == .closingXcode(record.id) {
-                Text(text("bootstrap.xcode.dialog")).mimicFont(.caption).foregroundStyle(.secondary)
+                BootstrapPreparationView(model: self.model, record: record).retryActions
             }
-            if let error = record.error {
-                Text(error).mimicFont(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-            }
-            if record.project.path != self.model.selectedProjectPath {
-                Text(record.project.path).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Button(text(record.status == .running ? "stop" : "bootstrap.cancel")) { self.model.cancelQuickBootstrap(id: record.id) }
+                .buttonStyle(BootstrapControlStyle()).accessibilityIdentifier("bootstrap.cancel").background(PanelControlRegion())
+        } else {
+            Button(taskRepeatTitle(record)) { self.model.repeatTask(record) }
+                .buttonStyle(BootstrapControlStyle(primary: ![.failed, .interrupted].contains(record.status)))
+                .disabled(self.model.switchingBranch || self.model.bootstrapLocked).accessibilityIdentifier("task.repeat")
+            if [.failed, .interrupted].contains(record.status) {
+                Button(text("bootstrap.error.agent")) { self.model.prepareAnalysis(record, inline: true); self.analysisVisible = true }
+                    .buttonStyle(BootstrapControlStyle(primary: true)).accessibilityIdentifier("bootstrap.analyze")
             }
         }
-        Text(text("bootstrap.preparation.description")).mimicFont(.caption).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true).padding(.top, 4)
     }
 
     private var terminal: some View {
         VStack(alignment: .trailing, spacing: 0) {
-            if let record, record.status == .failed || record.status == .interrupted {
+            if self.mode != .expanded, let record, record.status == .failed || record.status == .interrupted {
                 Button(text("bootstrap.error.agent")) {
                     self.model.panelLayout.expanded = .bootstrap
                     self.model.prepareAnalysis(record, inline: true); self.analysisVisible = true
-                }.buttonStyle(BootstrapControlStyle()).mimicFont(.caption)
-                    .fixedSize(horizontal: false, vertical: true).padding(6)
+                }.buttonStyle(BootstrapControlStyle()).mimicFont(.caption).padding(6)
                     .accessibilityIdentifier("bootstrap.analyze")
             }
             if let record {
@@ -146,38 +168,39 @@ struct BootstrapCard: View {
                                       session: self.model.bootstrapTerminal(for: record)).id(record.id)
             } else {
                 BootstrapTerminalPlaceholder(state: .idle, platform: self.model.bootstrapOptions.platform)
+                    .modifier(BootstrapTerminalSelection(visible: self.mode != .mini))
             }
-        }
-        .background(theme.tiled ? theme.color("terminal") : Color(nsColor: BootstrapTerminalTheme.background))
-        .clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityIdentifier("bootstrap.terminal")
+        }.frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+            .background(self.theme.tiled ? self.theme.color("terminal") : Color(nsColor: BootstrapTerminalTheme.background))
+            .clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityIdentifier("bootstrap.terminal")
     }
 }
 
-/// Width changes retain both subviews, including the task-owned terminal host.
-private struct BootstrapCardLayout: Layout {
+/// Both columns receive the same available height; the terminal retains its identity across modes.
+struct BootstrapCardLayout: Layout {
     var mode: BootstrapCardMode
+    var collapsedHeight: CGFloat = MimicMetrics.collapsedCardHeight - 24
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 320
-        if self.mode == .full {
-            let available = max(0, width - 12)
-            let controls = subviews[0].sizeThatFits(ProposedViewSize(width: available * 0.4, height: nil))
-            let terminal = subviews[1].sizeThatFits(ProposedViewSize(width: available * 0.6, height: nil))
-            return CGSize(width: width, height: max(controls.height, terminal.height))
+        if self.mode != .expanded {
+            // Collapsed content receives the grid's shared height, including narrow Full columns.
+            return CGSize(width: width, height: self.collapsedHeight)
         }
         let controls = subviews[0].sizeThatFits(ProposedViewSize(width: width, height: nil))
         let terminal = subviews[1].sizeThatFits(ProposedViewSize(width: width, height: nil))
-        return CGSize(width: width, height: controls.height + terminal.height + (self.mode == .mini ? 0 : 12))
+        return CGSize(width: width, height: controls.height + terminal.height + 12)
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let available = max(0, bounds.width - 12)
         let controlsWidth = self.mode == .full ? available * 0.4 : bounds.width
-        let controlsProposal = ProposedViewSize(width: controlsWidth, height: nil)
+        let height = self.mode == .expanded ? nil : Optional(bounds.height)
+        let controlsProposal = ProposedViewSize(width: controlsWidth, height: height)
         subviews[0].place(at: bounds.origin, anchor: .topLeading, proposal: controlsProposal)
         if self.mode == .full {
             subviews[1].place(at: CGPoint(x: bounds.minX + controlsWidth + 12, y: bounds.minY), anchor: .topLeading,
-                              proposal: ProposedViewSize(width: available * 0.6, height: nil))
+                              proposal: ProposedViewSize(width: available * 0.6, height: height))
         } else {
-            subviews[1].place(at: CGPoint(x: bounds.minX, y: bounds.minY + subviews[0].sizeThatFits(controlsProposal).height + (self.mode == .mini ? 0 : 12)),
+            subviews[1].place(at: CGPoint(x: bounds.minX, y: self.mode == .mini ? bounds.minY : bounds.minY + subviews[0].sizeThatFits(controlsProposal).height + 12),
                               anchor: .topLeading, proposal: ProposedViewSize(width: bounds.width, height: nil))
         }
     }
@@ -211,10 +234,11 @@ struct BootstrapPreparationView: View {
     let record: TaskRecord
     var showCancel = true
     var showState = true
+    var showRetryActions = true
     var body: some View {
         VStack(alignment: .leading, spacing: MimicMetrics.medium) {
             if self.showState { BootstrapStateText(model: self.model, record: self.record) }
-            if self.model.launchState == .blockedByXcode(self.record.id) {
+            if self.showRetryActions, self.model.launchState == .blockedByXcode(self.record.id) {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) { self.retryActions }.fixedSize(horizontal: true, vertical: false)
                     VStack(alignment: .leading, spacing: 8) { self.retryActions }
@@ -226,8 +250,9 @@ struct BootstrapPreparationView: View {
         }.accessibilityIdentifier("bootstrap.preparation")
     }
 
+    /// The detail footer reuses the same retry and activation commands.
     @ViewBuilder
-    private var retryActions: some View {
+    var retryActions: some View {
         Button(text("bootstrap.retry.check")) { self.model.retryBootstrap(id: self.record.id) }.buttonStyle(BootstrapControlStyle(primary: true))
         Button(text("bootstrap.xcode.activate")) { self.model.activateBlockingXcode() }.buttonStyle(BootstrapControlStyle())
     }
@@ -241,13 +266,14 @@ struct BootstrapExecutionProgress: View {
     let record: TaskRecord
     var compact = false
     var showState = true
+    var showClock = true
     private var progress: BootstrapProgress { self.model.bootstrapProgressID == self.record.id ? self.model.bootstrapProgress : BootstrapProgress(options: self.record.options) }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if self.showState { HStack {
                 Text(self.progress.currentStep.map { text("bootstrap.step." + $0.rawValue) } ?? text("bootstrap.process.starting")).mimicFont(.body, weight: .medium).mimicStatus(self.progress.currentStep)
                 Spacer()
-                MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in Text(duration(self.record)).font(MimicMetrics.secondary.monospacedDigit()).foregroundStyle(.secondary) }.mimicImmediate()
+                if self.showClock { MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in Text(duration(self.record)).font(MimicMetrics.secondary.monospacedDigit()).foregroundStyle(.secondary) }.mimicImmediate() }
             }
             }
             BootstrapFillBar(value: self.progress.fraction)

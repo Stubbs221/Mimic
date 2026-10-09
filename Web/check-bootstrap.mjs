@@ -21,16 +21,20 @@ try{
  const setTask=(status,platform='ios',reuse=false,error='')=>page.evaluate(args=>window.mimicBootstrapFixture.task(...args),[status,platform,reuse,error]);
  await page.evaluate(()=>window.mimicBootstrapFixture.empty());await setMode('full');
  assert.equal(await block.locator('.bootstrap-launchers button').count(),2);
- assert.equal(await block.locator('select,details').count(),0);
+ assert.equal(await block.locator('select:visible,details:visible').count(),0);
  assert(await block.locator('.bootstrap-placeholder-header:visible').getByText('Пример вывода',{exact:false}).isVisible());
  assert.equal(await block.getByText('Вывод появится после запуска',{exact:true}).count(),0);
  assert((await block.locator('.bootstrap-placeholder-sample:visible').innerText()).includes('$ mimic bootstrap ios'));
+ await block.locator('.bootstrap-terminal-idle').click();assert.equal(await block.locator('.bootstrap-terminal-idle').getAttribute('data-selected'),'true');assert(!await block.evaluate(n=>n.classList.contains('expanded')));
+ await block.locator('.bootstrap-notice').click();assert(await block.evaluate(n=>n.classList.contains('expanded')),'notice text opens Bootstrap');await setMode('full');await page.mouse.move(0,0);await page.waitForTimeout(500);
  await block.screenshot({path:`${output}/placeholder-idle-full.png`});
- assert(await block.getByText('Закроет Xcode',{exact:true}).isVisible());
+ assert(await block.getByText('Запуск закроет Xcode',{exact:true}).isVisible());
  const iosBox=await block.getByRole('button',{name:'iOS',exact:true}).boundingBox(),tvBox=await block.getByRole('button',{name:'tvOS',exact:true}).boundingBox();assert(tvBox.y>=iosBox.y+iosBox.height,'platform buttons stack vertically at 440px');assert.equal(iosBox.width,104);assert.equal(iosBox.height,28);assert.equal(await block.locator('.bootstrap-platform-icon').count(),2);
  const controls=await block.locator('.bootstrap-controls').boundingBox(),terminal=await block.locator('.bootstrap-terminal-region').boundingBox();
  assert(terminal.x>=controls.x+controls.width,'full terminal occupies the right half');
  assert(Math.abs(terminal.width/controls.width-1.5)<.02,'full columns allocate 40/60');
+ const tile=await block.boundingBox();assert(Math.abs((terminal.y-tile.y)-(tile.y+tile.height-terminal.y-terminal.height))<1,'terminal has equal vertical insets');
+ const notice=await block.locator('.bootstrap-notice').boundingBox();assert(tile.y+tile.height-notice.y-notice.height<=14,'notice is anchored at the bottom');assert.equal(await block.locator('.bootstrap-notice svg circle').count(),1);
  await block.getByRole('button',{name:'iOS',exact:true}).evaluate(node=>{node.click();node.click();});
  assert(!await block.getByRole('button',{name:'iOS',exact:true}).isVisible());
  assert(await block.getByRole('button',{name:'Отменить',exact:true}).isVisible());
@@ -47,7 +51,7 @@ try{
  assert(await block.getByRole('button',{name:'Остановить',exact:true}).isVisible());
  assert.equal(await block.locator('.terminal-host').getAttribute('data-font-size'),'12');
  assert.equal(await block.locator('.bootstrap-stages [data-state=complete]').count(),1);
- const input=block.locator('.xterm-helper-textarea');await input.focus();await input.press('a');await page.waitForTimeout(200);
+ const input=block.locator('.xterm-helper-textarea');await block.locator('.terminal-host').click();await input.focus();await input.press('a');await page.waitForTimeout(200);
  assert((await page.evaluate(()=>window.mimicBootstrapFixture.inputCount))>0,'live encrypted input is delivered');
  await page.evaluate(id=>window.mimicBootstrapFixture.output(id,'FINAL BOOTSTRAP LINE\r\n'),id);await setTask('succeeded','ios',true);await page.waitForTimeout(900);
  assert((await block.locator('.xterm-screen').innerText()).includes('FINAL BOOTSTRAP LINE'),'final output survives completion');
@@ -59,7 +63,7 @@ try{
  await page.evaluate(()=>window.mimicBootstrapFixture.refreshContext());await page.waitForTimeout(800);assert((await block.locator('.xterm-screen').innerText()).includes('FINAL BOOTSTRAP LINE'),'Git metadata refresh preserves the completed task screen');
  const failedID=await setTask('running','tvos');await page.waitForTimeout(800);await setTask('failed','tvos',true,'Не удалось загрузить InfrastructureDependencyRegistryConfiguration из registry.example.invalid');
  const overlay=block.getByRole('button',{name:'Передать ошибку агенту',exact:true});assert(await overlay.isVisible());
- const overlayBounds=await overlay.boundingBox(),screenBounds=await block.locator('.xterm-screen').boundingBox();assert(screenBounds.y>=overlayBounds.y+overlayBounds.height,'error action leaves every output line readable');await overlay.click();
+ const overlayBounds=await overlay.boundingBox(),screenBounds=await block.locator('.xterm-screen').boundingBox();assert(overlayBounds.y>=screenBounds.y+screenBounds.height,'expanded error action follows the terminal');await overlay.click();
  const editor=block.getByRole('textbox',{name:'Диагностика локальной задачи',exact:true});await editor.fill('Edited dependency error');await block.getByRole('textbox',{name:'Комментарий к ошибке',exact:true}).fill('Original bootstrap task');
  await editor.focus();await editor.evaluate(node=>window.bootstrapEditorIdentity=node);await page.waitForTimeout(5100);
  assert(await editor.evaluate(node=>node===window.bootstrapEditorIdentity&&document.activeElement===node),'poll preserves diagnostic editor and focus');
@@ -71,7 +75,7 @@ try{
  for(const width of [320,360,440,560])for(const colorScheme of ['light','dark'])for(const reducedMotion of ['reduce','no-preference'])for(const mode of ['mini','full','expanded']){
   await page.setViewportSize({width,height:1100});await page.emulateMedia({colorScheme,reducedMotion});await setMode(mode);
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'no horizontal document overflow');
-  for(const button of await block.locator('.bootstrap-launchers button').all()){const box=await button.boundingBox();const bounds=await block.boundingBox();assert(box.x>=bounds.x&&box.x+box.width<=bounds.x+bounds.width,'platform action remains reachable');assert(await button.evaluate(n=>n.scrollWidth<=n.clientWidth&&n.scrollHeight<=n.clientHeight),'platform label stays inside its button');}
+  for(const button of await block.locator('.bootstrap-launchers button').all()){const box=await button.boundingBox();const bounds=await block.boundingBox();assert(box.x>=bounds.x&&box.x+box.width<=bounds.x+bounds.width,'platform action remains reachable');assert(await button.evaluate(n=>n.scrollWidth<=n.clientWidth&&n.scrollHeight<=n.clientHeight),`platform label stays inside its button: ${width}/${mode}/${colorScheme} ${JSON.stringify(await button.evaluate(n=>({w:n.clientWidth,sw:n.scrollWidth,h:n.clientHeight,sh:n.scrollHeight})))}`);}
   if(mode==='mini')assert(!await block.locator('.bootstrap-terminal-region').isVisible());
   else{const region=await block.locator('.bootstrap-terminal-region').boundingBox(),bounds=await block.boundingBox();assert(region.x>=bounds.x&&region.x+region.width<=bounds.x+bounds.width);}
   if(mode!=='expanded'){const bounds=await block.boundingBox();for(const node of await block.locator('.bootstrap-controls > :visible').all()){const box=await node.boundingBox();assert(box.y+box.height<=bounds.y+bounds.height-8,`collapsed content fits ${width}/${mode}/${colorScheme}/${reducedMotion}: ${await node.getAttribute('class')} ${JSON.stringify({box,bounds})}`);}}
@@ -111,7 +115,7 @@ try{
    for(const part of await placeholder.locator('.bootstrap-placeholder-content > :visible').all()){
     const box=await part.boundingBox();assert(box.y+box.height<=bounds.y+bounds.height+.5,`${status}/${width}/${mode}/${scale}: state must fit`);
    }
-   if(['failed','interrupted'].includes(status)){const action=await overlay.boundingBox();assert(bounds.y>=action.y+action.height,'error action cannot cover placeholder');}
+   if(['failed','interrupted'].includes(status)){const action=await overlay.boundingBox();assert(mode==='expanded'?action.y>=bounds.y+bounds.height:bounds.y>=action.y+action.height,'error action cannot cover placeholder');}
    assert.equal(await placeholder.locator('.bootstrap-placeholder-sample').getAttribute('aria-hidden'),'true');
    await block.screenshot({path:`${output}/placeholder-${status}-${width}-${colorScheme}-${mode}-${scale}.png`});
   }

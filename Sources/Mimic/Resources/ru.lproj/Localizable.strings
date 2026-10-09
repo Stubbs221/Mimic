@@ -993,6 +993,7 @@
 "ci.compact.progress.unknown" = "Прогресс пока недоступен";
 
 "bootstrap.xcode.launch.notice" = "Запуск закроет Xcode";
+"bootstrap.xcode.launch.narrow" = "Закроет Xcode";
 "bootstrap.xcode.blocked.compact" = "Xcode не закрыт";
 "bootstrap.preparation.description" = "Полная подготовка зависимостей, UI-тестов и проекта. Перед запуском Mimic закроет все экземпляры Xcode; обработайте диалоги сохранения несохранённых изменений в Xcode.";
 "bootstrap.cancel" = "Отменить";
@@ -1082,7 +1083,7 @@
 "branch.codex.open" = "Открыть Codex";
 "branch.codex.unavailable" = "Не удалось открыть Codex. Проверьте установку приложения.";
 "branch.review.acknowledge" = "Подтвердить остановку";
-"branch.stash.backup" = "Резерв изменений:";
+"branch.stash.backup" = "Stash изменений из";
 "branch.error.blocked" = "Дождитесь завершения локальных задач.";
 "branch.error.context" = "Ветка или SHA изменились. Переключение остановлено.";
 "branch.error.missing" = "Целевая локальная ветка не найдена.";
@@ -1134,3 +1135,64 @@
 "settings.details" = "Подробности";
 "settings.diagnostics.help" = "Что показывает график";
 "settings.appearance.previews" = "Сравнить оформление";
+
+"bootstrap.preparation.title" = "О подготовке проекта";
+
+// Самостоятельные сборки, запуск и выбранные тесты.
+"build.action" = "Действие";
+"build.action.run" = "Собрать и запустить";
+"build.action.build" = "Собрать";
+"build.action.tests" = "Тесты";
+"build.action.testsSelected" = "Запустить выбранные тесты";
+"build.action.catalogue" = "Подготовка списка тестов";
+"build.tab.build" = "Сборка";
+"build.tab.run" = "Запуск";
+"build.tab.tests" = "Тесты";
+"build.purpose.compact" = "Сборка, запуск и выбранные тесты";
+"build.purpose" = "Проверьте сборку, запустите приложение или выбранные тесты.";
+"build.chooseScheme" = "Выберите схему";
+"build.chooseDevice" = "Выберите устройство";
+"build.moreSettings" = "Дополнительные настройки";
+"build.parameters.title" = "Параметры запуска";
+"build.loadingSettings" = "Загружаем схемы и устройства…";
+"build.settings.required" = "Выберите совместимые схему и устройство. Если списки пусты — подготовьте проект через Bootstrap и обновите параметры.";
+"build.refreshSettings" = "Обновить схемы и устройства";
+"build.run.cliRequired" = "Полный запуск и подготовка списка тестов доступны через CLI Xcode. Выберите этот способ сборки. Открытый Xcode не требуется.";
+"build.catalogue.explanation" = "Загрузка списка может собрать тестовые продукты. Подготовка не выполняет тесты.";
+"build.catalogue.load" = "Загрузить список тестов";
+"build.tests.search" = "Поиск тестов";
+"build.tests.empty" = "В этой схеме тесты не найдены. Проверьте схему и тестовый план.";
+"build.tests.noMatches" = "По вашему запросу тестов нет.";
+"build.tests.notLoaded" = "Список ещё не загружен. Выберите параметры и нажмите «Загрузить список тестов».";
+"build.tests.selected" = "Выбрано";
+"build.tests.manual" = "Ввести identifiers вручную";
+"build.chooseProduct" = "Выбрать приложение";
+"build.product.explanation" = "Схема собрала несколько приложений. Выберите, какое установить и запустить.";
+"build.destination.selected" = "Выбранный Simulator";
+"build.progress" = "Прогресс";
+"build.progress.active" = "Выполняется — общий объём пока неизвестен";
+"build.progress.stages" = "Завершено этапов: %d из %d";
+"build.phase.products" = "Выбор приложения";
+"build.phase.installation" = "Установка приложения";
+"build.phase.launch" = "Запуск приложения";
+"build.phase.catalogue" = "Подготовка списка тестов";
+"build.error.stage.compilation" = "Не удалось собрать проект. Откройте лог, исправьте ошибку и повторите сборку.";
+"build.error.stage.products" = "Не удалось определить приложение этой сборки. Проверьте продукты схемы и повторите запуск.";
+"build.error.stage.installation" = "Не удалось установить приложение. Проверьте выбранный Simulator и повторите запуск.";
+"build.error.stage.launch" = "Не удалось запустить приложение. Откройте лог и повторите запуск.";
+"build.error.stage.catalogue" = "Не удалось подготовить список тестов. Проверьте схему и откройте лог; тесты не выполнялись.";
+
+"build.progress.tests" = "Выполнено выбранных тестов: %d из %d";
+
+"build.initiator.agent" = "Агент";
+
+"build.project.required" = "Выберите проект вверху панели, затем задайте схему и устройство.";
+
+"build.tests.choosePlan" = "В схеме несколько тестовых планов. Выберите один в дополнительных настройках.";
+
+"build.action.cleanup" = "Очистка артефактов проверки";
+"build.phase.cleanup" = "Очистка артефактов";
+"build.error.sourceChanged" = "Код изменился после выбора проверки. Обновите каталог и выбор тестов.";
+"build.error.sourceUnavailable" = "Не удалось подтвердить версию исходников.";
+"build.error.preparationRequired" = "Профиль требует актуальную подготовку проекта.";
+"build.error.selectionExpired" = "Выбор тестов недоступен в этом подключении. Проверьте выбор заново.";

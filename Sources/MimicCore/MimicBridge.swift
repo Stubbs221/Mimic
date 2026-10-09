@@ -47,12 +47,18 @@ public struct MimicBridgeRequest: Codable, Sendable {
     public let version: Int
     public let id: UUID
     public let threadID: String?
+    /// Helper-owned connection identity for clients that do not supply a host chat ID.
+    /// Neither identity nor the informational client name is a public tool argument.
+    public let clientSessionID: String?
+    public let clientName: String?
     /// Helpers opt in only when they can strip presentation fields into private MCP metadata.
     public let presentationMetadataVersion: Int?
+    public let helperIdentity: AgentHelperIdentity?
     public let method: String
     public let parameters: [String: BridgeValue]
-    public init(method: String, parameters: [String: BridgeValue] = [:], id: UUID = UUID(), version: Int = 3, threadID: String? = nil, presentationMetadataVersion: Int? = nil) {
+    public init(method: String, parameters: [String: BridgeValue] = [:], id: UUID = UUID(), version: Int = 3, threadID: String? = nil, presentationMetadataVersion: Int? = nil, clientSessionID: String? = nil, clientName: String? = nil, helperIdentity: AgentHelperIdentity? = nil) {
         self.version = version; self.id = id; self.threadID = threadID; self.method = method; self.parameters = parameters; self.presentationMetadataVersion = presentationMetadataVersion
+        self.clientSessionID = clientSessionID; self.clientName = clientName; self.helperIdentity = helperIdentity
     }
 }
 

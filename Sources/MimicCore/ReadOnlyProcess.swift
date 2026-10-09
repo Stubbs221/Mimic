@@ -11,7 +11,7 @@ import Foundation
 enum ReadOnlyProcess {
     /// Existing short queries retain their eight-second budget. Catalogue callers distinguish timeout from exit failure.
     static let timeoutExitCode: Int32 = -2
-    static func capture(_ executable: String, _ arguments: [String], directory: String?, environment: [String: String]?, timeout: TimeInterval = 8, maximumBytes: Int = 2 * 1024 * 1024) -> (Int32, String) {
+    static func capture(_ executable: String, _ arguments: [String], directory: String? = nil, environment: [String: String]? = nil, timeout: TimeInterval = 8, maximumBytes: Int = 2 * 1024 * 1024) -> (Int32, String) {
         let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(0, timeout) * 1_000_000_000)
         guard !Task.isCancelled else { return (-1, "") }
         var descriptors: [Int32] = [0, 0]

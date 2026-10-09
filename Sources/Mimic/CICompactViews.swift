@@ -4,14 +4,15 @@ import MimicCore
 
 /// Polling a CI run updates its card without rebuilding the grid or the hidden settings document.
 struct CICompactSummaryView: View {
-    @ObservedObject var state: CIState
+    let state: CIState
     let full: Bool
     let open: (CICompactSummary) -> Void
     var body: some View {
-        if state.compactSummaries.isEmpty {
+        let summaries = state.compactPresentation.summaries
+        if summaries.isEmpty {
             Text(text("ci.compact.empty")).mimicFont(.caption).foregroundStyle(.secondary)
         } else {
-            CICompactRuns(summaries: Array(state.compactSummaries.prefix(full ? 2 : 1)), open: open)
+            CICompactRuns(summaries: Array(summaries.prefix(full ? 2 : 1)), open: open)
         }
     }
 }

@@ -35,11 +35,11 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 .panel-block[data-block="bootstrap"]{--bootstrap-terminal-bg:#F0F3F7;--bootstrap-terminal-fg:#263445}
 :root[data-theme="dark"] .panel-block[data-block="bootstrap"]{--bootstrap-terminal-bg:#202833;--bootstrap-terminal-fg:#DCE3ED}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .panel-block[data-block="bootstrap"]{--bootstrap-terminal-bg:#202833;--bootstrap-terminal-fg:#DCE3ED}}
-.panel-block[data-block="bootstrap"].full-bootstrap:not(.expanded){display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);column-gap:12px;align-content:start}
+.panel-block[data-block="bootstrap"].full-bootstrap:not(.expanded){column-gap:12px}
 .full-bootstrap:not(.expanded)>.block-title{grid-column:1;grid-row:1}
 .full-bootstrap:not(.expanded)>.bootstrap-content{display:contents}
-.full-bootstrap:not(.expanded) .bootstrap-controls{grid-column:1;grid-row:2;margin-top:4px}
-.full-bootstrap:not(.expanded) .bootstrap-terminal-region{grid-column:2;grid-row:1 / span 2;height:128px;min-height:0}
+
+
 .full-bootstrap:not(.expanded) .bootstrap-diagnostic-host{grid-column:1 / -1}
 .bootstrap-content{margin-top:4px}.bootstrap-controls{display:flex;flex-direction:column;gap:4px;min-width:0}
 .bootstrap-terminal-region{display:flex;flex-direction:column;min-width:0;position:relative;height:240px;min-height:0;border-radius:10px;background:var(--bootstrap-terminal-bg);color:var(--bootstrap-terminal-fg);overflow:hidden}
@@ -108,7 +108,7 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 @media(forced-colors:active){.ci-compact-progress{background:GrayText}.ci-compact-progress>div{background:Highlight!important}}
 
 /* Collapsed wide Bootstrap retains a small terminal preview; expanded content sets its height. */
-.full-bootstrap:not(.expanded) .bootstrap-terminal-region{height:128px;min-height:0}
+
 
 
 /* Collapsed runs share remaining height; details retain natural height. */
@@ -198,7 +198,7 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
  :root[data-appearance=tileGrid] .bootstrap-launchers{flex-direction:column;width:104px}
  :root[data-appearance=tileGrid] .bootstrap-launchers button{flex:none;width:100%;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap}
  :root[data-appearance=tileGrid] .panel-block[data-block=bootstrap]:not(.expanded){height:176px}
- :root[data-appearance=tileGrid] .full-bootstrap:not(.expanded) .bootstrap-terminal-region{height:144px}
+
 }
 :root[data-appearance=tileGrid] .bootstrap-terminal-region .xterm-viewport{background:var(--mimic-terminal)!important}
 :root[data-appearance=tileGrid] .bootstrap-terminal-region .terminal-host{background:var(--mimic-terminal)}
@@ -258,8 +258,8 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 :root[data-large-text=true][data-appearance=tileGrid] .panel-block:not(.expanded){height:auto;min-height:160px}
 :root[data-large-text=true][data-appearance=tileGrid] .bootstrap-launchers{flex-direction:column}
 :root[data-large-text=true][data-appearance=tileGrid] .block-summary,:root[data-large-text=true][data-appearance=tileGrid] .tools-favorite{font-size:1rem}
-:root[data-large-text=true][data-appearance=tileGrid] .full-bootstrap:not(.expanded){display:flex;flex-direction:column}
-:root[data-large-text=true][data-appearance=tileGrid] .full-bootstrap:not(.expanded) .bootstrap-terminal-region{width:100%;height:160px}
+
+
 @media(hover:hover) and (pointer:fine){:root[data-appearance=tileGrid] button:hover:not(:disabled){background:var(--mimic-accentSoft)}:root[data-appearance=tileGrid] button.primary:hover:not(:disabled),:root[data-appearance=tileGrid] .bootstrap-launchers button:hover:not(:disabled){background:var(--mimic-ink);opacity:.85}:root[data-appearance=tileGrid] .block-title:hover,:root[data-appearance=tileGrid] .ci-run:hover{background:transparent}}
 @media(prefers-contrast:more){:root[data-appearance=tileGrid] .card,:root[data-appearance=tileGrid] button,:root[data-appearance=tileGrid] input,:root[data-appearance=tileGrid] select{border-color:currentColor}}
 
@@ -289,3 +289,113 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 
 /* Explicit simulator sources · Figma V2, 201:507. */
 .sim-sources{display:grid;gap:10px;margin:4px 0 8px}.sim-source-group{display:grid;gap:5px;min-width:0}.sim-source-label{font-size:11px;color:var(--muted)}.sim-source-image-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.sim-source-input-options{display:flex;gap:6px;flex-wrap:wrap}.sim-source-option{min-width:0;min-height:30px;padding:6px 10px;border:1px solid transparent;border-radius:8px;background:var(--document);color:inherit;font:inherit;font-size:12px;text-align:left;overflow-wrap:anywhere}.sim-source-option[aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 12%,var(--card));border-color:var(--accent)}.sim-source-option:disabled{opacity:.45;cursor:default}.sim-sources[hidden]{display:none}
+
+/* MARK: Bootstrap V2 · Figma 211:11437. Both columns share the 12px card insets. */
+.panel-block[data-block=bootstrap]:not(.expanded){height:160px;padding:12px;display:flex;flex-direction:column}
+.panel-block[data-block=bootstrap].full-bootstrap:not(.expanded){display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);grid-template-rows:auto minmax(0,1fr);align-content:stretch;row-gap:0}
+.panel-block[data-block=bootstrap]:not(.expanded)>.block-title{min-height:20px;height:auto;flex:none}
+.panel-block[data-block=bootstrap]:not(.expanded) .bootstrap-content{margin-top:4px;flex:1;min-height:0;display:flex;flex-direction:column}
+.panel-block[data-block=bootstrap].full-bootstrap:not(.expanded)>.bootstrap-content{display:contents}
+.panel-block[data-block=bootstrap]:not(.expanded) .bootstrap-controls{flex:1;min-height:0}
+.panel-block[data-block=bootstrap].full-bootstrap:not(.expanded) .bootstrap-controls{grid-column:1;grid-row:2;margin-top:6px}
+.panel-block[data-block=bootstrap].full-bootstrap:not(.expanded) .bootstrap-terminal-region{grid-column:2;grid-row:1 / span 2;height:100%;min-height:0;margin:0}
+.bootstrap-result{display:flex;flex-direction:column;gap:4px;min-width:0}
+.panel-block:not(.expanded) .bootstrap-result{margin-top:auto}
+.bootstrap-notice{display:flex;align-items:flex-start;gap:5px;white-space:normal;line-height:14px;margin:2px 0 0}
+.bootstrap-notice-icon{display:inline-flex;flex:none;width:13px;height:14px}
+.bootstrap-notice-icon svg{width:13px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round}
+.bootstrap-details-footer,.bootstrap-history-actions{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;min-width:0}
+.bootstrap-details-footer{margin-top:12px}.bootstrap-details-footer button{font-size:11px;min-height:28px;padding:5px 8px}
+.bootstrap-details-footer .bootstrap-actions{flex-direction:row;flex-wrap:wrap}.bootstrap-details-footer .bootstrap-actions button{width:auto;height:auto}
+.bootstrap-technical{margin-left:auto;max-width:100%;min-width:0;font-size:11px;color:var(--muted)}.bootstrap-technical summary{cursor:pointer}.bootstrap-technical p{white-space:pre-wrap;overflow-wrap:anywhere}
+.bootstrap-technical[open]{flex-basis:100%;margin-left:0}.bootstrap-technical[open] summary{text-align:right}
+.bootstrap-preparation-reference{margin-top:8px;color:var(--muted);font-size:11px}.bootstrap-preparation-reference summary{cursor:pointer}
+.bootstrap-details-footer .bootstrap-agent-overlay{order:initial;margin:0;position:static;max-width:100%}
+.bootstrap-error{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.bootstrap-history-row{border-bottom:1px solid var(--line);min-width:0}
+.bootstrap-history-row>.item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;border:0;padding:10px 0;position:relative}
+.bootstrap-history-row>.item[aria-expanded=true]{background:transparent}
+.bootstrap-history-row .item-title{grid-column:1;font-weight:600;padding-right:14px}
+.bootstrap-history-row .status{grid-column:2;grid-row:1;padding-right:16px}
+.bootstrap-history-row .item-sub{grid-column:1 / -1;margin:0;line-height:1.4;overflow-wrap:anywhere}
+.bootstrap-history-row .item-timing{grid-column:1 / -1;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.bootstrap-history-row .item-chevron{position:absolute;right:0;top:10px;color:var(--muted)}
+.bootstrap-history-details{display:flex;flex-direction:column;gap:12px;padding:4px 0 12px;min-width:0}
+.bootstrap-history-step{margin:0;font-size:12px;color:inherit}.bootstrap-history-details .bootstrap-stages{margin:0}
+.bootstrap-history-details .terminal-host{height:240px;flex:none;margin:0;border-radius:10px}
+.bootstrap-history-details .bootstrap-details-footer{margin:0}.bootstrap-history-details .xterm-viewport{background:transparent!important}
+.bootstrap-history-details [hidden],.bootstrap-history-details[hidden]{display:none!important}
+@media(max-width:479px){:root[data-appearance=tileGrid] .panel-block[data-block=bootstrap]:not(.expanded){height:176px}}
+:root[data-large-text=true][data-appearance=tileGrid] .panel-block[data-block=bootstrap]:not(.expanded){height:auto;min-height:calc(160px * var(--bootstrap-text-scale,1.5))}
+:root[data-large-text=true][data-appearance=tileGrid] .panel-block[data-block=bootstrap].full-bootstrap:not(.expanded){display:grid;flex-direction:initial}
+:root[data-large-text=true][data-appearance=tileGrid] .panel-block[data-block=bootstrap].full-bootstrap:not(.expanded) .bootstrap-terminal-region{height:auto;width:auto;align-self:stretch;contain:size}
+:root[data-large-text=true][data-appearance=tileGrid] .bootstrap-launchers button{height:auto;min-height:28px;font-size:.85rem;line-height:1.25;white-space:normal}
+:root[data-large-text=true][data-appearance=tileGrid] .bootstrap-launchers{width:100%}
+:root[data-large-text=true][data-appearance=tileGrid] :is(.bootstrap-state,.bootstrap-time,.bootstrap-notice,.bootstrap-platform){font-size:.75rem;line-height:1.25}
+
+.bootstrap-details-footer .bootstrap-launchers{flex-direction:row;width:auto;flex-wrap:wrap}.bootstrap-details-footer .bootstrap-launchers button{width:auto;flex:none;min-width:76px}
+
+.bootstrap-details-footer .bootstrap-launchers button{height:auto;display:inline-flex;align-items:center;justify-content:center}
+
+:root[data-large-text=true] .bootstrap-history-row :is(.item-sub,.item-timing,.status,.bootstrap-technical,.bootstrap-details-footer button){font-size:.75rem;line-height:1.4}
+:root[data-large-text=true] .bootstrap-history-details :is(.bootstrap-history-step,.bootstrap-error){font-size:.85rem;line-height:1.4}
+:root[data-appearance=legacy] .panel-block[data-block=bootstrap]:not(.expanded){height:auto;min-height:160px}
+:root[data-appearance=legacy] .panel-block[data-block=bootstrap].full-bootstrap:not(.expanded) .bootstrap-terminal-region{contain:size}
+
+/* F1 selection is painted above output and placeholders without changing terminal geometry. */
+.terminal-selectable{position:relative;border-radius:10px}
+.terminal-selectable[data-selected=false] .xterm{pointer-events:none}
+.terminal-selectable[data-selected=true]::after{content:"";position:absolute;inset:0;border:2px solid var(--mimic-accent,var(--accent));border-radius:10px;pointer-events:none;z-index:2}
+@media(forced-colors:active){.terminal-selectable[data-selected=true]::after{border-color:Highlight}}
+
+/* All compact tiles share a height, including Bootstrap and enlarged text. Extended still hugs content. */
+#app .panel-block:not(.expanded){height:calc(var(--collapsed-card-height,160px) * var(--bootstrap-text-scale,1));min-height:0}
+.panel-block[data-block="builds"]:not(.expanded){display:flex;flex-direction:column}
+.panel-block[data-block="builds"]:not(.expanded)>.block-title{flex:none}
+.panel-block[data-block="builds"]:not(.expanded)>.block-summary{display:flex;flex:1;min-height:0;margin-top:4px;-webkit-line-clamp:unset;overflow:visible}
+.panel-block[data-block="builds"]:not(.expanded) .build-card-controls{flex:1;gap:4px}
+.build-card-controls[data-mode]:not([data-mode=extended])>div:first-child{gap:4px}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-launch-actions{display:flex;flex-direction:column;gap:4px;min-width:0}
+.build-card-controls[data-mode=full] .build-full-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4px 12px}
+.build-card-controls[data-mode=full] .build-settings-fields{gap:4px}
+.build-card-controls[data-mode=full] .build-launch-actions{grid-column:2;grid-row:1 / span 2}
+.build-card-controls[data-mode=full] .build-full-controls>.quiet{grid-column:1;font-size:calc(11px * var(--bootstrap-text-scale,1));padding:0;text-align:left}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-settings-fields label{margin:0}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-settings-fields select{padding:3px 6px}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-secondary-actions{flex-wrap:nowrap}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-secondary-actions button{flex:1 1 0;min-width:0}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-current-work{margin-top:auto;gap:4px}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-current-work>p,.build-card-controls[data-mode]:not([data-mode=extended])>.error{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-current-work>.build-work-identity{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;line-height:1.3}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-phase span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.build-work-actions{display:flex;gap:8px;align-items:center;min-width:0}
+.build-card-controls{display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:1.4;min-width:0}
+.build-card-controls>div{min-width:0}.build-card-controls p,.build-popover p{margin:0;overflow-wrap:anywhere}
+.build-card-controls button,.build-popover button{white-space:normal;overflow-wrap:anywhere;min-height:32px}
+.build-card-controls>div:first-child{display:flex;flex-direction:column;gap:8px}
+.build-secondary-actions{display:flex;flex-wrap:wrap;gap:8px}.build-secondary-actions button{flex:1 1 115px}
+.build-action{width:100%;font-size:13px}.build-parameter-summary{text-align:left;font-size:11px;padding:0}
+.build-settings-fields,.build-settings,.build-test-picker{display:flex;flex-direction:column;gap:10px}
+.build-settings-fields label,.build-settings details label{display:flex;flex-direction:column;gap:4px;min-width:0}
+.build-settings select,.build-settings-fields select{width:100%;min-width:0}
+.build-settings details{margin:0}.build-settings details label{margin:8px 0}
+.build-tabs{display:flex;gap:4px}.build-tabs button{flex:1;min-width:0}.build-tabs [aria-selected="true"]{background:var(--mimic-ink,#232323);color:var(--mimic-paper,#fff)}
+.build-current-work{display:flex;flex-direction:column;gap:6px;font-size:11px}.build-phase{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.build-phase span{overflow-wrap:anywhere}.build-phase time{font-variant-numeric:tabular-nums;flex-shrink:0}
+.build-progress{height:6px;overflow:hidden;background:var(--line);border-radius:8px;position:relative}.build-progress-fill{height:100%;width:100%;background:var(--block-accent,#7166a5);transform-origin:left;border-radius:8px;transition:transform .2s ease}
+.build-progress.indeterminate .build-progress-fill{width:32%;animation:build-activity 1.6s ease-in-out infinite}
+@keyframes build-activity{0%{transform:translateX(-100%)}100%{transform:translateX(420%)}}
+@media(prefers-reduced-motion:reduce){.build-progress-fill{transition:none}.build-progress.indeterminate .build-progress-fill{animation:none;transform:translateX(105%)}}
+@media(prefers-contrast:more){.build-progress{outline:1px solid currentColor}.build-progress-fill{background:currentColor}.build-test-row:focus-within{outline:2px solid currentColor}}
+.build-popover{position:fixed;inset:auto;margin:0;padding:16px;max-height:calc(100vh - 24px);overflow:auto;border:1px solid var(--line);border-radius:18px;background:var(--card);color:var(--color-text-primary,var(--mimic-ink,#232323));box-shadow:0 12px 36px #0003;font-size:13px;display:none}
+.build-popover:popover-open{display:flex;flex-direction:column;gap:12px}.build-popover-header{display:flex;justify-content:space-between;align-items:baseline;gap:8px}.build-popover-header h3{margin:0}.build-popover button{font-size:13px}
+.build-test-list{max-height:240px;overflow:auto;display:flex;flex-direction:column;gap:6px}.build-test-list strong{overflow-wrap:anywhere;margin-top:4px}.build-test-row{display:flex;align-items:flex-start;gap:8px;overflow-wrap:anywhere}.build-test-row input{flex-shrink:0;width:auto;margin:3px 0}.build-test-picker textarea{width:100%;min-height:70px}
+
+/* Follow the host's text scale while keeping the card and popover adaptive. */
+.build-card-controls,.build-popover{font-size:calc(13px * var(--bootstrap-text-scale,1))}
+.build-card-controls button,.build-popover button,.build-action{font-size:inherit}
+.build-current-work,.build-parameter-summary{font-size:calc(11px * var(--bootstrap-text-scale,1))}
+.build-card-controls input,.build-card-controls select,.build-popover input,.build-popover select,.build-popover textarea{font-size:inherit}
+.build-card-controls[data-mode]:not([data-mode=extended]) button{min-height:28px;padding:3px 8px;line-height:1.4}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-parameter-summary{min-height:0;padding:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.build-card-controls[data-mode=full] .build-full-controls>.quiet{min-height:0;padding:0}
+.build-card-controls .build-progress{flex:none}

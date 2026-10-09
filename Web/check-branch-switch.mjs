@@ -65,6 +65,19 @@ try{
  await page.getByRole('button',{name:'Обновить',exact:true}).click();await page.waitForFunction(()=>window.fixtureState.branchSwitch.delivery==='unknown');
  await page.getByRole('button',{name:'Обновить',exact:true}).click();assert.equal(await page.evaluate(()=>window.fixtureMessages.length),2,'No retry after uncertain send');
  await page.emulateMedia({colorScheme:'dark'});await page.screenshot({path:'/private/tmp/mimic-branch-dark.png'});
+ await page.evaluate(()=>{window.fixtureState.branchSwitch={...window.fixtureState.branchSwitch,phase:'succeeded',holdsCheckout:false,sourceBranch:'develop',stashName:'Mimic switch fixture develop → target',stashSHA:'backup',completedAt:Date.now()};});
+ await page.getByRole('button',{name:'Обновить',exact:true}).click();
+ await page.locator('.branch-progress').waitFor({state:'visible'});
+ assert.equal(await page.locator('.branch-backup').textContent(),'Stash изменений из develop');
+ await page.waitForTimeout(3000);
+ await page.getByRole('button',{name:'Обновить',exact:true}).click();
+ await page.locator('.branch-progress').waitFor({state:'hidden',timeout:3000});
+ await page.getByRole('button',{name:'Обновить',exact:true}).click();
+ assert.equal(await page.locator('.branch-progress').isVisible(),false);
+ await page.evaluate(()=>{window.fixtureState.branchSwitch.phase='needsReview';});
+ await page.getByRole('button',{name:'Обновить',exact:true}).click();
+ await page.waitForTimeout(5100);
+ assert.equal(await page.locator('.branch-progress').isVisible(),true);
  assert.deepEqual(errors,[]);
  console.log('PASS: saved checkbox, exact checkout/request ID, long branch at 320/360/520, automatic new-chat handoff, lock, no duplicates or uncertain retries.');
 }finally{await browser?.close();server.close();}

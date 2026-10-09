@@ -36,6 +36,10 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
     private(set) var ownerProject: ProjectContext?
     private var ownerDeveloper: String?
     private var driver: (any SimulatorNativeDriver)?
+    var onAgentOperation: (SimulatorActivity) -> Void = { _ in }
+    var onAgentSessionClosed: (UUID) -> Void = { _ in }
+    private var appRequests: [UUID: SimulatorAppRequest] = [:]
+    private var completedRecordings: [UUID: SimulatorRecordingResult] = [:]
     private var pending: [UUID: (AppleSimulatorAction?, UInt64?)] = [:]
     // Process-local key prevents fingerprints of low-entropy typed secrets becoming a dictionary oracle.
     private let fingerprintKey = SymmetricKey(size: .bits256)
@@ -176,6 +180,8 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
         child.mayAdmit = { [weak self] in self?.mayAdmit() == true }
         child.mayStartInput = { [weak self] in self?.mayStartInput() == true }
         child.schedule = { [weak self] in self?.schedule() }
+        child.onAgentOperation = { [weak self] in self?.onAgentOperation($0) }
+        child.onAgentSessionClosed = { [weak self] in self?.onAgentSessionClosed($0) }
         child.didUseDevice = { [weak self] in self?.didUseDevice($0, $1) }
         child.now = { [weak self] in self?.now() ?? Date() }
         childSubscriptions.append(child.objectWillChange.sink { [weak self] in self?.objectWillChange.send() })
@@ -240,7 +246,7 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
     }
     private func updateVideoVisibility(_ owner: SimulatorCoordinator) {
         for (id, value) in viewers where value.owner === owner { owner.video?.viewerVisible(id, value.visible && videoViewers.contains(id)) }
-        owner.video?.visibility(viewers.contains { videoViewers.contains($0.key) && $0.value.owner === owner && $0.value.visible }) }
+        owner.video?.visibility(owner.video?.recording != nil || viewers.contains { videoViewers.contains($0.key) && $0.value.owner === owner && $0.value.visible }) }
     private func startViewerTimer() {
         guard viewerTimer == nil else { return }
         viewerTimer = Task { [weak self] in
@@ -272,7 +278,7 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
     func stopVideo(_ viewer: UUID, thread: String) {
         guard let value = viewers[viewer], value.thread == thread else { return }
         videoViewers.remove(viewer); value.owner.video?.revoke(viewer); updateVideoVisibility(value.owner)
-        if !viewers.contains(where: { videoViewers.contains($0.key) && $0.value.owner === value.owner }) { value.owner.video?.stop(); value.owner.video = nil }
+        if value.owner.video?.recording == nil && !viewers.contains(where: { videoViewers.contains($0.key) && $0.value.owner === value.owner }) { value.owner.video?.stop(); value.owner.video = nil }
     }
     func videoSize(_ viewer: UUID, thread: String, width: Int, height: Int) throws {
         guard let value = viewers[viewer], value.thread == thread, value.visible, (2...4096).contains(width), (2...4096).contains(height) else { throw AppleSimulatorError.arguments }
@@ -443,11 +449,11 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
         guard project.map(accepts) ?? true else { throw BuildError.context }
         return .object(["context": project.map { MimicIntegration.context($0, profile: currentProfile()) } ?? .null, "developer": .string(developer), "version": .string(version), "availability": .string(availability.rawValue), "devices": try BridgeValue.encode(devices.filter { $0.runtime.hasPrefix("iOS ") }), "deviceProfiles": SimulatorDeviceGeometry.profiles(devices: devices, developer: developer), "protocolVersion": .number(3), "capabilities": .object(["version": .number(3), "keys": .array([.string("backspace"), .string("return")]), "forwardDelete": .bool(false), "directInputReady": .bool(false), "geometry": .string("logical-points"), "adaptiveVideo": .bool(true)]), "recentIDs": .array(recentIDs(developer).map { .string($0.uuidString) }), "authorizationPending": .bool(accessPicker != nil), "authorizationError": accessError.map(BridgeValue.string) ?? .null, "workspaceAuthorized": .bool(accessWorkspace(developer: developer) != nil), "visible": .bool(Int(version.split(separator: ".").first ?? "0") ?? 0 >= 27), "state": metadata])
     }
-    func submit(id: UUID, kind: SimulatorActivity.Kind, project: ProjectContext, device: UUID, sessionID: UUID? = nil, action: AppleSimulatorAction? = nil, revision: UInt64? = nil) async throws -> SimulatorActivity {
+    func submit(id: UUID, kind: SimulatorActivity.Kind, project: ProjectContext, device: UUID, sessionID: UUID? = nil, action: AppleSimulatorAction? = nil, revision: UInt64? = nil, appRequest: SimulatorAppRequest? = nil) async throws -> SimulatorActivity {
         guard !hasContinuousInput else { throw AppleSimulatorError.occupied }
         if !isChild {
-            if let existing = children.values.first(where: { $0.activity(id) != nil }) { return try await existing.submit(id: id, kind: kind, project: project, device: device, sessionID: sessionID, action: action, revision: revision) }
-            if let sessionID, let child = children.values.first(where: { $0.descriptor?.id == sessionID }) { return try await child.submit(id: id, kind: kind, project: project, device: device, sessionID: sessionID, action: action, revision: revision) }
+            if let existing = children.values.first(where: { $0.activity(id) != nil }) { return try await existing.submit(id: id, kind: kind, project: project, device: device, sessionID: sessionID, action: action, revision: revision, appRequest: appRequest) }
+            if let sessionID, let child = children.values.first(where: { $0.descriptor?.id == sessionID }) { return try await child.submit(id: id, kind: kind, project: project, device: device, sessionID: sessionID, action: action, revision: revision, appRequest: appRequest) }
             if kind == .start, descriptor != nil, descriptor?.deviceID != device {
                 let child = childOwner(device: device, developer: try await resolveDeveloper(project))
                 return try await child.submit(id: id, kind: kind, project: project, device: device)
@@ -455,10 +461,12 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
         }
         let admittedProfile = currentProfile()
         guard kind == .action ? action != nil && revision != nil : action == nil && revision == nil else { throw AppleSimulatorError.arguments }
-        let fingerprint = try requestFingerprint(action: action, revision: revision)
+        let isApp = kind == .launch || kind == .deeplink
+        guard isApp == (appRequest != nil) else { throw BuildError.arguments }
+        let fingerprint = isApp ? Data(HMAC<SHA256>.authenticationCode(for: try JSONEncoder().encode(appRequest), using: fingerprintKey)) : try requestFingerprint(action: action, revision: revision)
         if let existing = activity(id) {
             guard existing.kind == kind, existing.project == project, existing.deviceID == device, existing.sessionID == sessionID else { throw BuildError.duplicate }
-            if kind == .action {
+            if kind == .action || isApp {
                 // Legacy/restarted requests have no trusted payload identity: never assert success.
                 guard fingerprints[id] == fingerprint else { throw BuildError.duplicate }
             }
@@ -478,14 +486,15 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
         if kind != .close { guard accepts(project), try await inspect(project) == project, mayAdmit(), !stopped else { throw BuildError.context } }
         guard kind == .close || supports(developer) else { throw AppleSimulatorError.unsupported }
         // Recheck after admission suspensions; another caller may have reserved this request or session.
-        if activity(id) != nil { return try await submit(id: id, kind: kind, project: project, device: device, sessionID: sessionID, action: action, revision: revision) }
+        if activity(id) != nil { return try await submit(id: id, kind: kind, project: project, device: device, sessionID: sessionID, action: action, revision: revision, appRequest: appRequest) }
         if kind == .start { guard descriptor == nil, !localRecords.contains(where: { $0.kind == .start && $0.status.isPending }) else { throw AppleSimulatorError.occupied } }
         else { guard descriptor?.id == sessionID, ownerDeveloper == developer else { throw BuildError.context } }
         try checkCapacity()
         var record = SimulatorActivity(id: id, project: project, developer: developer, deviceID: device, sessionID: sessionID, kind: kind)
         record.profileID = admittedProfile?.id; record.profileRevision = admittedProfile?.revision
-        localRecords.append(record); pending[id] = (action, revision); fingerprints[id] = fingerprint
-        do { try persist() } catch { localRecords.removeAll { $0.id == id }; ledger[id] = nil; pending[id] = nil; fingerprints[id] = nil; throw error }
+        record.observedRevision = revision
+        localRecords.append(record); pending[id] = (action, revision); appRequests[id] = appRequest; fingerprints[id] = fingerprint
+        do { try persist() } catch { localRecords.removeAll { $0.id == id }; ledger[id] = nil; pending[id] = nil; appRequests[id] = nil; fingerprints[id] = nil; throw error }
         schedule(); return localRecords.first { $0.id == id } ?? record
     }
     /// Includes evicted completed IDs so public lookup and duplicate admission stay idempotent.
@@ -554,6 +563,30 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
                         }
                         frame = try await driver.perform(id, action: action, revision: nativeRevision); publicRevision += 1
                         if case let .orientation(value) = action { orientation = value.rawValue; video?.orientation(value.rawValue) }
+                    } else if record.kind == .launch || record.kind == .deeplink {
+                        guard let app = appRequests[record.id] else { throw BuildError.context }
+                        let revision = try await Task.detached { try SourceRevisionReader.capture(path: record.project.path, exclusions: app.exclusions) }.value
+                        guard revision == app.revision, accepts(record.project), !stopped else { throw BuildError.sourceChanged }
+                        var arguments: [[String]] = []
+                        if record.kind == .launch {
+                            guard let artifact = app.artifact, let root = app.artifactRoot else { throw BuildError.context }
+                            let currentArtifact = try await Task.detached { try ManagedArtifactReader.inspect(URL(fileURLWithPath: artifact.path), root: URL(fileURLWithPath: root)) }.value
+                            guard currentArtifact == artifact, !stopped, accepts(record.project) else { throw BuildError.sourceChanged }
+                            guard let product = app.product, product.path == artifact.path, app.deeplink == nil,
+                                  let data = try? Data(contentsOf: URL(fileURLWithPath: product.path).appendingPathComponent("Info.plist")),
+                                  let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any], plist["CFBundleIdentifier"] as? String == product.bundleIdentifier else { throw BuildError.configuration }
+                            arguments = [["simctl", "install", record.deviceID.uuidString, product.path], ["simctl", "launch", record.deviceID.uuidString, product.bundleIdentifier]]
+                        } else {
+                            guard app.product == nil, let url = app.deeplink else { throw BuildError.arguments }
+                            arguments = [["simctl", "openurl", record.deviceID.uuidString, url]]
+                        }
+                        frame = nil; nativeCallStarted = true
+                        let developer = record.developer
+                        for command in arguments {
+                            let result = await Task.detached { EnvironmentInspector.boundedCapture("/usr/bin/xcrun", command, environment: ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "DEVELOPER_DIR": developer, "LANG": "en_US.UTF-8"], timeout: 30, maximumBytes: 64 * 1024) }.value
+                            guard result.0 == 0 else { throw AppleSimulatorError.connectionLost }
+                        }
+                        frame = try await driver.capture(id); publicRevision += 1
                     } else if record.kind == .install {
                         try await validateInstallContext(record)
                         let workspace = URL(fileURLWithPath: record.project.workspace)
@@ -587,6 +620,9 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
                 }
                 if descriptor == nil { await driver?.disconnect(); driver = nil }
             }
+            if let index = localRecords.firstIndex(where: { $0.id == record.id }), frame != nil { localRecords[index].resultRevision = publicRevision }
+            if let completed = activity(record.id) { onAgentOperation(completed) }
+            appRequests[record.id] = nil
             pending[record.id] = nil; activeID = nil; try? persist(); schedule()
             if stopped { await cleanupForExit() }
         }
@@ -645,7 +681,33 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
             }
         }
     }
-    private func clearSession() { retireInput(); video?.stop(); video = nil; descriptor = nil; frame = nil; driver = nil; ownerProject = nil; ownerDeveloper = nil; leaseTimer?.cancel(); leaseTimer = nil }
+    /// Recording shares the existing native video ingress and keeps it visible without a panel.
+    func beginAgentRecording(session: UUID, path: URL) async throws {
+        guard let owner = sessionOwner(session), let descriptor = owner.descriptor, let developer = owner.ownerDeveloper, owner.video?.recording == nil else { throw AppleSimulatorError.noSession }
+        if owner.video == nil { owner.video = SimulatorVideo() }
+        await owner.video?.start(device: descriptor.deviceID, developer: developer)
+        guard owner.descriptor?.id == session, owner.video?.isRunning == true else { throw AppleSimulatorError.connectionLost }
+        owner.video?.recording = SimulatorRecording(path: path); owner.video?.requestRecordingKeyframe(); owner.video?.visibility(true)
+    }
+    func finishAgentRecording(session: UUID) async throws -> SimulatorRecordingResult {
+        if let owner = sessionOwner(session), let recording = owner.video?.recording {
+            owner.video?.recording = nil
+            let result = await recording.finish(); owner.completedRecordings[session] = result
+            updateVideoVisibility(owner); return result
+        }
+        if let result = completedRecordings[session] ?? children.values.compactMap({ $0.completedRecordings[session] }).first { return result }
+        throw AppleSimulatorError.noSession
+    }
+    private func clearSession() {
+        if let id = descriptor?.id {
+            onAgentSessionClosed(id)
+            if let recording = video?.recording {
+                video?.recording = nil
+                Task { completedRecordings[id] = await recording.finish(interrupted: true) }
+            }
+        }
+        retireInput(); video?.stop(); video = nil; descriptor = nil; frame = nil; driver = nil; ownerProject = nil; ownerDeveloper = nil; leaseTimer?.cancel(); leaseTimer = nil
+    }
     private func update(_ id: UUID, status: BuildStatus, error: String? = nil) { if let index = localRecords.firstIndex(where: { $0.id == id }) { localRecords[index].status = status; localRecords[index].errorCode = error; try? persist() } }
     private func persist() throws {
         guard !storageUnavailable else { throw BuildError.unavailable }

@@ -184,7 +184,8 @@ struct PanelGrid: View {
     @Environment(\.mimicTextScale) private var textScale
     @ObservedObject var model: TaskCoordinator
     @ObservedObject var layout: PanelLayoutController
-    @StateObject private var frameStore = PanelFrameStore()
+    // Geometry is an input cache. Observing its publisher here would feed layout back into body updates.
+    @State private var frameStore: PanelFrameStore
     private var frames: [String: CGRect] { frameStore.logical }
     @State private var dragTarget: PanelInsertionTarget?
     @State private var lastHitPoint: CGPoint?
@@ -198,7 +199,10 @@ struct PanelGrid: View {
     @State private var dragMorph: PanelDragMorph?
     @State private var dragMorphPending = false
     @State private var dragMorphScale = CGSize(width: 1, height: 1)
-    @State private var hovered: PanelBlockKind?
+    /// The same measured geometry drives drag hit testing and fixture verification of complete tiles.
+    init(model: TaskCoordinator, layout: PanelLayoutController, frameStore: PanelFrameStore = PanelFrameStore()) {
+        self.model = model; self.layout = layout; _frameStore = State(initialValue: frameStore)
+    }
     private var visibleExpansion: PanelBlockKind? { layout.editing || layout.removing || layout.dragging != nil ? nil : layout.expanded }
     private var policy: MimicMotionPolicy { MimicMotionPolicy(source: .pointer, reduceMotion: model.motionSettings.nativeReduceMotion, multiplier: model.motionSettings.multiplier) }
     private var accessibility = MimicAccessibility()
@@ -241,7 +245,8 @@ struct PanelGrid: View {
                         if let block = cell.block { card(block, row: cell.row) }
                         else { emptySlot(cell) }
                     }.opacity(hidden ? 0 : 1).allowsHitTesting(!hidden).disabled(hidden).accessibilityHidden(hidden)
-                        .zIndex(layout.dragging == cell.block && cell.block != nil ? 100 : hovered == cell.block && cell.block != nil ? 10 : 0)
+                        .modifier(PanelCardFeedback(enabled: cell.block != nil && !hidden, lifted: layout.dragging == cell.block && cell.block != nil,
+                                                    morphScale: dragMorphScale, grabAnchor: grabAnchor, radius: theme.cardRadius, policy: policy))
                         .transaction { if layout.dragging == cell.block && cell.block != nil { $0.animation = nil } }
                 }
             }
@@ -277,7 +282,8 @@ struct PanelGrid: View {
             .onChange(of: layout.dragging) { _, block in
                 if block == nil { dragTarget = nil; lastHitPoint = nil; dragValid = false; activeZone = nil; initialGrabOffset = nil; dragResize = nil; dragMorph = nil; dragMorphPending = false; dragMorphScale = CGSize(width: 1, height: 1) }
             }
-            .onChange(of: frameStore.snapshot) { old, next in
+            .onReceive(frameStore.changes) { change in
+                let old = change.old, next = change.next
                 if let block = layout.dragging, let offset = initialGrabOffset, let frame = next[block.rawValue] {
                     grabAnchor = UnitPoint(x: min(1, max(0, offset.x / max(1, frame.width))), y: min(1, max(0, offset.y / max(1, frame.height))))
                     initialGrabOffset = nil
@@ -333,7 +339,6 @@ struct PanelGrid: View {
 
     func card(_ block: PanelBlockKind, row: UUID) -> some View {
         let expanded = visibleExpansion == block
-        let lifted = layout.dragging == block
         let compactTools = block == .utils && !expanded && !layout.editing
         let compactSimulators = block == .simulators && !expanded && theme.tiled
         return VStack(alignment: .leading, spacing: 0) {
@@ -346,7 +351,9 @@ struct PanelGrid: View {
                     if layout.editing { editHeader(block) }
                     else {
                         blockHeader(block, expanded: expanded).padding(.bottom, compactTools ? 6 : 0)
-                        if !expanded, block == .ci {
+                        if !expanded, block == .builds {
+                            BuildCardView(model: model, builds: model.builds, full: layout.layout.size(of: block) == .full)
+                        } else if !expanded, block == .ci {
                             CICompactSummaryView(state: model.ci, full: layout.layout.size(of: block) == .full, open: { model.showCI($0) })
                         } else if !expanded, block == .ai {
                             AICompactProviders(usage: model.aiUsage, full: layout.layout.size(of: block) == .full, open: { open(.ai) })
@@ -357,16 +364,23 @@ struct PanelGrid: View {
                         } else if !expanded { Text(summary(block)).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(2).help(summary(block)) }
                     }
                 }
-                // A single container prevents retained ForEach children from reserving collapsed row gaps.
-                MimicCollapse(expanded: expanded && block != .bootstrap, source: layout.dragging == nil ? model.navigationSource : .keyboard, retainsContent: true) {
-                    VStack(alignment: .leading, spacing: 8) { content(block) }
-                        .environment(\.mimicPresentationVisible, expanded && !layout.editing && model.panelPage == .home && model.panelVisible)
-                        // Hosted forms can expose only their container to AppKit hit testing.
-                        // Keep their entire surface out of the card's click/hold recognizer.
-                        .background(PanelControlRegion())
-                }.frame(minWidth: 0, maxWidth: .infinity)
+                // Bootstrap owns its retained subtree; another hidden card would reserve spacing and reparent its screen.
+                if block != .bootstrap {
+                    // A single container prevents retained ForEach children from reserving collapsed row gaps.
+                    MimicCollapse(expanded: expanded, source: layout.dragging == nil ? model.navigationSource : .keyboard, retainsContent: true) {
+                        VStack(alignment: .leading, spacing: 8) { content(block) }
+                            .environment(\.mimicPresentationVisible, expanded && !layout.editing && model.panelPage == .home && model.panelVisible)
+                            // Hosted forms can expose only their container to AppKit hit testing.
+                            // Keep their entire surface out of the card's click/hold recognizer.
+                            .background(PanelControlRegion())
+                    }.frame(minWidth: 0, maxWidth: .infinity)
+                }
             }.frame(maxHeight: (block == .ci || block == .ai || block == .simulators || block == .utils) && !expanded && !layout.editing ? .infinity : nil, alignment: .topLeading)
-        }.padding(compactSimulators ? SimulatorCompactLayout.tileInsets : MimicMetrics.cardInsets).frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+                // Bootstrap marks only its controls and terminal so its text and free surface can disclose.
+                // Other hosted forms retain their whole-surface control exclusion.
+                .background { if block != .bootstrap || layout.editing { PanelControlRegion() } }
+        }.padding(block == .bootstrap ? EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12) : compactSimulators ? SimulatorCompactLayout.tileInsets : MimicMetrics.cardInsets).frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+            // Content changes never give one collapsed tile a different height from its neighbours.
             .frame(height: expanded ? nil : MimicMetrics.collapsedCardHeight * (theme.tiled ? max(1, textScale) : 1), alignment: .topLeading)
             .modifier(PanelCardBackground(block: block))
             .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
@@ -385,18 +399,7 @@ struct PanelGrid: View {
                 }
             }
             .environment(\.mimicInsideSurface, true)
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: theme.cardRadius).fill(.black).shadow(color: .black.opacity(0.10), radius: 5, y: 3).opacity(hovered == block && !lifted ? 1 : 0)
-                    RoundedRectangle(cornerRadius: theme.cardRadius).fill(.black).shadow(color: .black.opacity(0.18), radius: 12, y: 10).opacity(lifted ? 1 : 0)
-                }
-            }
-            .scaleEffect(x: lifted ? dragMorphScale.width : 1, y: lifted ? dragMorphScale.height : 1, anchor: grabAnchor)
-            .scaleEffect(policy.moves ? lifted ? 1.04 : hovered == block ? 1.02 : 1 : 1, anchor: lifted ? grabAnchor : .center)
-            .animation(policy.animation(.feedback), value: hovered == block)
-            .animation(policy.animation(.feedback), value: lifted)
-            .onHover { inside in hovered = inside ? block : hovered == block ? nil : hovered }
-            .help(text(layout.removing ? "panel.layout.remove" : "panel.layout.drag.hint"))
+            .modifier(PanelCardTooltip(message: text(layout.removing ? "panel.layout.remove" : "panel.layout.drag.hint"), preservesChildHelp: (block == .bootstrap || block == .builds) && !layout.removing))
             .id(block.scrollID).accessibilityIdentifier("panel.block." + block.rawValue)
     }
     private func blockHeader(_ block: PanelBlockKind, expanded: Bool) -> some View {
@@ -417,7 +420,9 @@ struct PanelGrid: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: "line.3.horizontal").help(text("panel.layout.drag.hint"))
+                    .background(PanelDragHeaderRegion())
                 Text(text(block.titleKey)).mimicFont(.heading).lineLimit(2).help(text(block.titleKey))
+                    .background(PanelDragHeaderRegion())
                 Spacer(minLength: 0)
                 Menu {
                     Button(text("panel.layout.full")) { layout.edit { try $0.resize(block, to: .full) } }
@@ -438,11 +443,12 @@ struct PanelGrid: View {
                     }
                     Button(text("panel.layout.remove")) { layout.edit { $0.remove(block) } }
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).fixedSize()
+                    .background(PanelControlRegion())
             }
         }
     }
     private func emptySlot(_ cell: PanelGridCell) -> some View {
-        Color.clear.frame(height: MimicMetrics.collapsedCardHeight).overlay {
+        Color.clear.frame(height: MimicMetrics.collapsedCardHeight * (theme.tiled ? max(1, textScale) : 1)).overlay {
             if layout.editing {
                 RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [4]))
                 Menu {
@@ -584,6 +590,48 @@ struct PanelGrid: View {
         default:
             if let action = block.role?.localAction { ToolContent(model: model, action: action) }
         }
+    }
+}
+
+// MARK: - Tile-local pointer feedback
+
+/// Scroll-driven pointer crossings update one tile, without invalidating the grid or sibling content.
+private struct PanelCardFeedback: ViewModifier {
+    let enabled: Bool
+    let lifted: Bool
+    let morphScale: CGSize
+    let grabAnchor: UnitPoint
+    let radius: CGFloat
+    let policy: MimicMotionPolicy
+    @State private var hovered = false
+    func body(content: Content) -> some View {
+        let hovering = enabled && hovered
+        content.background {
+            ZStack {
+                RoundedRectangle(cornerRadius: radius).fill(.black).shadow(color: .black.opacity(0.10), radius: 5, y: 3).opacity(hovering && !lifted ? 1 : 0)
+                RoundedRectangle(cornerRadius: radius).fill(.black).shadow(color: .black.opacity(0.18), radius: 12, y: 10).opacity(lifted ? 1 : 0)
+            }
+        }
+        .scaleEffect(x: lifted ? morphScale.width : 1, y: lifted ? morphScale.height : 1, anchor: grabAnchor)
+        .scaleEffect(policy.moves ? lifted ? 1.04 : hovering ? 1.02 : 1 : 1, anchor: lifted ? grabAnchor : .center)
+        .animation(policy.animation(.feedback), value: hovering)
+        .animation(policy.animation(.feedback), value: lifted)
+        .zIndex(lifted ? 100 : hovering ? 10 : 0)
+        .onHover { inside in
+            guard hovered != inside else { return }
+            hovered = inside
+            FramePerformanceTrace.event("Panel hover changed")
+        }
+    }
+}
+
+/// A card-wide tooltip must not replace Bootstrap's launch and Xcode explanations.
+private struct PanelCardTooltip: ViewModifier {
+    let message: String
+    let preservesChildHelp: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if self.preservesChildHelp { content }
+        else { content.help(self.message) }
     }
 }
 

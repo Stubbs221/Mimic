@@ -15,17 +15,18 @@ import MimicCore
         record.status = .failed; record.phase = "build.phase.failed"; record.startedAt = Date().addingTimeInterval(-130); record.finishedAt = Date(); record.tracking = .live
         let store = BuildHistoryStore(directory: root); try store.save([record]); try Data("Compile /fixture/Frameworks/ProfileWebView/SubscriptionNavigationController.swift\nerror: намеренная ошибка приёмки 🙂\nTarget/Class/testMethod\nСохранён ограниченный журнал\nПоследняя строка\n".utf8).write(to: store.logURL(record.id))
         let model = TaskCoordinator(directory: root, defaults: defaults)
-        for dark in [false, true] {
-            let view = NSHostingView(rootView: BuildOverlayView(builds: model.builds, hide: {}).environment(\.colorScheme, dark ? .dark : .light).frame(width: 360))
+        for width in [CGFloat(320), 520] { for dark in [false, true] {
+            model.builds.overlayWidth = width
+            let view = NSHostingView(rootView: BuildOverlayView(builds: model.builds, hide: {}).environment(\.mimicPanelAppearance, .tileGrid).environment(\.colorScheme, dark ? .dark : .light).frame(width: width))
             let height = view.fittingSize.height
-            #expect(height > 180 && height < 302)
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: height), styleMask: [.borderless], backing: .buffered, defer: false); window.isReleasedWhenClosed = false
+            #expect(height > 120 && height < 600)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless], backing: .buffered, defer: false); window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: dark ? .accessibilityHighContrastDarkAqua : .aqua); window.contentView = view; view.frame = window.contentView!.bounds
             view.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(20))
-            #expect(view.fittingSize.width <= 361)
+            #expect(view.fittingSize.width <= width + 1)
             let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds)); view.cacheDisplay(in: view.bounds, to: bitmap)
-            try #require(bitmap.representation(using: .png, properties: [:])).write(to: root.appendingPathComponent(dark ? "dark-contrast.png" : "light.png")); window.close()
-        }
+            try #require(bitmap.representation(using: .png, properties: [:])).write(to: root.appendingPathComponent("\(Int(width))-" + (dark ? "dark-contrast.png" : "light.png"))); window.close()
+        } }
         #expect(!BuildFloatingPanel(contentRect: .zero, styleMask: [.nonactivatingPanel], backing: .buffered, defer: false).canBecomeKey)
     }
 }

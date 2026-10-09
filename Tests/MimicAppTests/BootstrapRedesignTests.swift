@@ -9,6 +9,43 @@ import MimicCore
 @testable import Mimic
 
 @Suite(.serialized) @MainActor struct BootstrapRedesignTests {
+    /// Click activation gates PTY input, survives metadata updates and clears outside the screen.
+    @Test func terminalRequiresClickAndRetainsSelectionAcrossUpdates() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BootstrapFocus-" + UUID().uuidString)
+        let defaults = try #require(UserDefaults(suiteName: root.lastPathComponent))
+        let model = TaskCoordinator(directory: root, defaults: defaults)
+        defer { model.records = []; model.stopAndExit(); defaults.removePersistentDomain(forName: root.lastPathComponent); try? FileManager.default.removeItem(at: root) }
+        var record = TaskRecord(action: .bootstrap, project: ProjectContext(path: root.path)); record.status = .running
+        model.records = [record]
+        let session = model.bootstrapTerminal(for: record), terminal = session.view()
+        session.setInputEnabled(true)
+        #expect(terminal.terminalDelegate == nil)
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 400, height: 300), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let content = NSView(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        window.contentView = content
+        let activation = BootstrapTerminalActivation.EventView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        content.addSubview(activation); terminal.frame = activation.frame; content.addSubview(terminal)
+        activation.terminal = terminal; activation.selectionChanged = { session.setSelected($0) }
+        window.orderFront(nil)
+        defer { activation.stop(); window.close() }
+        func down(_ point: CGPoint) throws -> NSEvent {
+            try #require(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        }
+        let click = try down(CGPoint(x: 100, y: 100))
+        #expect(activation.receive(click) === click)
+        #expect(activation.selected); #expect(window.firstResponder === terminal)
+        #expect(terminal.terminalDelegate != nil)
+        session.configure(fontSize: 13, dark: true, increasedContrast: false, appearance: .tileGrid)
+        session.setInputEnabled(false); session.setInputEnabled(true)
+        #expect(activation.selected); #expect(window.firstResponder === terminal); #expect(session.view() === terminal)
+        session.setInputEnabled(false)
+        #expect(terminal.terminalDelegate == nil); #expect(activation.selected, "Completed output remains selectable")
+        let outside = try down(CGPoint(x: 300, y: 250))
+        #expect(activation.receive(outside) === outside)
+        #expect(!activation.selected); #expect(window.firstResponder !== terminal)
+    }
+
     @Test(arguments: BootstrapPlatform.allCases)
     func platformLaunchCapturesDefaultsOnceWithoutNavigation(_ platform: BootstrapPlatform) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("BootstrapRedesign-" + UUID().uuidString)
@@ -88,6 +125,36 @@ import MimicCore
         let restarted = TaskCoordinator(directory: root, defaults: defaults)
         #expect(restarted.terminalSnapshot(id: record.id).isEmpty)
         restarted.stopAndExit()
+    }
+
+    /// Two mounted surfaces receive final bytes without reparenting a screen or sharing scrollback.
+    @Test func cardAndHistoryOwnIndependentTerminalScreens() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BootstrapScreens-" + UUID().uuidString)
+        let defaults = try #require(UserDefaults(suiteName: root.lastPathComponent))
+        let model = TaskCoordinator(directory: root, defaults: defaults)
+        defer { model.records = []; model.stopAndExit(); defaults.removePersistentDomain(forName: root.lastPathComponent); try? FileManager.default.removeItem(at: root) }
+        var record = TaskRecord(action: .bootstrap, project: ProjectContext(path: root.path)); record.status = .running
+        model.records = [record]
+        let card = model.bootstrapTerminal(for: record), cardHost = NSView(), historyHost = NSView()
+        let cardScreen = card.view(); cardHost.addSubview(cardScreen)
+        model.terminalOutput?(record.id, Data("| Dependency | Version |\r\n| Fixture | 1.0 |\r\n".utf8))
+        let history = BootstrapTerminalSession(model: model, record: record, replay: model.terminalSnapshot(id: record.id))
+        let historyScreen = history.view(); historyHost.addSubview(historyScreen)
+        #expect(cardScreen !== historyScreen)
+        #expect(cardScreen.superview === cardHost && historyScreen.superview === historyHost)
+        #expect(history.snapshot == card.snapshot)
+        model.terminalOutput?(record.id, Data("FINAL LINE\r\n".utf8)); model.records[0].status = .cancelled
+        #expect(history.snapshot == card.snapshot)
+        #expect(String(decoding: history.snapshot, as: UTF8.self).contains("FINAL LINE"))
+        history.configure(fontSize: 12, dark: true, increasedContrast: false)
+        #expect(cardScreen.superview === cardHost && historyScreen.superview === historyHost)
+        history.stop()
+        #expect(card.view() === cardScreen && card.hasOutput)
+        var older = TaskRecord(action: .bootstrap, project: record.project); older.status = .interrupted
+        let oldScreen = BootstrapTerminalSession(model: model, record: older, replay: Data())
+        model.terminalOutput?(record.id, Data("ACTIVE ONLY\r\n".utf8))
+        #expect(oldScreen.snapshot.isEmpty)
+        #expect(String(decoding: card.snapshot, as: UTF8.self).contains("ACTIVE ONLY"))
     }
 
     @Test func bridgeStagesFollowObservedProgressAndSuccessfulExit() throws {
@@ -216,13 +283,14 @@ import MimicCore
         model.terminalOutput?(record.id, Data("Bootstrap fixture output\r\nDependency registry unavailable\r\n".utf8))
         let output = URL(fileURLWithPath: "/private/tmp/Mimic-bootstrap-native-previews")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        for width in [360.0, 440.0, 480.0, 520.0] {
+        for width in [320.0, 360.0, 440.0, 560.0] {
             for mode in [BootstrapCardMode.mini, .full, .expanded] {
                 for appearance in [NSAppearance.Name.aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua] {
                     let dark = appearance == .darkAqua || appearance == .accessibilityHighContrastDarkAqua
                     let contrast = appearance == .accessibilityHighContrastAqua || appearance == .accessibilityHighContrastDarkAqua
-                    let host = NSHostingView(rootView: BootstrapCard(model: model, mode: mode).padding(16).frame(width: width)
+                    let host = NSHostingView(rootView: BootstrapCard(model: model, mode: mode).padding(12).frame(width: width)
                         .modifier(PanelCardBackground(block: .bootstrap)).environment(\.mimicInsideSurface, true)
+                        .environment(\.mimicPanelAppearance, .tileGrid)
                         .environment(MimicAppearancePreview(increasedContrast: contrast)).environment(\.colorScheme, dark ? .dark : .light))
                     let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: width, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
                     window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: appearance); window.contentView = host

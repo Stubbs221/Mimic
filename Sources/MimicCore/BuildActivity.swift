@@ -15,6 +15,8 @@ public enum BuildStatus: String, Codable, Sendable {
 
 /// Only these parameters can reach a compiler. No caller-supplied executable, flags or environment.
 public struct BuildParameters: Codable, Equatable, Sendable {
+    /// Private panel intent; absent in older histories and public compiler requests.
+    public var intent: BuildIntent?
     public var operation: BuildOperation
     public var backend: BuildBackend
     public var scheme: String
@@ -29,6 +31,7 @@ public struct BuildParameters: Codable, Equatable, Sendable {
         self.destinationID = destinationID; self.platform = platform; self.testPlan = testPlan; self.testIdentifiers = testIdentifiers; self.workspaceTab = workspaceTab
     }
     public func validate() throws {
+        if intent != nil, backend != .cli || operation != .build { throw BuildError.arguments }
         let fields = [scheme, configuration, destinationID, testPlan, workspaceTab] + testIdentifiers
         guard fields.allSatisfy({ $0.utf8.count <= 1024 && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }), testIdentifiers.count <= 100 else { throw BuildError.arguments }
         if backend == .cli {
@@ -41,9 +44,9 @@ public struct BuildParameters: Codable, Equatable, Sendable {
                 let parts = value.split(separator: "/", omittingEmptySubsequences: false)
                 return (2...3).contains(parts.count) && parts.allSatisfy { !$0.isEmpty && !$0.contains("*") && !$0.hasPrefix("-") }
             }) else { throw BuildError.testsRequired }
-        } else if !testIdentifiers.isEmpty || !testPlan.isEmpty { throw BuildError.arguments }
+        } else if !testIdentifiers.isEmpty || (!testPlan.isEmpty && intent != .catalogue) { throw BuildError.arguments }
     }
-    public func command(project: ProjectContext, resultBundlePath: String? = nil) throws -> CommandSpec {
+    public func command(project: ProjectContext, resultBundlePath: String? = nil, derivedDataPath: String? = nil, enumerationPath: String? = nil) throws -> CommandSpec {
         try validate(); guard backend == .cli else { throw BuildError.unsupported }
         let environment = EnvironmentInspector.environment(project: project)
         guard let target = project.appleTarget else { throw BuildError.configuration }
@@ -51,22 +54,50 @@ public struct BuildParameters: Codable, Equatable, Sendable {
         _ = try ProfileValidation.checkoutPath(target.path, root: project.path)
         var arguments = ["xcodebuild", targetFlag, project.workspace, "-scheme", scheme, "-configuration", configuration, "-destination", "platform=" + (platform == .tvos ? "tvOS" : "iOS") + " Simulator,id=" + destinationID, "-hideShellScriptEnvironment", "-disableAutomaticPackageResolution", "-onlyUsePackageVersionsFromResolvedFile"]
         if !testPlan.isEmpty { arguments += ["-testPlan", testPlan] }
-        if let resultBundlePath, operation == .test { arguments += ["-resultBundlePath", resultBundlePath] }
-        arguments += testIdentifiers.map { "-only-testing:" + $0 }; arguments.append(operation.rawValue)
+        if let derivedDataPath { arguments += ["-derivedDataPath", derivedDataPath] }
+        if intent == .catalogue {
+            guard let enumerationPath else { throw BuildError.arguments }
+            arguments += ["test", "-enumerate-tests", "-test-enumeration-style", "hierarchical", "-test-enumeration-format", "json", "-test-enumeration-output-path", enumerationPath]
+        } else {
+            if let resultBundlePath { arguments += ["-resultBundlePath", resultBundlePath] }
+            arguments += testIdentifiers.map { "-only-testing:" + $0 }; arguments.append(operation.rawValue)
+        }
         return .init(executable: "/usr/bin/xcrun", arguments: arguments, directory: project.path, environment: environment)
     }
 }
 
 public enum BuildError: String, Error, Sendable {
-    case arguments, testsRequired, context, unavailable, unsupported, catalogue, catalogueTimeout, catalogueProcess, catalogueResponse, configuration, duplicate, capacity, notFound, diagnostic, stopped
+    case sourceChanged, sourceUnavailable, preparationRequired, selectionExpired, arguments, testsRequired, context, unavailable, unsupported, catalogue, catalogueTimeout, catalogueProcess, catalogueResponse, configuration, duplicate, capacity, notFound, diagnostic, stopped
 }
 
 /// Execution and observation have separate states: a broken connection never proves build failure.
 public struct BuildActivity: Codable, Identifiable, Sendable {
+    public var cleanupArtifacts: [ManagedArtifact]?
+    public var cleanupActivityID: UUID?
+    public var cleanupRemoved: [String]?
+    public var changes: ActivityChanges?
+    public var sourceProvenance: SourceProvenance?
+    public var strictSource: Bool?
+    public var requestedTestCases: [String: [String]]?
+    public var selectionID: UUID?
+    public var sourceExclusions: [String]?
+    public var stage: BuildStage?
+    public var completedStages: Int?
+    public var products: [BuildProduct]?
+    public var selectedProductID: String?
+    public var destinationName: String?
+    public var testCatalogue: BuildTestCatalogue?
+    public var completedTestCount: Int?
+    /// Owner-supplied cache from an exactly matching catalogue preparation; never a request argument.
+    public var preparedDerivedDataPath: String?
     public let id: UUID
     public let project: ProjectContext
     public let parameters: BuildParameters
     public let source: String
+    /// Correlation only: it never authorizes execution or contains the user's prompt.
+    public var workflowID: String?
+    /// Optional for compatibility with histories saved before per-activity revisions.
+    public var stateRevision: Int?
     public let createdAt: Date
     public var startedAt: Date?
     public var finishedAt: Date?
@@ -175,7 +206,7 @@ public struct BuildCatalogue: Codable, Sendable {
         }
     }
     public func validate(_ parameters: BuildParameters) throws {
-        guard schemes.contains(parameters.scheme), configurations.contains(parameters.configuration), destinations.contains(where: { $0.id == parameters.destinationID && ($0.platform ?? .ios) == (parameters.platform ?? .ios) }), parameters.testPlan.isEmpty || testPlans.contains(parameters.testPlan), parameters.operation != .test || testPlans.count <= 1 || !parameters.testPlan.isEmpty else { throw BuildError.configuration }
+        guard schemes.contains(parameters.scheme), configurations.contains(parameters.configuration), destinations.contains(where: { $0.id == parameters.destinationID && ($0.platform ?? .ios) == (parameters.platform ?? .ios) }), parameters.testPlan.isEmpty || testPlans.contains(parameters.testPlan), parameters.operation != .test && parameters.intent != .catalogue || testPlans.count <= 1 || !parameters.testPlan.isEmpty else { throw BuildError.configuration }
     }
 }
 
@@ -190,16 +221,21 @@ public struct BuildHistoryStore: Sendable {
         var records = try JSONDecoder().decode([BuildActivity].self, from: Data(contentsOf: path))
         for i in records.indices where records[i].status.isPending {
             records[i].status = records[i].parameters.backend == .xcodeMCP && records[i].startedAt != nil ? .unknown : .interrupted; records[i].phase = "build.phase." + records[i].status.rawValue; records[i].tracking = .lost; records[i].finishedAt = Date()
+            records[i].stateRevision = (records[i].stateRevision ?? 0) + 1
         }
         return records
     }
-    public func save(_ records: [BuildActivity]) throws {
+    public func save(_ records: [BuildActivity], retainedIDs: Set<String> = []) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let data = try JSONEncoder().encode(records); let path = directory.appendingPathComponent("history.json")
         try data.write(to: path, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
-        let ids = Set(records.map { $0.id.uuidString })
-        for url in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) where ["log", "xcresult"].contains(url.pathExtension) && UUID(uuidString: url.deletingPathExtension().lastPathComponent) != nil && !ids.contains(url.deletingPathExtension().lastPathComponent) { try FileManager.default.removeItem(at: url) }
+        let ids = Set(records.map { $0.id.uuidString }).union(retainedIDs)
+        for url in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+            let name = url.lastPathComponent
+            let owner = name.hasSuffix("-DerivedData") ? String(name.dropLast("-DerivedData".count)) : name.hasSuffix(".tests.json") ? String(name.dropLast(".tests.json".count)) : ["log", "xcresult"].contains(url.pathExtension) ? url.deletingPathExtension().lastPathComponent : ""
+            if UUID(uuidString: owner) != nil, !ids.contains(owner) { try FileManager.default.removeItem(at: url) }
+        }
     }
 }
 

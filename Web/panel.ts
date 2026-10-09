@@ -1,4 +1,5 @@
 // Shared appearance is private presentation metadata; task and workspace identities stay stable.
+import {BuildPanel,type BuildRecord,type BuildDraft} from './build-panel';
 import {resolveAppearance} from './appearance';
 import {BranchSwitchPanel,type BranchOperation} from './branch-switch';
 import {PanelChrome} from './panel-chrome';
@@ -12,7 +13,7 @@ import {renderCompactRuns,middleText,ciIdentity,type CICompactSummary} from './c
 import {PanelCIView,type CIInspection} from './ci-details';
 import {catalog,standard,validate,change,remove,add,move,resize,replace,type Block,type Layout} from './layout';
 import {applyRemoteDefaults} from './remote-parameters';
-import {PrivateTerminal} from './terminal';
+import {PrivateTerminal,TerminalSelection} from './terminal';
 import {BootstrapTerminalPlaceholder} from './bootstrap-terminal-placeholder';
 import {CardDragController,isBlockControl} from './drag-controller';
 
@@ -23,7 +24,7 @@ function stableJSON(value:unknown):string{return JSON.stringify(value,(_key,item
 const actionValues=new Map<string,Record<string,string>>();
 const remoteFields=new Map<string,Record<string,{defaultValue:string;choices:string[]}>>();
 type LocalTask={id:string;toolID?:ToolID|null;isPreview?:boolean;actionID?:string;title:string;status:string;createdAt:string;context:Context;diagnosticAvailable:boolean;canCancel:boolean;needsInput?:boolean;progress?:string|null;startedAt?:string|null;finishedAt?:string|null;error?:string|null;bootstrap?:{platform:'ios'|'tvos';phase:string;fraction:number;stages?:string[];currentStage?:string|null;completedStages?:string[]}};
-type Build=LocalTask&{tracking:string;phase:string;source:string;duration?:number;parameters:{operation:string;backend:string;scheme:string;configuration:string;destinationID:string;workspaceTab:string};errorCount?:number;warningCount?:number};
+type Build=LocalTask&{actionKey?:string;tracking:string;phase:string;source:string;duration?:number;parameters:{operation:string;backend:string;scheme:string;configuration:string;destinationID:string;workspaceTab:string};errorCount?:number;warningCount?:number};
 type Run={id:string;actionID?:string;branch:string;plan:string;status:string;createdAt:string;updatedAt?:string;error?:string;jenkinsURL?:string;gitlabURL?:string;allureURL?:string;pipelineID?:number;sha?:string;jobs:{name:string;status:string;allowFailure:boolean;url:string}[]};
 type UIBinding={role:string;actionID:string;fields:Record<string,string>};
 type UIInterface={version:number;bindings:UIBinding[]};
@@ -98,6 +99,7 @@ let toolsPreferences:ToolsPreferences={revision:0,favorites:[...defaultFavorites
 let savedLayout:Layout=standard(),editLayout:Layout|null=null,expanded:Block|null=null,catalogOpen=false,historyOpen=false,settingsOpen=false,workspaceLoaded=false,saveTimer:ReturnType<typeof setTimeout>|undefined;
 let layoutOrigin:Layout|null=null;
 const ciView=new PanelCIView(tool,t,link);
+const buildPanel=new BuildPanel(tool,t,refresh,id=>selectItem('build',id),()=>{if(state?.simulator?.visible)openBlock('simulators');});
 function ciSummaries(){return state?.ciSummaries??(state?.ciSummary?[state.ciSummary]:[]);}
 function openCI(summary:CICompactSummary){if(editLayout||cardDrag.session||cardDrag.saving)return;ciView.select(summary);if(expanded!=='ci')animateGrid(()=>{expanded='ci';catalogOpen=false;renderGrid();});scheduleWorkspace();}
 const blockNodes=new Map<Block,{node:HTMLElement;title:HTMLButtonElement;summary:HTMLElement;content:HTMLElement;editor:HTMLElement}>();
@@ -158,7 +160,8 @@ function renderGrid(){
   const isExpanded=visualExpanded===block&&!editLayout;const showFullBootstrap=block==='bootstrap'&&row.slots.length===1&&!editLayout;view.node.style.gridRow=isExpanded&&narrow&&row.slots.length===2?`${visualRow(rowIndex)} / span 2`:String(visualRow(rowIndex,row.slots.indexOf(block)));view.node.style.gridColumn=narrow||isExpanded||row.slots.length===1?'1 / -1':String(row.slots.indexOf(block)+1);view.node.classList.toggle('full-bootstrap',showFullBootstrap);view.node.style.setProperty('--block-accent',blockAccent(block));view.node.classList.toggle('expanded',isExpanded);view.node.classList.toggle('mini',row.slots.length===2&&!isExpanded);
   if(block==='simulators'){simulatorPanel.setCardHeader(isExpanded?view.title:null,()=>openBlock(block));}
   view.title.setAttribute('aria-expanded',String(isExpanded));view.title.disabled=!!editLayout;view.content.hidden=block==='bootstrap'?!!editLayout:!isExpanded&&!showFullBootstrap;view.content.inert=view.content.hidden;view.summary.hidden=block==='bootstrap'||isExpanded||showFullBootstrap||!!editLayout;view.editor.hidden=!editLayout;
-  if(block==='ci'){
+  if(block==='builds'){buildPanel.update(view.summary,row.slots.length===1&&!narrow?'full':'mini',state?.context??null,(state?.builds??[]) as BuildRecord[],!!editLayout);
+  }else if(block==='ci'){
    const summaries=ciSummaries();
    ciView.update(summaries,state?.context?.checkoutId,isExpanded);
    renderCompactRuns(view.summary,summaries.slice(0,row.slots.length===1&&!narrow?2:1),t,openCI);
@@ -192,7 +195,7 @@ const compactMedia=matchMedia('(max-width:479px)');
 let largeText=false;
 function isCompact(){return compactMedia.matches||largeText;}
 const textProbe=element('span');textProbe.setAttribute('aria-hidden','true');textProbe.style.cssText='position:absolute;pointer-events:none;visibility:hidden;height:1rem;width:1rem;inset:0';document.body.append(textProbe);
-new ResizeObserver(()=>{const next=textProbe.getBoundingClientRect().height>18;if(next!==largeText){largeText=next;document.documentElement.dataset.largeText=String(next);cardDrag.cancel();renderGrid();}}).observe(textProbe);
+new ResizeObserver(()=>{const textHeight=textProbe.getBoundingClientRect().height;document.documentElement.style.setProperty('--bootstrap-text-scale',String(Math.max(1,textHeight/13)));const next=textHeight>18;if(next!==largeText){largeText=next;document.documentElement.dataset.largeText=String(next);cardDrag.cancel();renderGrid();}}).observe(textProbe);
 const cardDrag=new CardDragController({
  grid:gridHost,toolbar,nodes:blockNodes,getLayout:currentLayout,editing:()=>!!editLayout,blocked:()=>busy,
  render:renderGrid,animate:animateGrid,label:size=>t('layout.drag.'+size),
@@ -207,7 +210,7 @@ const cardDrag=new CardDragController({
 compactMedia.addEventListener('change',()=>{cardDrag.cancel();renderGrid();});
 window.addEventListener('keydown',event=>{if(event.key==='Escape'){if(cardDrag.session){cardDrag.cancel();event.preventDefault();event.stopImmediatePropagation();}else if(editLayout)cancelEdit();else if(expanded){expanded=null;renderGrid();scheduleWorkspace();}}});
 // MARK: - Bootstrap card
-let bootstrapView:{host:HTMLElement;controls:HTMLElement;buttons:HTMLButtonElement[];launchers:HTMLElement;platform:HTMLElement;notice:HTMLElement;stages:HTMLElement;description:HTMLElement;state:HTMLElement;time:HTMLElement;progress:HTMLProgressElement;actions:HTMLElement;error:HTMLElement;region:HTMLElement;overlay:HTMLButtonElement;diagnostic:HTMLElement}|null=null;
+let bootstrapView:{host:HTMLElement;controls:HTMLElement;buttons:HTMLButtonElement[];launchers:HTMLElement;platform:HTMLElement;notice:HTMLElement;stages:HTMLElement;description:HTMLElement;result:HTMLElement;footer:HTMLElement;technical:HTMLDetailsElement;state:HTMLElement;time:HTMLElement;progress:HTMLProgressElement;actions:HTMLElement;error:HTMLElement;region:HTMLElement;overlay:HTMLButtonElement;diagnostic:HTMLElement}|null=null;
 let bootstrapTerminal:PrivateTerminal|null=null;
 const bootstrapPlaceholderLabels={example:t('bootstrap.terminal.example'),queued:t('bootstrap.terminal.queued'),waiting:t('bootstrap.terminal.waiting'),unavailable:t('bootstrap.terminal.unavailable')};
 let bootstrapIdlePlaceholder:BootstrapTerminalPlaceholder|null=null;
@@ -221,7 +224,7 @@ function diagnosticEditor(){
  area.value=fragment;area.setAttribute('aria-label',t('diagnostic'));area.oninput=()=>fragment=area.value;
  note.value=comment;note.placeholder=t('comment');note.setAttribute('aria-label',t('comment'));note.oninput=()=>comment=note.value;
  const submit=button(t('send'),()=>void send(),busy||!preview&&!extensions.message,'primary');submit.dataset.action='diagnostic-send';
- box.append(element('p',t('review')),area,note,submit,button(t('close'),()=>{diagnostic=null;diagnosticNode=null;render();}));
+ box.append(element('p',t('review')),area,note,button(t('task.output.copy'),()=>void navigator.clipboard.writeText(area.value)),submit,button(t('close'),()=>{diagnostic=null;diagnosticNode=null;render();}));
  diagnosticNode=box;diagnosticNodeID=diagnostic?.task.id??null;return box;
 }
 function ensureBootstrapContent(host:HTMLElement){
@@ -229,14 +232,18 @@ function ensureBootstrapContent(host:HTMLElement){
  host.classList.add('bootstrap-content');const controls=element('div','','bootstrap-controls'),launchers=element('div','','bootstrap-launchers');
  const buttons=(['ios','tvos'] as const).map(platform=>button(platform==='ios'?'iOS':'tvOS',()=>void launchBootstrap(platform),false,'primary'));
  for(const [i,b]of buttons.entries()){b.dataset.platform=i===0?'ios':'tvos';b.title=t(i===0?'bootstrap_ios':'bootstrap_tvos');const icon=element('span','','bootstrap-platform-icon');icon.setAttribute('aria-hidden','true');icon.innerHTML=i===0?'<svg viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5"/><path d="M7 3h2M7.5 12.5h1"/></svg>':'<svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/><path d="M5 14h6M8 11.5V14"/></svg>';b.prepend(icon);launchers.append(b);}
- const platform=element('span','','bootstrap-platform'),notice=element('p',t('bootstrap.xcode.launch.notice'),'bootstrap-notice'),stages=element('div','','bootstrap-stages'),description=element('p',t('bootstrap.preparation.description'),'bootstrap-description');
+ const platform=element('span','','bootstrap-platform'),notice=element('p','','bootstrap-notice'),stages=element('div','','bootstrap-stages'),description=element('p',t('bootstrap.preparation.description'),'bootstrap-description');
  const stateLabel=element('p','','bootstrap-state'),time=element('span','','bootstrap-time'),progress=element('progress','','bootstrap-progress');progress.max=1;
  const actions=element('div','','bootstrap-actions'),failure=element('p','','error bootstrap-error');
- notice.title=t('bootstrap.xcode.notice');controls.append(launchers,platform,actions,stateLabel,time,progress,notice,stages,failure,description);
+ notice.title=t('bootstrap.xcode.notice');
+ const noticeIcon=element('span','','bootstrap-notice-icon');noticeIcon.setAttribute('aria-hidden','true');noticeIcon.innerHTML='<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.5v4M8 11h.01"/></svg>';notice.append(noticeIcon,element('span',t('bootstrap.xcode.launch.notice')));
+ const result=element('div','','bootstrap-result'),footer=element('div','','bootstrap-details-footer'),technical=element('details','','bootstrap-technical');technical.append(element('summary',t('task.technical')),element('p','','mono'));
+ result.append(stateLabel,time,progress);controls.append(launchers,platform,actions,result,notice,stages,failure);
+ const preparation=element('details','','bootstrap-preparation-reference');preparation.append(element('summary',t('bootstrap.preparation.title')),description);
  const region=element('div','','bootstrap-terminal-region'),overlay=button(t('bootstrap.error.agent'),()=>{const task=currentBootstrap();if(task){if(expanded!=='bootstrap')openBlock('bootstrap');void analyze(task.id,true);}},false,'bootstrap-agent-overlay');
- const idle=element('div','','bootstrap-terminal-idle');bootstrapIdlePlaceholder=new BootstrapTerminalPlaceholder(bootstrapPlaceholderLabels);idle.append(bootstrapIdlePlaceholder.host);region.append(idle,overlay);
- const diagnosticHost=element('div','','bootstrap-diagnostic-host');host.append(controls,region,diagnosticHost);
- bootstrapView={host,controls,buttons,launchers,platform,notice,stages,description,state:stateLabel,time,progress,actions,error:failure,region,overlay,diagnostic:diagnosticHost};
+ const idle=element('div','','bootstrap-terminal-idle');new TerminalSelection(idle);bootstrapIdlePlaceholder=new BootstrapTerminalPlaceholder(bootstrapPlaceholderLabels);idle.append(bootstrapIdlePlaceholder.host);region.append(idle,overlay);
+ const diagnosticHost=element('div','','bootstrap-diagnostic-host');footer.append(technical);host.append(controls,region,footer,preparation,diagnosticHost);
+ bootstrapView={host,controls,buttons,launchers,platform,notice,stages,description:preparation,result,footer,technical,state:stateLabel,time,progress,actions,error:failure,region,overlay,diagnostic:diagnosticHost};
 }
 async function launchBootstrap(platform:'ios'|'tvos'){
  const context=state?.context,action=uiAction('bootstrap');if(busy||stale||!context||!action||currentBootstrap()?.canCancel)return;
@@ -251,7 +258,14 @@ function updateBootstrap(mode=bootstrapMode,hidden=bootstrapHidden){
  const task=currentBootstrap(),live=!!task&&['queued','running'].includes(task.status),active=live||bootstrapLaunching;
  for(const b of view.buttons)b.disabled=busy||stale||!state?.context||!uiAction('bootstrap')||active;
  view.launchers.hidden=active;view.platform.hidden=!active;view.platform.textContent=(bootstrapLaunching?bootstrapLaunchPlatform:task?.bootstrap?.platform)==='tvos'?'tvOS':'iOS';
- view.notice.hidden=active;view.description.hidden=mode!=='expanded';view.stages.hidden=mode!=='expanded';
+ view.notice.hidden=active||mode==='expanded';view.description.hidden=mode!=='expanded';view.stages.hidden=mode!=='expanded'||!live||task?.status!=='running';
+ view.footer.hidden=mode!=='expanded';view.technical.hidden=!task;
+ view.technical.querySelector('p')!.textContent=task?[task.context.checkoutId,task.context.branch,task.context.sha,task.context.xcode].join('\n'):'';
+ const actionsHost=mode==='expanded'?view.footer:view.controls;
+ if(view.launchers.parentElement!==actionsHost){if(mode==='expanded')actionsHost.prepend(view.launchers);else actionsHost.prepend(view.launchers);}
+ if(view.actions.parentElement!==actionsHost){if(mode==='expanded')actionsHost.prepend(view.actions);else actionsHost.insertBefore(view.actions,view.result);}
+ const overlayHost=mode==='expanded'?view.footer:view.region;
+ if(view.overlay.parentElement!==overlayHost){if(mode==='expanded')overlayHost.insertBefore(view.overlay,view.technical);else overlayHost.append(view.overlay);}
  view.region.hidden=mode==='mini';view.region.inert=mode==='mini'||hidden;
  const phaseKey='bootstrap.phase.'+task?.bootstrap?.phase;
  view.state.textContent=bootstrapLaunching?t('bootstrap.phase.checking'):task?(task.status==='running'&&task.progress?task.progress:phaseKey in ru?t(phaseKey):t(task.status)):'';
@@ -272,7 +286,7 @@ function updateBootstrap(mode=bootstrapMode,hidden=bootstrapHidden){
  }
  view.actions.hidden=!active;
  view.overlay.hidden=!task||!['failed','interrupted'].includes(task.status);view.overlay.disabled=busy;
- view.region.classList.toggle('has-error',!view.overlay.hidden);
+ view.region.classList.toggle('has-error',!view.overlay.hidden&&mode!=='expanded');
  const failedAdmission=!!task&&task.id===bootstrapFailedAttempt?.id;
  if(task&&!failedAdmission){
   if(!bootstrapTerminal){bootstrapTerminal=new PrivateTerminal(tool,showError,{waiting:t('bootstrap.terminal.waiting'),unavailable:t('noOutput')});view.region.prepend(bootstrapTerminal.host);}
@@ -296,7 +310,7 @@ setInterval(()=>{
  if(!view.summary.hidden){const row=currentLayout().rows.find(row=>row.slots.includes('ci'));renderCompactRuns(view.summary,ciSummaries().slice(0,row?.slots.length===1&&!isCompact()?2:1),t,openCI);}
  ciView.tick();
 },1000);
-const bootstrapClock=setInterval(()=>{if(currentBootstrap()?.status==='running')updateBootstrap();const view=blockNodes.get('utils');if(view&&!view.summary.hidden)renderToolsCompact(view.summary,currentLayout().rows.find(r=>r.slots.includes('utils'))?.slots.length===1&&!isCompact());for(const [id,form]of formNodes){const action=state?.actions.find(a=>a.id===id);if(action&&toolForAction(action)&&form.node.isConnected)form.update();}},1000);
+const bootstrapClock=setInterval(()=>{buildPanel.tick();if(currentBootstrap()?.status==='running')updateBootstrap();if(historyOpen&&selection?.type==='task'&&state?.tasks.find(task=>task.id===selection?.id)?.bootstrap){renderHistory();renderDetails();}const view=blockNodes.get('utils');if(view&&!view.summary.hidden)renderToolsCompact(view.summary,currentLayout().rows.find(r=>r.slots.includes('utils'))?.slots.length===1&&!isCompact());for(const [id,form]of formNodes){const action=state?.actions.find(a=>a.id===id);if(action&&toolForAction(action)&&form.node.isConnected)form.update();}},1000);
 
 // MARK: - Shared project tools
 function toolForAction(action:Action){const role=state?.interface?.bindings.find(binding=>binding.actionID===action.id)?.role;return role?toolForRole(role):undefined;}
@@ -365,7 +379,7 @@ function renderToolTask(host:HTMLElement,id:ToolID){
  host.querySelector('.tools-task-status')!.textContent=taskDescription(task);
 }
 
-function ensureBlockContent(block:Block,host:HTMLElement){if(block==='utils'){ensureToolsContent(host);return;}if(block==='bootstrap'){ensureBootstrapContent(host);return;}if(block==='simulators'){if(simulatorHost.parentElement!==host)host.append(simulatorHost);return;}if(block==='builds'){ensureBuildForm(host);return;}
+function ensureBlockContent(block:Block,host:HTMLElement){if(block==='utils'){ensureToolsContent(host);return;}if(block==='bootstrap'){ensureBootstrapContent(host);return;}if(block==='simulators'){if(simulatorHost.parentElement!==host)host.append(simulatorHost);return;}if(block==='builds'){buildPanel.update(host,'extended',state?.context??null,(state?.builds??[]) as BuildRecord[]);return;}
  if(block==='ci'){if(!host.querySelector('.tool-choice')){const choices=['uiTests','qualityGates','beta'];for(const kind of choices)host.append(button(blockTitle(kind as Block),()=>openBlock(kind as Block),!uiAction(kind),'tool-choice'));}if(block==='ci'&&ciView.host.parentElement!==host)host.prepend(ciView.host);return;}
  const family=toolForRole(block);if(family){ensureToolForm(family,host,false);return;}
  const action=uiAction(block);if(!action){host.replaceChildren(element('p',t('noActions')));return;}ensureActionForm(action,block,host);
@@ -404,24 +418,9 @@ async function previewGenerator(action:Action){await perform(async()=>{const par
 async function generateAction(action:Action){const family=toolForAction(action),current=family?currentToolTask(family):undefined;if(family&&toolBusy(family))return;await perform(async()=>{const reviewed=previews.get(action.id);if(!reviewed?.plan||reviewed.fingerprint!==stableJSON([actionValues.get(action.id),state?.context]))throw new Error(t('generator.review'));const parameters={...actionValues.get(action.id),expectedDigest:reviewed.plan.digest},key=stableJSON([action.id,parameters,state?.context]);try{const result=await tool('panel_generate',{actionID:action.id,parameters,context:state?.context,requestID:requestID(key)});pendingIDs.delete(key);if(!toolForAction(action))selection={type:'task',id:result.id};previews.delete(action.id);await refresh();}catch(e){releaseRejectedRequest(key,e);throw e;}});}
 let checkingPreviews=false;
 async function updatePreviews(){if(checkingPreviews)return;checkingPreviews=true;try{for(const [id,reviewed]of previews){if(reviewed.plan)continue;const task=state?.tasks.find(t=>t.id===reviewed.taskID);if(task?.status==='succeeded'){const result=await tool('panel_get_preview',{taskID:reviewed.taskID});if(previews.get(id)===reviewed&&result.plan){reviewed.plan=result.plan;formNodes.get(id)?.update();}}else if(task&&['failed','cancelled','interrupted'].includes(task.status)){previews.delete(id);formNodes.get(id)?.update();}}}finally{checkingPreviews=false;}}
-function ensureBuildForm(host:HTMLElement){let form=formNodes.get('builds');if(form){if(form.node.parentElement!==host)host.append(form.node);return;}const box=element('div','','build-form');const controls=new Map<string,HTMLInputElement|HTMLSelectElement|HTMLTextAreaElement>();
- const backend=element('select');backend.setAttribute('aria-label',t('build.backend'));for(const kind of ['cli','xcodeMCP'])backend.append(new Option(t('build.'+kind),kind));backend.value=buildValues.backend;backend.onchange=()=>{buildValues.backend=backend.value;update();scheduleWorkspace();};box.append(backend);controls.set('backend',backend);
- const advanced=element('details');advanced.append(element('summary',t('build.advanced')));
- for(const name of ['scheme','configuration','destinationID','workspaceTab','testPlan','testIdentifiers','simulatorConfirmed']){const input=name==='testIdentifiers'?element('textarea'):name==='simulatorConfirmed'?element('input'):element('select');input.id='build-'+name;input.setAttribute('aria-label',t('build.'+name));if(input instanceof HTMLInputElement){input.type='checkbox';input.checked=buildValues[name]==='true';}else if(input instanceof HTMLTextAreaElement){input.rows=4;input.placeholder=t('build.testsHint');input.value=buildValues[name];}const wrapper=element('div','','field');wrapper.dataset.field=name;const label=element('label',t('build.'+name));label.htmlFor=input.id;wrapper.append(label,input);if(input instanceof HTMLSelectElement&&buildValues[name])input.append(new Option(buildValues[name],buildValues[name]));input.value=buildValues[name];input.oninput=()=>{buildValues[name]=input instanceof HTMLInputElement?String(input.checked):input.value;if(name==='scheme'){buildCatalogue=null;buildValues.destinationID='';}scheduleWorkspace();update();if(name==='scheme')void perform(loadCatalogue);};controls.set(name,input);(name==='configuration'||name==='testPlan'?advanced:box).append(wrapper);}
- const load=button(t('build.configure'),()=>void perform(loadCatalogue));
- /** A selected scheme owns its destinations; late catalogue replies cannot replace another context. */
- async function loadCatalogue(){const context=state?.context,scheme=buildValues.scheme;const query=await tool('start_build_configuration',{context,scheme,includeTestPlans:!!buildValues.testIdentifiers.trim()});let result=query;const deadline=performance.now()+130000;while(result.status==='pending'){if(stableJSON(context)!==stableJSON(state?.context)||scheme!==buildValues.scheme)throw new Error(t('stale'));if(performance.now()>deadline)throw new Error(t('build.error.catalogueTimeout'));await new Promise(resolve=>setTimeout(resolve,500));result=await tool('get_build_configuration_state',{queryID:query.queryID});}if(result.status!=='ready')throw new Error(result.message??result.errorCode);if(stableJSON(context)!==stableJSON(state?.context)||scheme!==buildValues.scheme||stableJSON(result.result.context)!==stableJSON(state?.context))throw new Error(t('stale'));buildCatalogue=result.result;const cli=buildCatalogue.cli;options('scheme',cli.schemes.map((x:any)=>typeof x==='string'?{id:x,title:x}:x));options('configuration',(cli.configurations??[]).map((x:string)=>({id:x,title:x})));options('destinationID',(cli.destinations??[]).map((x:any)=>({id:x.id,title:x.name})));options('testPlan',(cli.testPlans??[]).map((x:string)=>({id:x,title:x})));options('workspaceTab',Object.entries(buildCatalogue.xcode.workspaces).map(([id,title])=>({id,title:String(title)})));update();scheduleWorkspace();}
- const connect=button(t('build.connect'),()=>void setup('xcodeMCP'));box.prepend(load,connect);box.append(advanced);
- const launch=button(t('operation.build'),()=>void launchBuild(false),false,'primary'),test=button(t('operation.test'),()=>void launchBuild(true));const delegate=button(t('delegate'),()=>void perform(async()=>{if(!preview)await extensions.message!.send({role:'user',content:[{type:'text',text:t('delegate.prompt')+'\n'+stableJSON({method:buildValues.testIdentifiers.trim()?'run_selected_tests':'build_project',context:state?.context,parameters:buildParameters(!!buildValues.testIdentifiers.trim()),simulatorConfirmed:buildValues.simulatorConfirmed==='true'})}]});notice=t('sent');}));const row=element('div','','form-bottom');row.append(launch,test,delegate);box.append(row);
- function options(name:string,values:{id:string;title:string}[]){const input=controls.get(name) as HTMLSelectElement;input.replaceChildren(new Option(t('build.choose'),''),...values.map(v=>new Option(v.title,v.id)));input.value=buildValues[name];buildValues[name]=input.value;}
- function update(){const cli=buildValues.backend==='cli';for(const name of ['scheme','configuration','destinationID','testPlan'])box.querySelector<HTMLElement>('[data-field="'+name+'"]')!.hidden=!cli;for(const name of ['workspaceTab','simulatorConfirmed'])box.querySelector<HTMLElement>('[data-field="'+name+'"]')!.hidden=cli;for(const input of controls.values())input.disabled=busy;(controls.get('simulatorConfirmed') as HTMLInputElement).checked=buildValues.simulatorConfirmed==='true';for(const name of ['workspaceTab','destinationID']){const input=controls.get(name)!;if(input.value!==buildValues[name])input.value=buildValues[name];}const valid=!!state?.context&&!busy&&!stale&&(cli?!!buildCatalogue&&!!buildValues.scheme&&!!buildValues.configuration&&!!buildValues.destinationID:!!buildCatalogue&&Object.hasOwn(buildCatalogue.xcode.workspaces,buildValues.workspaceTab)&&buildValues.simulatorConfirmed==='true');launch.disabled=!valid;test.disabled=!valid||!buildValues.testIdentifiers.trim();delegate.disabled=!valid||!preview&&!extensions.message;load.disabled=busy||stale||!state?.context;connect.hidden=cli;}
- form={signature:'builds',node:box,update};formNodes.set('builds',form);host.append(box);update();
-}
-function buildParameters(test:boolean){return buildValues.backend==='cli'?{backend:'cli',scheme:buildValues.scheme,configuration:buildValues.configuration,destinationID:buildValues.destinationID,...(test&&buildValues.testPlan?{testPlan:buildValues.testPlan}:{}),...(test?{testIdentifiers:buildValues.testIdentifiers.split('\n').map(s=>s.trim()).filter(Boolean)}:{})}:{backend:'xcodeMCP',workspaceTab:buildValues.workspaceTab,...(test?{testIdentifiers:buildValues.testIdentifiers.split('\n').map(s=>s.trim()).filter(Boolean)}:{})};}
-async function launchBuild(test:boolean){await perform(async()=>{const parameters=buildParameters(test),method=test?'run_selected_tests':'build_project',key=stableJSON([method,parameters,state?.context]);try{const result=await tool(method,{context:state?.context,requestID:requestID(key),parameters,simulatorConfirmed:buildValues.backend==='xcodeMCP'&&buildValues.simulatorConfirmed==='true'});pendingIDs.delete(key);selection={type:'build',id:result.activity?.id??result.id};historyOpen=true;await refresh();}catch(e){releaseRejectedRequest(key,e);throw e;}});}
 async function setup(operation:string){await perform(async()=>{await tool('panel_setup',{operation});await refresh(true);});}
 function render(){root.setAttribute('aria-busy',String(busy));banner.textContent=[preview?t('preview'):'',error,stale?t('stale'):'',notice].filter(Boolean).join(' · ');banner.className=error||stale?'error':'banner';if(!state){contextLabel.textContent=t('loading');workStatus.textContent='';return;}installWorkspace(state);
- const active=[...state.tasks.map(t=>({...t,type:'task' as const})),...(state.builds??[]).map(t=>({...t,type:'build' as const}))].find(t=>['running','preparing'].includes(t.status));
+ const active=[...state.tasks.map(t=>({...t,type:'task' as const})),...(state.builds??[]).map(item=>({...item,title:t((item as BuildRecord).actionKey??'operation.'+item.parameters.operation),type:'build' as const}))].find(t=>['running','preparing'].includes(t.status));
  const project=state.context?.checkoutId.split('/').pop()??t('noCheckout'),xcode=state.context?.xcode.split('/').find(p=>p.endsWith('.app'))??t('build.chooseXcode');const contextText=[project,state.context?.branch,xcode].filter(Boolean).join(' · ');
  middleText(contextLabel,contextText);contextLabel.title=contextText;contextLabel.disabled=busy||!!state.checkoutLocked;branchSwitchPanel.update(state,busy);workStatus.textContent=active?t(active.needsInput?'notification.input':active.status):state.progress??t('ready');
  const records=[...state.tasks.map(item=>({...item,type:'task' as const})),...(state.builds??[]).map(item=>({...item,type:'build' as const})),...state.runs.map(item=>({...item,type:'run' as const,title:item.branch}))].sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
@@ -429,19 +428,90 @@ function render(){root.setAttribute('aria-busy',String(busy));banner.textContent
  chrome.update({tiled:panelAppearance==='tileGrid',context:state.context,busy,locked:!!state.checkoutLocked,stale,editing:!!editLayout,rebase:!!state.branchRebase,catalogOpen,historyOpen,activity,progress:state.progress,needsBinding:state.needsBinding});
  toolbar.classList.toggle('layout-editing',!!editLayout);
  if(contextDetail.dataset.text!==stableJSON(state.context)+settingsOpen){contextDetail.dataset.text=stableJSON(state.context)+settingsOpen;contextDetail.replaceChildren(element('summary',t('context.details')),element('p',[state.context?.checkoutId,state.context?.sha,state.context?.xcode,state.context?.profileRevision].filter(Boolean).join('\n'),'mono'));if(state.needsBinding)contextDetail.append(button(t('binding.request'),()=>void perform(async()=>{if(!preview)await extensions.message!.send({role:'user',content:[{type:'text',text:t('binding.prompt')}]});notice=t('sent');})));if(settingsOpen||!state.context||!state.actions.length){const row=element('div','','row');for(const operation of ['profile','xcode','target','credentials','notifications','appearance'])row.append(button(t('setup.'+operation),()=>void setup(operation),busy||!['profile','notifications','appearance'].includes(operation)&&!state.context));row.append(button(t('branch.local'),()=>void loadBranches(),busy||!state.context));contextDetail.append(row);contextDetail.open=true;}}
- const toolbarSignature=String(!!editLayout)+busy;if(toolbar.dataset.signature!==toolbarSignature){toolbar.dataset.signature=toolbarSignature;toolbar.replaceChildren(...(editLayout?[button(t('layout.add'),()=>{catalogOpen=!catalogOpen;renderCatalog();}),button(t('layout.reset'),()=>{editLayout=standard();renderGrid();}),button(t('layout.cancel'),cancelEdit),button(t('layout.done'),()=>void finishEdit(),busy,'primary')]:[button(t('newAction'),()=>{catalogOpen=!catalogOpen;renderCatalog();}),button(t('history'),()=>{historyOpen=!historyOpen;renderHistory();}),button(t('settings'),()=>{settingsOpen=!settingsOpen;render();}),button(t('layout.edit'),beginEdit)]));}
+ const toolbarSignature=String(!!editLayout)+busy;if(toolbar.dataset.signature!==toolbarSignature){toolbar.dataset.signature=toolbarSignature;toolbar.replaceChildren(...(editLayout?[button(t('layout.add'),()=>{catalogOpen=!catalogOpen;renderCatalog();}),button(t('layout.reset'),()=>{editLayout=standard();renderGrid();}),button(t('layout.cancel'),cancelEdit),button(t('layout.done'),()=>void finishEdit(),busy,'primary')]:[button(t('newAction'),()=>{catalogOpen=!catalogOpen;renderCatalog();}),button(t('history'),()=>{historyOpen=!historyOpen;renderHistory();renderDetails();}),button(t('settings'),()=>{settingsOpen=!settingsOpen;render();}),button(t('layout.edit'),beginEdit)]));}
  renderCatalog();renderGrid();renderHistory();renderDetails();contextDetail.querySelectorAll<HTMLButtonElement>('[data-action=branch-switch]').forEach(button=>button.disabled=busy||!!state?.checkoutLocked||!button.parentElement?.querySelector('select')?.value);const waiting=state.queue?.filter(t=>t.context?.checkoutId!==state?.context?.checkoutId)??[];queueHost.textContent=waiting.length?t('queue.other')+' '+waiting.length:'';renderSimulatorRecovery();void updatePreviews();
 }
 async function switchBranch(branch:string){if(!branch||!state?.context||state.checkoutLocked||stale)return;await perform(async()=>{const key=stableJSON(['branch',branch,state?.context]);try{await tool('panel_switch_branch',{branch,context:state?.context,requestID:requestID(key)});pendingIDs.delete(key);await refresh();}catch(error){releaseRejectedRequest(key,error);throw error;}});}
 async function loadBranches(){if(!state?.context||state.checkoutLocked)return;const tiled=panelAppearance==='tileGrid';if(tiled&&!chrome.toggleBranches())return;await perform(async()=>{const context=stableJSON(state?.context),result=await tool('panel_branches');if(context!==stableJSON(state?.context))return;if(tiled){chrome.setBranches(result.branches);return;}contextDetail.querySelector('[data-branch-picker]')?.remove();const picker=element('div','','row');picker.dataset.branchPicker='';const select=element('select');select.setAttribute('aria-label',t('branch.local'));select.append(new Option(t('branch.local'),''),...result.branches.map((branch:string)=>new Option(branch,branch)));const change=button(t('branch.switch'),()=>void switchBranch(select.value),true,'quiet');change.dataset.action='branch-switch';select.onchange=()=>{change.disabled=busy||!select.value||!!state?.checkoutLocked;};picker.append(select,change);contextDetail.append(picker);contextDetail.open=true;});}
 function renderCatalog(){catalogHost.hidden=!catalogOpen;if(!catalogOpen)return;const signature=stableJSON([!!editLayout,currentLayout().rows,state?.actions.map(a=>a.id),state?.simulator?.visible]);if(catalogHost.dataset.signature===signature)return;catalogHost.dataset.signature=signature;catalogHost.replaceChildren(element('h2',t('catalog')));for(const block of availableBlocks()){if(editLayout&&editLayout.rows.some(r=>r.slots.includes(block)))continue;catalogHost.append(button(blockTitle(block),()=>{if(editLayout)edit(l=>add(l,block));else openBlock(block);},false,'tool-choice'));}}
+// MARK: - Inline Bootstrap history, with a terminal independent of the card
 const historyRows=new Map<string,HTMLButtonElement>();
-function renderHistory(){historyHost.hidden=!historyOpen;if(!historyOpen)return;const records=[...state!.tasks.map(t=>({...t,type:'task' as const})),...(state!.builds??[]).map(t=>({...t,type:'build' as const})),...state!.runs.map(t=>({...t,title:t.branch,type:'run' as const}))].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,100);
- if(!historyHost.querySelector('h2'))historyHost.prepend(element('h2',t('history')));historyHost.querySelector('.empty')?.remove();const ids=new Set(records.map(r=>r.type+':'+r.id));for(const [id,node]of historyRows)if(!ids.has(id)){node.remove();historyRows.delete(id);}
- if(!records.length)historyHost.append(element('p',t('emptyTasks'),'empty'));for(const [index,item]of records.entries()){const id=item.type+':'+item.id;let row=historyRows.get(id);if(!row){row=button('',()=>selectItem(item.type,item.id),false,'item');row.append(element('span','','item-title'),status(item.status));historyRows.set(id,row);}row.querySelector('.item-title')!.textContent=item.title;const label=row.querySelector('.status')!;label.textContent=t(item.status);label.className='status '+item.status;row.setAttribute('aria-pressed',String(selection?.id===item.id));if(historyHost.children[index+1]!==row)historyHost.insertBefore(row,historyHost.children[index+1]??null);}}
+const bootstrapHistoryRows=new Map<string,HTMLElement>();
+let bootstrapHistoryTerminal:PrivateTerminal|null=null;
+let bootstrapHistoryID:string|null=null;
+let bootstrapHistoryDetail:HTMLElement|null=null;
+function bootstrapDuration(task:LocalTask){return task.startedAt?elapsed(task):'';}
+function renderHistory(){
+ historyHost.hidden=!historyOpen;
+ if(!historyOpen){bootstrapHistoryTerminal?.setVisibility(false);return;}
+ const records=[...state!.tasks.map(t=>({...t,type:'task' as const})),...(state!.builds??[]).map(t=>({...t,type:'build' as const})),...state!.runs.map(t=>({...t,title:t.branch,type:'run' as const}))].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,100);
+ if(!historyHost.querySelector('h2'))historyHost.prepend(element('h2',t('history')));
+ historyHost.querySelector('.empty')?.remove();
+ const ids=new Set(records.map(r=>r.type+':'+r.id));
+ for(const [id,node]of historyRows)if(!ids.has(id)){(bootstrapHistoryRows.get(id)??node).remove();historyRows.delete(id);bootstrapHistoryRows.delete(id);}
+ if(!records.length)historyHost.append(element('p',t('emptyTasks'),'empty'));
+ for(const [index,item]of records.entries()){
+  const id=item.type+':'+item.id,isBootstrap=item.type==='task'&&!!item.bootstrap;
+  let row=historyRows.get(id);
+  if(!row){
+   row=button('',()=>{if(isBootstrap&&selection?.id===item.id){selection=null;diagnostic=null;render();scheduleWorkspace();void syncContext();}else selectItem(item.type,item.id);},false,'item');
+   row.append(element('span','','item-title'),status(item.status));historyRows.set(id,row);
+   if(isBootstrap){const wrapper=element('div','','bootstrap-history-row');wrapper.append(row);bootstrapHistoryRows.set(id,wrapper);row.append(element('span','','item-sub'),element('span','','item-timing'),element('span','›','item-chevron'));}
+  }
+  row.querySelector('.item-title')!.textContent=item.title;
+  const label=row.querySelector('.status')!;label.textContent=t(item.status);label.className='status '+item.status;
+  const selected=selection?.id===item.id;row.setAttribute('aria-pressed',String(selected));
+  if(isBootstrap){
+   row.setAttribute('aria-expanded',String(selected));row.setAttribute('aria-controls','bootstrap-history-'+item.id);
+   row.querySelector('.item-sub')!.textContent=item.context.checkoutId.split('/').filter(Boolean).at(-1)+' · '+item.context.branch;
+   row.querySelector('.item-sub')!.setAttribute('title',item.context.checkoutId+' · '+item.context.branch);
+   row.querySelector('.item-timing')!.textContent=[bootstrapDuration(item),date(item.createdAt)].filter(Boolean).join(' · ');
+   row.querySelector('.item-chevron')!.textContent=selected?'⌄':'›';
+  }
+  const node=bootstrapHistoryRows.get(id)??row;
+  if(historyHost.children[index+1]!==node)historyHost.insertBefore(node,historyHost.children[index+1]??null);
+ }
+}
+function renderBootstrapHistory(task:LocalTask){
+ const wrapper=bootstrapHistoryRows.get('task:'+task.id);
+ if(!wrapper){bootstrapHistoryTerminal?.setVisibility(false);return;}
+ if(bootstrapHistoryID!==task.id||!bootstrapHistoryDetail){
+  if(bootstrapHistoryTerminal)void bootstrapHistoryTerminal.dispose();
+  bootstrapHistoryDetail?.remove();bootstrapHistoryID=task.id;
+  const detail=element('section','','bootstrap-history-details');detail.id='bootstrap-history-'+task.id;detail.setAttribute('aria-label',t('task.details'));
+  const step=element('p','','bootstrap-history-step'),progress=element('progress','','bootstrap-progress');progress.max=1;
+  const stages=element('div','','bootstrap-stages'),failure=element('p','','bootstrap-error error');
+  const terminal=new PrivateTerminal(tool,showError,{waiting:t('bootstrap.terminal.waiting'),unavailable:t('noOutput')});bootstrapHistoryTerminal=terminal;
+  const footer=element('div','','bootstrap-details-footer'),actions=element('div','','bootstrap-history-actions');
+  const cancel=button(t('cancel'),()=>void perform(async()=>{await tool('cancel_local_task',{taskID:task.id});await refresh();}));cancel.dataset.action='cancel';
+  const analyzeButton=button(t('analyze'),()=>void analyze(task.id));analyzeButton.dataset.action='analyze';
+  const secret=button(t('terminal.secret'),()=>void perform(async()=>{await tool('panel_secret_input',{taskID:task.id});}));secret.dataset.action='secret';
+  const retry=button(t('bootstrap.retry'),()=>void perform(async()=>{await tool('panel_bootstrap_control',{taskID:task.id,operation:'retry'});await refresh();}));retry.dataset.action='retry';
+  const activate=button(t('bootstrap.activateXcode'),()=>void perform(async()=>{await tool('panel_bootstrap_control',{taskID:task.id,operation:'activateXcode'});await refresh();}));activate.dataset.action='activate';
+  actions.append(cancel,retry,activate,analyzeButton,secret);
+  const technical=element('details','','bootstrap-technical');technical.append(element('summary',t('task.technical')),element('p','','mono'));
+  footer.append(actions,technical);detail.append(step,progress,stages,failure,terminal.host,footer,element('div','','bootstrap-history-diagnostic'));bootstrapHistoryDetail=detail;
+  void terminal.attach(task.id).catch(showError);
+ }
+ const detail=bootstrapHistoryDetail,terminal=bootstrapHistoryTerminal!,live=['queued','running'].includes(task.status),running=task.status==='running',blocked=task.bootstrap?.phase==='blocked';
+ if(detail.parentElement!==wrapper)wrapper.append(detail);detail.hidden=false;
+ const step=detail.querySelector<HTMLElement>('.bootstrap-history-step')!;
+ step.textContent=running?task.progress??t('bootstrap.phase.running'):task.status==='queued'?t('bootstrap.phase.'+task.bootstrap?.phase):'';step.hidden=!step.textContent;
+ const progress=detail.querySelector<HTMLProgressElement>('progress')!;progress.value=task.bootstrap?.fraction??0;progress.hidden=!running;
+ const stages=detail.querySelector<HTMLElement>('.bootstrap-stages')!;stages.hidden=!running;
+ const stageSignature=stableJSON(task.bootstrap);if(stages.dataset.signature!==stageSignature){stages.dataset.signature=stageSignature;stages.replaceChildren(...(task.bootstrap?.stages??[]).map(stage=>element('span',(task.bootstrap?.completedStages?.includes(stage)?'✓ ':task.bootstrap?.currentStage===stage?'◉ ':'○ ')+t('stage.short.'+stage))));}
+ const failure=detail.querySelector<HTMLElement>('.bootstrap-error')!;failure.textContent=cleanFragment(task.error??'',8192);failure.title=failure.textContent;failure.hidden=!failure.textContent;
+ for(const name of ['cancel','analyze','secret','retry','activate']){const node=detail.querySelector<HTMLButtonElement>('[data-action='+name+']')!;node.hidden=name==='cancel'?!live:name==='secret'?!running:name==='retry'||name==='activate'?!blocked:!['failed','interrupted'].includes(task.status);node.disabled=busy||(name==='cancel'?!task.canCancel:name==='analyze'?!task.diagnosticAvailable:false);}
+ detail.querySelector('.bootstrap-technical p')!.textContent=[task.context.checkoutId,task.context.branch,task.context.sha,task.context.xcode].join('\n');
+ terminal.setTaskStatus(task.status);terminal.setBootstrapPlaceholder(bootstrapPlaceholderLabels,task.bootstrap!.platform);terminal.setBootstrapPresentation(12,bootstrapDarkTheme(),matchMedia('(prefers-contrast: more)').matches,panelAppearance);terminal.setVisibility(historyOpen);
+ const editorHost=detail.querySelector<HTMLElement>('.bootstrap-history-diagnostic')!;
+ if(diagnostic&&diagnosticSource==='history'&&diagnostic.task.id===task.id){const editor=diagnosticEditor();if(editor.parentElement!==editorHost)editorHost.append(editor);}else editorHost.replaceChildren();
+}
 
-function renderDetails(){const item=selection?.type==='task'?state?.tasks.find(t=>t.id===selection?.id):selection?.type==='build'?state?.builds?.find(t=>t.id===selection?.id):state?.runs.find(t=>t.id===selection?.id);const signature=stableJSON([item?.id,diagnostic?.task.id,notice]);if(signature===detailSignature){const label=detailHost.querySelector('.status');if(label&&item){label.textContent=t(item.status);label.className='status '+item.status;const cancel=detailHost.querySelector<HTMLButtonElement>('[data-action=cancel]'),analyze=detailHost.querySelector<HTMLButtonElement>('[data-action=analyze]'),secret=detailHost.querySelector<HTMLButtonElement>('[data-action=secret]');if(cancel)cancel.disabled=busy||!('canCancel'in item&&item.canCancel);if(analyze)analyze.disabled=busy||!('diagnosticAvailable'in item&&item.diagnosticAvailable);if(secret)secret.disabled=item.status!=='running';}return;}detailSignature=signature;
- const terminalHost=detailsTerminal?.host;if(terminalHost)terminalHost.remove();detailHost.replaceChildren();if(!item){if(detailsTerminal)void detailsTerminal.detach();return;}const detail=card('title' in item?item.title:item.branch);const close=button(t('close'),()=>{selection=null;diagnostic=null;renderDetails();scheduleWorkspace();});detail.append(close,status(item.status));if('context'in item){detail.append(element('p',[item.context.branch,item.context.sha].join(' · '),'mono'));const actions=element('div','','row');actions.append(button(t('cancel'),()=>void perform(async()=>{await tool(selection!.type==='build'?'cancel_build_activity':'cancel_local_task',selection!.type==='build'?{activityID:item.id}:{taskID:item.id});await refresh();}),busy||!item.canCancel));actions.lastElementChild!.setAttribute('data-action','cancel');actions.append(button(t('analyze'),()=>selection?.type==='task'?void analyze(item.id):void perform(async()=>{const result=await tool('get_build_diagnostic',{activityID:item.id});diagnosticSource='history';diagnostic={task:result.task,text:result.analysisPrompt.split('<diagnostic-data>')[1]?.split('</diagnostic-data>')[0]?.trim()??'',analysisPrompt:result.analysisPrompt,truncated:result.truncated,outputUnavailable:false};fragment=diagnostic.text;comment='';}),busy||!item.diagnosticAvailable));actions.lastElementChild!.setAttribute('data-action','analyze');actions.append(button(t('terminal.open'),()=>{if(!detailsTerminal)detailsTerminal=new PrivateTerminal(tool,showError,{waiting:t('bootstrap.terminal.waiting'),unavailable:t('noOutput')});detail.append(detailsTerminal.host);void detailsTerminal.attach(item.id).catch(showError);}),button(t('terminal.secret'),()=>void perform(async()=>{await tool('panel_secret_input',{taskID:item.id});}),item.status!=='running'));actions.lastElementChild!.setAttribute('data-action','secret');detail.append(actions);if(terminalHost){detail.append(terminalHost);void detailsTerminal!.attach(item.id).catch(showError);}}else{if(detailsTerminal)void detailsTerminal.detach();for(const a of [link('Jenkins',item.jenkinsURL),link('GitLab',item.gitlabURL),link('Allure',item.allureURL)])if(a)detail.append(a);if(item.error)detail.append(element('p',item.error,'error'));for(const job of item.jobs)detail.append(element('p',job.name+' · '+t(job.status)));}detailHost.append(detail);
+function renderDetails(){const item=selection?.type==='task'?state?.tasks.find(t=>t.id===selection?.id):selection?.type==='build'?state?.builds?.find(t=>t.id===selection?.id):state?.runs.find(t=>t.id===selection?.id);if(selection?.type==='task'&&item&&'bootstrap'in item&&item.bootstrap){detailSignature='';if(detailHost.childNodes.length)detailHost.replaceChildren();if(detailsTerminal)void detailsTerminal.detach();renderBootstrapHistory(item);return;}
+ if(bootstrapHistoryDetail)bootstrapHistoryDetail.hidden=true;bootstrapHistoryTerminal?.setVisibility(false);
+ const signature=stableJSON([item?.id,diagnostic?.task.id,notice]);if(signature===detailSignature){const label=detailHost.querySelector('.status');if(label&&item){label.textContent=t(item.status);label.className='status '+item.status;const cancel=detailHost.querySelector<HTMLButtonElement>('[data-action=cancel]'),analyze=detailHost.querySelector<HTMLButtonElement>('[data-action=analyze]'),secret=detailHost.querySelector<HTMLButtonElement>('[data-action=secret]');if(cancel)cancel.disabled=busy||!('canCancel'in item&&item.canCancel);if(analyze)analyze.disabled=busy||!('diagnosticAvailable'in item&&item.diagnosticAvailable);if(secret)secret.disabled=item.status!=='running';}return;}detailSignature=signature;
+ const terminalHost=detailsTerminal?.host;if(terminalHost)terminalHost.remove();detailHost.replaceChildren();if(!item){if(detailsTerminal)void detailsTerminal.detach();return;}const selectedBuild=selection?.type==='build'?state?.builds?.find(build=>build.id===selection?.id):undefined;const detail=card(selectedBuild?t(selectedBuild.actionKey??'operation.'+selectedBuild.parameters.operation):'title' in item?item.title:item.branch);const close=button(t('close'),()=>{selection=null;diagnostic=null;renderDetails();scheduleWorkspace();});detail.append(close,status(item.status));if('context'in item){detail.append(element('p',[item.context.branch,item.context.sha].join(' · '),'mono'));const actions=element('div','','row');actions.append(button(t('cancel'),()=>void perform(async()=>{await tool(selection!.type==='build'?'cancel_build_activity':'cancel_local_task',selection!.type==='build'?{activityID:item.id}:{taskID:item.id});await refresh();}),busy||!item.canCancel));actions.lastElementChild!.setAttribute('data-action','cancel');actions.append(button(t('analyze'),()=>selection?.type==='task'?void analyze(item.id):void perform(async()=>{const result=await tool('get_build_diagnostic',{activityID:item.id});diagnosticSource='history';diagnostic={task:result.task,text:result.analysisPrompt.split('<diagnostic-data>')[1]?.split('</diagnostic-data>')[0]?.trim()??'',analysisPrompt:result.analysisPrompt,truncated:result.truncated,outputUnavailable:false};fragment=diagnostic.text;comment='';}),busy||!item.diagnosticAvailable));actions.lastElementChild!.setAttribute('data-action','analyze');actions.append(button(t('terminal.open'),()=>{if(!detailsTerminal)detailsTerminal=new PrivateTerminal(tool,showError,{waiting:t('bootstrap.terminal.waiting'),unavailable:t('noOutput')});detail.append(detailsTerminal.host);void detailsTerminal.attach(item.id).catch(showError);}),button(t('terminal.secret'),()=>void perform(async()=>{await tool('panel_secret_input',{taskID:item.id});}),item.status!=='running'));actions.lastElementChild!.setAttribute('data-action','secret');detail.append(actions);if(terminalHost){detail.append(terminalHost);void detailsTerminal!.attach(item.id).catch(showError);}}else{if(detailsTerminal)void detailsTerminal.detach();for(const a of [link('Jenkins',item.jenkinsURL),link('GitLab',item.gitlabURL),link('Allure',item.allureURL)])if(a)detail.append(a);if(item.error)detail.append(element('p',item.error,'error'));for(const job of item.jobs)detail.append(element('p',job.name+' · '+t(job.status)));}detailHost.append(detail);
  if(diagnostic&&diagnosticSource==='history')detailHost.append(diagnosticEditor());
 }
 
@@ -454,6 +524,9 @@ function renderSimulatorRecovery(){for(const activity of state?.simulator?.activ
 const fixtureSimulatorActions:Record<string,unknown>[]=[];
 const fixtureSimulatorInputEvents:Record<string,unknown>[]=[];
 const fixtureContext:Context={checkoutId:'/private/tmp/MimicFixture',branch:'feature/mcp',sha:'fixture-sha',xcode:'/Applications/Xcode.app/Contents/Developer',appleTarget:null,profileID:null,profileRevision:null};
+let fixtureBuildDraft:BuildDraft={operation:'build',backend:'cli',scheme:'Fixture',configuration:'Debug',destinationID:'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',testPlan:'',testIdentifiers:[],workspaceTab:''};
+let fixtureBuildTests:{id:string;target:string;className:string;name:string}[]|null=null;
+const fixtureBuildCalls:Record<string,unknown>[]=[];
 const fixtureState:State={appearance:new URL(location.href).searchParams.get('appearance')==='legacy'?'legacy':'tileGrid',interface:{version:1,bindings:[{role:'bootstrap',actionID:'prepare',fields:Object.fromEntries(['platform','device','match','full','dependencies','uiDependencies','setup'].map(x=>[x,x]))}]},context:fixtureContext,actions:[{id:'prepare',title:'Подготовка',presentation:'preparation',remote:false,parameters:[...['device','match','full','dependencies','uiDependencies','setup'].map(id=>({id,title:id,kind:'boolean',defaultValue:'true',required:true})),{id:'platform',title:'Платформа',kind:'platform',defaultValue:'ios',required:true}]}],tasks:[{id:'fixture-task',actionID:'prepare',bootstrap:{platform:'ios',phase:'failed',fraction:0},title:t('bootstrap_ios'),status:'failed',createdAt:new Date().toISOString(),context:fixtureContext,diagnosticAvailable:true,canCancel:false}],builds:[{id:'fixture-build',title:t('operation.build'),status:'failed',createdAt:new Date().toISOString(),context:fixtureContext,diagnosticAvailable:true,canCancel:false,tracking:'unavailable',source:'Terminal',phase:'build.phase.failed',parameters:{operation:'build',backend:'cli',scheme:'Fixture',configuration:'Debug',destinationID:'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',workspaceTab:''}}],runs:[],jenkinsConfigured:true,progress:t('failed')};
 fixtureState.actions.push({id:'cleanup-all',title:'Cleanup',presentation:'regular',remote:false,parameters:[]},{id:'cleanup-derived',title:'DerivedData',presentation:'regular',remote:false,parameters:[]},{id:'test-job',title:'Tests',presentation:'ci',remote:true,parameters:[{id:'ref',title:'Branch',kind:'branch',defaultValue:'',required:true},{id:'plan',title:'Plan',kind:'choice',defaultValue:'SMOKE',choices:['SMOKE','FUNCTIONAL','STATS','FULL'],required:true}]});
 fixtureState.interface!.bindings.push({role:'fullCleanup',actionID:'cleanup-all',fields:{}},{role:'derivedDataCleanup',actionID:'cleanup-derived',fields:{}},{role:'uiTests',actionID:'test-job',fields:{branch:'ref',plan:'plan'}});
@@ -505,6 +578,16 @@ async function fixtureTool(name:string,args:Record<string,unknown>):Promise<any>
  if(name==='panel_branches')return{branches:['develop','feature/mcp']};
  if(name==='panel_branch_preferences'){fixtureState.branchRebase=!!args.enabled;return{enabled:fixtureState.branchRebase};}
  if(name==='panel_switch_branch'){fixtureContext.branch=String(args.branch);return{done:true};}
+ if(name==='panel_build_control'){
+  const operation=String(args.operation);
+  if(operation==='get')return{context:fixtureContext,developerDirectory:fixtureContext.xcode,draft:structuredClone(fixtureBuildDraft),catalogue:fixtureBuildTests?{tests:fixtureBuildTests}:null};
+  if(operation==='save'){fixtureBuildDraft=structuredClone(args.parameters as BuildDraft);return{saved:true};}
+  if(operation==='product'){const record=fixtureState.builds!.find(record=>record.id===args.activityID) as any;record.selectedProductID=args.productID;record.stage='installation';record.phase='build.phase.installation';return record;}
+  fixtureBuildCalls.push(structuredClone(args));
+  const record={id:String(args.requestID),title:operation,status:'queued',createdAt:new Date().toISOString(),context:structuredClone(fixtureContext),diagnosticAvailable:false,canCancel:true,tracking:'live',phase:'build.phase.queued',source:'Codex · вручную',actionKey:'build.action.'+(operation==='catalogue'?'catalogue':operation==='tests'?'testsSelected':operation),parameters:{...(args.parameters as any),operation:operation==='tests'?'test':'build',intent:operation==='run'?'run':operation==='catalogue'?'catalogue':null}};
+  fixtureState.builds!.unshift(record);return record;
+ }
+ if(name==='cancel_build_activity'){const record=fixtureState.builds!.find(record=>record.id===args.activityID);if(record){record.status='cancelled';record.canCancel=false;(record as any).finishedAt=new Date().toISOString();record.phase='build.phase.cancelled';}return record;}
  if(name==='start_build_configuration')return{queryID:'fixture-query',status:'ready',result:await fixtureTool('get_build_configuration',args)};
  if(name==='get_build_configuration_state')return{status:'failed',errorCode:'notFound'};
  if(name==='get_build_configuration')return{context:fixtureContext,cli:{schemes:['Fixture','Another'],configurations:['Debug','Release'],destinations:args.scheme?[{id:'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',name:'iPhone Fixture'}]:[],testPlans:['Selected']},backends:['cli','xcodeMCP'],xcode:{workspaces:{fixture:'Fixture.xcworkspace'}}};
@@ -556,6 +639,15 @@ if(preview)(window as any).mimicToolsFixture={
  context:()=>fixtureContext,
 };
 /** Preview-only state changes exercise header admission and status without a live checkout. */
+if(preview)(window as any).mimicBuildFixture={
+ calls:()=>fixtureBuildCalls,
+ mode:(mode:'mini'|'full'|'extended')=>{savedLayout=standard();savedLayout.rows=[{id:'build-fixture',slots:mode==='mini'?['builds','derivedDataCleanup']:['builds']},...(mode==='mini'?[]:[{id:'build-neighbour',slots:['derivedDataCleanup'] as (Block|null)[]}]),{id:'build-bootstrap-neighbour',slots:['bootstrap']}];fixtureState.layout=savedLayout;expanded=mode==='extended'?'builds':null;render();},
+ empty:()=>{fixtureState.builds=[];render();},
+ task:(status:string,stage='compilation',count:number|null=null)=>{let record=fixtureState.builds![0] as any;if(!record){record={id:crypto.randomUUID(),parameters:{...fixtureBuildDraft,intent:'run'},context:structuredClone(fixtureContext),source:'Codex',createdAt:new Date().toISOString(),actionKey:'build.action.run'};fixtureState.builds!.unshift(record);}record.status=status;record.stage=stage;record.canCancel=['queued','preparing','running'].includes(status);record.startedAt??=new Date(Date.now()-63000).toISOString();record.finishedAt=record.canCancel?null:new Date().toISOString();record.phase='build.phase.'+(status==='running'?stage==='compilation'?'running':stage:status);record.completedStages=count;record.progressTotal=3;record.progressFraction=status==='succeeded'?1:count==null?null:count/3;if(record.parameters.intent==='catalogue'&&status==='succeeded')fixtureBuildTests=['testOne()','testTwo()','testAnother()'].map((name,index)=>({id:'FixtureTests/'+(index===2?'Other':'Checkout')+'/'+name,target:'FixtureTests',className:index===2?'Other':'Checkout',name}));render();},
+ products:()=>{const record=fixtureState.builds![0] as any;record.stage='products';record.phase='build.phase.products';record.status='running';record.products=[1,2].map(i=>({path:'/fixture/App'+i+'.app',name:'App'+i,bundleIdentifier:'fixture.app'+i}));render();},
+ changeContext:()=>{fixtureContext.sha+='-next';accept(fixtureState);render();},
+ draft:()=>fixtureBuildDraft,
+};
 if(preview)(window as any).mimicChromeFixture={update:(patch:Partial<State>)=>{Object.assign(fixtureState,patch);accept(fixtureState);render();}};
 // MARK: - Quiet status notifications
 const notificationNode=element('p','','banner');notificationNode.setAttribute('role','status');notificationNode.setAttribute('aria-live','polite');root.prepend(notificationNode);
@@ -581,11 +673,11 @@ if(preview)(window as any).mimicBootstrapFixture={
   savedLayout=standard();if(mode==='mini')resize(savedLayout,'bootstrap','mini');fixtureState.layout=structuredClone(savedLayout);expanded=mode==='expanded'?'bootstrap':null;
   render();
  },
- task(status:string,platform:'ios'|'tvos'='ios',reuse=false,error=''){
+ task(status:string,platform:'ios'|'tvos'='ios',reuse=false,error='',retainHistory=false){
   const previous=fixtureState.tasks.find(task=>task.bootstrap),id=reuse&&previous?previous.id:crypto.randomUUID();
   const task:LocalTask={id,actionID:'prepare',title:t('bootstrap_'+platform),bootstrap:{platform,phase:status,fraction:status==='succeeded'?1:.4,stages:['dependencies','uiTests','setup'],currentStage:status==='running'?'uiTests':null,completedStages:status==='succeeded'?['dependencies','uiTests','setup']:status==='running'?['dependencies']:[]},status,context:fixtureContext,createdAt:new Date().toISOString(),startedAt:new Date(Date.now()-41000).toISOString(),finishedAt:['queued','running','blocked'].includes(status)?null:new Date().toISOString(),canCancel:['queued','running','blocked'].includes(status),diagnosticAvailable:['failed','interrupted'].includes(status),error};
   if(status==='blocked'){task.status='queued';task.bootstrap!.phase='blocked';}
-  fixtureState.tasks=fixtureState.tasks.filter(task=>!task.bootstrap);fixtureState.tasks.unshift(task);
+  fixtureState.tasks=fixtureState.tasks.filter(task=>task.id!==id&&(retainHistory||!task.bootstrap));fixtureState.tasks.unshift(task);
   if(!fixtureTranscripts.has(id))fixtureTranscripts.set(id,'Mimic fixture terminal\r\n');accept(fixtureState);render();return id;
  },
  output(taskID:string,text:string){fixtureTranscripts.set(taskID,(fixtureTranscripts.get(taskID)??'')+text);},

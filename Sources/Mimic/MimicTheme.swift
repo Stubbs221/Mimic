@@ -75,6 +75,7 @@ struct TileGridButtonStyle: ButtonStyle {
     var primary = false
     var selected = false
     var height: CGFloat = 32
+    var horizontalPadding: CGFloat = 12
     private var theme = MimicTheme()
     private var accessibility = MimicAccessibility()
     @Environment(\.isEnabled) private var enabled
@@ -83,7 +84,7 @@ struct TileGridButtonStyle: ButtonStyle {
     @Environment(\.mimicTextScale) private var textScale
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.system(size: MimicTheme.metric("body") * textScale, weight: .medium))
-            .padding(.horizontal, 12).frame(minHeight: height)
+            .padding(.horizontal, horizontalPadding).frame(minHeight: height)
             .foregroundStyle(theme.color(primary || selected ? "paper" : "ink"))
             .background(theme.color(primary || selected ? "ink" : hovered ? "accentSoft" : "paper"), in: RoundedRectangle(cornerRadius: MimicTheme.metric("controlRadius")))
             .overlay(RoundedRectangle(cornerRadius: MimicTheme.metric("controlRadius")).strokeBorder(theme.color("ink").opacity(focused ? 1 : accessibility.increasedContrast ? 0.5 : 0), lineWidth: focused ? 2 : 1))
@@ -94,9 +95,13 @@ struct TileGridButtonStyle: ButtonStyle {
 
 /// Auxiliary windows keep their native legacy controls and adopt B without replacing content.
 struct MimicAuxiliaryButtonStyle: PrimitiveButtonStyle {
+    var primary = false
+    var height: CGFloat = 32
+    var horizontalPadding: CGFloat = 12
     private var theme = MimicTheme()
     @ViewBuilder func makeBody(configuration: Configuration) -> some View {
-        if theme.tiled { Button(configuration).buttonStyle(TileGridButtonStyle()) }
+        if theme.tiled { Button(configuration).buttonStyle(TileGridButtonStyle(primary: primary, height: height, horizontalPadding: horizontalPadding)) }
+        else if primary { Button(configuration).buttonStyle(.borderedProminent) }
         else { Button(configuration).buttonStyle(.automatic) }
     }
 }

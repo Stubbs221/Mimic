@@ -7,35 +7,38 @@ import AppKit
 import Combine
 import Foundation
 import MimicCore
+import Observation
 
 /// App-owned refresh and activity lifecycle. Closing the panel never stops the menu-bar monitor.
-@MainActor
-final class AIUsageCoordinator: ObservableObject {
-    @Published private(set) var histories: [AIProvider: [AIUsageDailyPoint]] = [:]
-    @Published private(set) var unknownModels: [AIProvider: [String]] = [:]
-    @Published private var expansionOverrides: [AIProvider: Bool] = [:]
-    @Published private(set) var snapshots: [AIProvider: AIUsageSnapshot] = [:]
-    @Published private(set) var errors: [AIProvider: AIUsageError] = [:]
-    @Published private(set) var refreshing: Set<AIProvider> = []
-    @Published private(set) var currentDate: Date
-    @Published private(set) var settings: AIUsageSettings
-    @Published private(set) var fallbackProvider: AIProvider
-    private(set) var nextRefresh: [AIProvider: Date] = [:]
+@MainActor @Observable
+final class AIUsageCoordinator: @MainActor ObservableObject {
+    /// Auxiliary Combine owners coalesce this signal; SwiftUI tracks individual properties directly.
+    @ObservationIgnored let objectWillChange = ObservableObjectPublisher()
+    private(set) var histories: [AIProvider: [AIUsageDailyPoint]] = [:] { willSet { objectWillChange.send() } }
+    private(set) var unknownModels: [AIProvider: [String]] = [:] { willSet { objectWillChange.send() } }
+    private var expansionOverrides: [AIProvider: Bool] = [:] { willSet { objectWillChange.send() } }
+    private(set) var snapshots: [AIProvider: AIUsageSnapshot] = [:] { willSet { objectWillChange.send() } }
+    private(set) var errors: [AIProvider: AIUsageError] = [:] { willSet { objectWillChange.send() } }
+    private(set) var refreshing: Set<AIProvider> = [] { willSet { objectWillChange.send() } }
+    private(set) var currentDate: Date { willSet { objectWillChange.send() } }
+    private(set) var settings: AIUsageSettings { willSet { objectWillChange.send() } }
+    private(set) var fallbackProvider: AIProvider { willSet { objectWillChange.send() } }
+    @ObservationIgnored private(set) var nextRefresh: [AIProvider: Date] = [:]
     private let defaults: UserDefaults
     private let adapters: [AIProvider: any AIUsageFetching]
     private let scan: () async -> AIUsageActivity?
     private let scanUsage: (() async -> AIUsageScanResult)?
     private let clock: () -> Date
-    private var revisions: [AIProvider: String] = [:]
-    private var failures: [AIProvider: Int] = [:]
-    private var operationIDs: [AIProvider: UUID] = [:]
-    private var operations: [AIProvider: Task<Void, Never>] = [:]
-    private var lifecycle: Task<Void, Never>?
-    private var wakeObserver: NSObjectProtocol?
-    private var sleepObserver: NSObjectProtocol?
-    private var stopped = false
-    private var sleeping = false
-    private var scanning = false
+    @ObservationIgnored private var revisions: [AIProvider: String] = [:]
+    @ObservationIgnored private var failures: [AIProvider: Int] = [:]
+    @ObservationIgnored private var operationIDs: [AIProvider: UUID] = [:]
+    @ObservationIgnored private var operations: [AIProvider: Task<Void, Never>] = [:]
+    @ObservationIgnored private var lifecycle: Task<Void, Never>?
+    @ObservationIgnored private var wakeObserver: NSObjectProtocol?
+    @ObservationIgnored private var sleepObserver: NSObjectProtocol?
+    @ObservationIgnored private var stopped = false
+    @ObservationIgnored private var sleeping = false
+    @ObservationIgnored private var scanning = false
 
     init(defaults: UserDefaults = .standard, fallback: AIProvider = .codex, adapters: [any AIUsageFetching], scan: @escaping () async -> AIUsageActivity? = { nil }, scanUsage: (() async -> AIUsageScanResult)? = nil, clock: @escaping () -> Date = Date.init) {
         self.defaults = defaults; self.fallbackProvider = fallback
@@ -184,7 +187,8 @@ final class AIUsageCoordinator: ObservableObject {
                 guard !Task.isCancelled, !self.stopped, self.operationIDs[provider] == operationID else { return }
                 guard adapter.revision() == result.revision else { self.changed(provider, revision: adapter.revision()); return }
                 self.revisions[provider] = result.revision
-                self.snapshots[provider] = snapshot; self.errors[provider] = nil; self.failures[provider] = 0
+                if self.snapshots[provider] != snapshot { self.snapshots[provider] = snapshot }
+                if self.errors[provider] != nil { self.errors[provider] = nil }; self.failures[provider] = 0
                 self.nextRefresh[provider] = self.clock().addingTimeInterval(300)
             } catch {
                 guard !Task.isCancelled, !self.stopped, self.revisions[provider] == revision, self.operationIDs[provider] == operationID else { return }

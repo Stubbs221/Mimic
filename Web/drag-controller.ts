@@ -15,7 +15,7 @@ type Options={grid:HTMLElement;toolbar:HTMLElement;nodes:Map<Block,{node:HTMLEle
 
 /** All nested controls share the same exclusion for surface clicks and drag presses. */
 export function isBlockControl(target:HTMLElement){
- return !!target.closest('button,input,select,textarea,a,summary,[contenteditable],[role=button],[role=link],.terminal-host,.sim-viewport,.simulator-image,.placement-menu');
+ return !!target.closest('button,input,select,textarea,a,summary,[contenteditable],[role=button],[role=link],.terminal-host,.bootstrap-terminal-idle,.sim-viewport,.simulator-image,.placement-menu');
 }
 
 /** Owns one pointer and one layout transaction. Frames come from layout, never presentation transforms. */

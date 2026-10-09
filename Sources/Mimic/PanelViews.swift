@@ -30,12 +30,13 @@ struct MimicPanel: View {
             if let updater = self.model.updater { MimicUpdateNotice(updater: updater) }
             GeometryReader { bounds in
                 ZStack(alignment: .topLeading) {
-                    self.homeDocument
-                        .environment(\.mimicPresentationVisible, model.panelPage == .home && model.panelVisible)
+                    MimicDocumentHost(visible: model.panelPage == .home, content: self.homeDocument
+                        .environment(\.mimicPresentationVisible, model.panelPage == .home && model.panelVisible))
                         .frame(width: bounds.size.width, height: bounds.size.height)
                         .modifier(MimicPageInteraction(visible: self.model.panelPage == .home))
-                    SettingsDocument(model: model).frame(width: bounds.size.width, height: bounds.size.height)
-                        .environment(\.mimicPresentationVisible, model.panelPage == .settings && model.panelVisible)
+                    MimicDocumentHost(visible: model.panelPage == .settings, content: SettingsDocument(model: model)
+                        .environment(\.mimicPresentationVisible, model.panelPage == .settings && model.panelVisible))
+                        .frame(width: bounds.size.width, height: bounds.size.height)
                         .modifier(MimicPageInteraction(visible: self.model.panelPage == .settings))
                 }
             }
@@ -96,6 +97,63 @@ struct MimicPanel: View {
         }
     }
 
+}
+
+// MARK: - Retained document graphs
+
+/// A scroll transaction updates only its own graph, leaving the other document's controls retained.
+private struct MimicDocumentHost<Content: View>: NSViewRepresentable {
+    let visible: Bool
+    let content: Content
+    func makeNSView(context: Context) -> DocumentView {
+        let view = DocumentView(rootView: MimicDocumentRoot(content: content, inherited: context.environment))
+        view.desiredVisible = visible
+        return view
+    }
+    func updateNSView(_ view: DocumentView, context: Context) {
+        if visible, view.hosting.isHidden { view.hosting.isHidden = false }
+        view.desiredVisible = visible
+        view.hosting.rootView = MimicDocumentRoot(content: content, inherited: context.environment)
+        // Commit inner scroll visibility and its retained offset before excluding the complete graph.
+        if view.hasLaidOut, !visible, !view.hosting.isHidden {
+            view.hosting.layoutSubtreeIfNeeded(); view.hosting.isHidden = true
+        }
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: DocumentView, context: Context) -> CGSize? {
+        guard let width = proposal.width, let height = proposal.height else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
+    /// Opacity alone retains native hosting work in the window's layout and hover passes.
+    /// Mount once to establish scroll identities, then hide the whole inactive document.
+    final class DocumentView: NSView {
+        let hosting: NSHostingView<MimicDocumentRoot<Content>>
+        var desiredVisible = true
+        private(set) var hasLaidOut = false
+        override var isFlipped: Bool { true }
+        init(rootView: MimicDocumentRoot<Content>) {
+            hosting = NSHostingView(rootView: rootView)
+            super.init(frame: .zero)
+            // The panel's bounded viewport owns size; intrinsic height must not resize it.
+            hosting.sizingOptions = []
+            addSubview(hosting)
+        }
+        required init?(coder: NSCoder) { nil }
+        override func layout() {
+            super.layout()
+            hosting.frame = bounds
+            if !hasLaidOut, !desiredVisible { hosting.layoutSubtreeIfNeeded() }
+            hasLaidOut = true
+            if hosting.isHidden == desiredVisible { hosting.isHidden = !desiredVisible }
+        }
+    }
+}
+
+/// Carry the owning panel's theme, font, accessibility and interaction environment across the host boundary.
+private struct MimicDocumentRoot<Content: View>: View {
+    let content: Content
+    let inherited: EnvironmentValues
+    var body: some View { content.environment(\.self, inherited) }
 }
 
 /// The available width selects sidebar or menu without replacing retained category bodies.
@@ -202,29 +260,31 @@ struct BranchSwitchStatus: View {
     @ObservedObject var model: TaskCoordinator
     let operation: BranchSwitchOperation
     var body: some View {
-        if operation.phase != .succeeded || operation.stashSHA != nil {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    if model.branchSwitch.isExecuting { ProgressView().controlSize(.mini) }
-                    Text(text("branch.phase." + operation.phase.rawValue)).lineLimit(2)
-                    Spacer(minLength: 0)
-                    if let thread = operation.ownerThreadID, let url = URL(string: "codex://threads/" + thread.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!) {
-                        Button(text("branch.codex.open")) { NSWorkspace.shared.open(url) }.buttonStyle(.plain)
-                    } else if operation.phase == .awaitingAgent && ![.reserved, .sent, .unknown].contains(operation.delivery) {
-                        Button(text("branch.codex.open")) { try? model.branchSwitch.openChat(operation.id) }.buttonStyle(.plain)
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            if operation.phase != .succeeded || operation.completedAt.map({ timeline.date.timeIntervalSince($0) < 5 }) == true {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        if model.branchSwitch.isExecuting { ProgressView().controlSize(.mini) }
+                        Text(text("branch.phase." + operation.phase.rawValue)).lineLimit(2)
+                        Spacer(minLength: 0)
+                        if let thread = operation.ownerThreadID, let url = URL(string: "codex://threads/" + thread.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!) {
+                            Button(text("branch.codex.open")) { NSWorkspace.shared.open(url) }.buttonStyle(.plain)
+                        } else if operation.phase == .awaitingAgent && ![.reserved, .sent, .unknown].contains(operation.delivery) {
+                            Button(text("branch.codex.open")) { try? model.branchSwitch.openChat(operation.id) }.buttonStyle(.plain)
+                        }
+                        if operation.phase.holdsCheckout && (operation.ownerThreadID == nil || operation.phase == .needsReview) {
+                            Button(text(operation.phase == .needsReview ? "branch.review.acknowledge" : "cancel")) {
+                                Task { do { _ = try await model.branchSwitch.cancel(operation.id) } catch { model.branchError = text("branch.error.review") } }
+                            }.buttonStyle(.plain)
+                        }
                     }
-                    if operation.phase.holdsCheckout && (operation.ownerThreadID == nil || operation.phase == .needsReview) {
-                        Button(text(operation.phase == .needsReview ? "branch.review.acknowledge" : "cancel")) {
-                            Task { do { _ = try await model.branchSwitch.cancel(operation.id) } catch { model.branchError = text("branch.error.review") } }
-                        }.buttonStyle(.plain)
+                    if operation.phase == .awaitingAgent {
+                        Text(text("branch.delivery." + operation.delivery.rawValue)).foregroundStyle(.secondary)
                     }
-                }
-                if operation.phase == .awaitingAgent {
-                    Text(text("branch.delivery." + operation.delivery.rawValue)).foregroundStyle(.secondary)
-                }
-                if let error = operation.error { Text(text(error)).foregroundStyle(.orange).lineLimit(3).help(text(error)) }
-                if let stash = operation.stashName { Text(text("branch.stash.backup") + " " + stash).lineLimit(1).truncationMode(.middle).help(stash) }
-            }.mimicFont(.caption).accessibilityIdentifier("branch.progress")
+                    if let error = operation.error { Text(text(error)).foregroundStyle(.orange).lineLimit(3).help(text(error)) }
+                    if let stash = operation.stashName { Text(text("branch.stash.backup") + " " + operation.source.branch).lineLimit(1).truncationMode(.middle).help(stash) }
+                }.mimicFont(.caption).accessibilityIdentifier("branch.progress")
+            }
         }
     }
 }

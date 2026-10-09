@@ -283,11 +283,15 @@ struct SettingsPageTests {
         home.tile(); settings.tile()
         #expect(!home.hasVerticalScroller && !settings.hasVerticalScroller)
         #expect(!home.isHidden && settings.isHidden)
+        #expect(home.superview?.isHiddenOrHasHiddenAncestor == false)
+        #expect(settings.superview?.isHiddenOrHasHiddenAncestor == true)
         home.contentView.scroll(to: NSPoint(x: 0, y: 90)); home.reflectScrolledClipView(home.contentView)
         let homeOffset = home.contentView.bounds.origin
         m.openSettings(group: .aiIntegrations, source: .keyboard)
         try await self.layout(host)
         #expect(home.isHidden && !settings.isHidden)
+        #expect(home.superview?.isHiddenOrHasHiddenAncestor == true)
+        #expect(settings.superview?.isHiddenOrHasHiddenAncestor == false)
         settings.contentView.scroll(to: NSPoint(x: 0, y: 160)); settings.reflectScrolledClipView(settings.contentView)
         let settingsOffset = settings.contentView.bounds.origin
         m.returnHome(source: .keyboard); try await self.layout(host)

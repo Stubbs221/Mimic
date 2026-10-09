@@ -32,30 +32,36 @@ struct TaskTechnicalData: View {
     let record: TaskRecord
     var body: some View {
         MimicDisclosure(text("task.technical")) {
-            VStack(alignment: .leading, spacing: 8) {
-                if let code = self.record.exitCode {
-                    Text(String(format: text("task.exit.code.format"), code)).accessibilityIdentifier("task.exit.code")
-                    if code != 0 { Text(text("task.exit.explanation")).foregroundStyle(.secondary) }
-                }
-                if let signal = self.record.signal, signal > 0 { Text(String(format: text("task.signal.format"), signal)) }
-                self.field("task.checkout", self.record.project.path)
-                self.field("task.branch", self.record.project.branch)
-                self.field("task.commit", self.record.project.commit)
-                self.field("task.xcode", self.record.project.developerDirectory ?? text("task.not.specified"))
-                if let execution = self.record.profileExecution {
-                    self.field("profile.revision", execution.snapshot.id + " · " + execution.snapshot.revision)
-                    ForEach(execution.action?.parameters ?? []) { parameter in
-                        Text(parameter.title + ": " + (execution.parameters[parameter.id] ?? parameter.defaultValue)).fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                if let command = self.model.commandDisplay(for: self.record) {
-                    Text(text("task.command")).foregroundStyle(.secondary)
-                    Text(command).font(.system(size: 11, design: .monospaced)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                    Button { self.model.copyCommand(record: self.record) } label: { Label(text("copy.command"), systemImage: "doc.on.doc") }
-                        .buttonStyle(BootstrapControlStyle()).accessibilityIdentifier("task.command.copy")
-                }
-            }.padding(.top, 8).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            self.content
         }.font(.system(size: 12)).accessibilityIdentifier("task.technical")
+    }
+
+    /// Shared fields can expand below a compact action row without repeating the disclosure.
+    var content: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let code = self.record.exitCode {
+                Text(String(format: text("task.exit.code.format"), code)).accessibilityIdentifier("task.exit.code")
+                if code != 0 { Text(text("task.exit.explanation")).foregroundStyle(.secondary) }
+            }
+            if let signal = self.record.signal, signal > 0 { Text(String(format: text("task.signal.format"), signal)) }
+            self.field("task.checkout", self.record.project.path)
+            self.field("task.branch", self.record.project.branch)
+            self.field("task.commit", self.record.project.commit)
+            self.field("task.xcode", self.record.project.developerDirectory ?? text("task.not.specified"))
+            if let execution = self.record.profileExecution {
+                self.field("profile.revision", execution.snapshot.id + " · " + execution.snapshot.revision)
+                ForEach(execution.action?.parameters ?? []) { parameter in
+                    Text(parameter.title + ": " + (execution.parameters[parameter.id] ?? parameter.defaultValue)).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let command = self.model.commandDisplay(for: self.record) {
+                Text(text("task.command")).foregroundStyle(.secondary)
+                Text(command).font(.system(size: 11, design: .monospaced)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                Button { self.model.copyCommand(record: self.record) } label: { Label(text("copy.command"), systemImage: "doc.on.doc") }
+                    .buttonStyle(BootstrapControlStyle()).accessibilityIdentifier("task.command.copy")
+            }
+        }.padding(.top, 8).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            .mimicFont(.caption)
     }
 
     private func field(_ key: String, _ value: String) -> some View {

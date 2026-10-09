@@ -14,6 +14,8 @@ struct BuildTests {
         #expect(command.arguments.contains("-hideShellScriptEnvironment"))
         #expect(command.arguments.last == "build")
         #expect(command.environment["DEVELOPER_DIR"] == project.developerDirectory)
+        let buildWithResult = try parameters.command(project: project, resultBundlePath: "/private/tmp/build-result.xcresult")
+        #expect(buildWithResult.arguments.contains("-resultBundlePath") && buildWithResult.arguments.last == "build")
         parameters.operation = .test
         #expect(throws: BuildError.testsRequired) { try parameters.validate() }
         for invalid in ["Target", "Target/*", "Target/Class/", "Target/Class/method/extra"] {

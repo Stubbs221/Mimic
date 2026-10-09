@@ -10,11 +10,15 @@ import SwiftUI
 import Testing
 import MimicCore
 import Combine
+import Observation
 @testable import Mimic
 
 @MainActor
 private final class UsageClock {
     var date = Date(timeIntervalSince1970: 1000)
+}
+@MainActor private final class UsageObservationCount {
+    var value = 0
 }
 @MainActor
 private final class UsageAdapterFixture: AIUsageFetching {
@@ -61,12 +65,23 @@ struct AIUsageCoordinatorTests {
         f.codex.result = .success(f.snapshot())
         await f.coordinator.tick(); try await self.wait { f.coordinator.refreshing.isEmpty }
         #expect(f.coordinator.histories[.codex] == points && f.coordinator.unknownModels[.codex] == ["fixture-model"])
-        var historyPublications = 0, unknownPublications = 0
-        let history = f.coordinator.$histories.dropFirst().sink { _ in historyPublications += 1 }
-        let unknown = f.coordinator.$unknownModels.dropFirst().sink { _ in unknownPublications += 1 }
-        defer { history.cancel(); unknown.cancel() }
+        let histories = UsageObservationCount(), unknown = UsageObservationCount()
+        withObservationTracking { _ = f.coordinator.histories } onChange: { MainActor.assumeIsolated { histories.value += 1 } }
+        withObservationTracking { _ = f.coordinator.unknownModels } onChange: { MainActor.assumeIsolated { unknown.value += 1 } }
         await f.coordinator.tick()
-        #expect(historyPublications == 0 && unknownPublications == 0)
+        #expect(histories.value == 0 && unknown.value == 0)
+    }
+    @Test func timeTickDoesNotInvalidateSettingsOrHistoryReaders() async throws {
+        let points = [AIUsageDailyPoint(date: Date(timeIntervalSince1970: 1000), tokens: 1234)]
+        let f = try UsageCoordinatorFixture(scanUsage: { .init(activity: nil, histories: [.codex: points]) }); defer { f.cleanup() }
+        f.codex.result = .success(f.snapshot())
+        await f.coordinator.tick(); try await self.wait { f.coordinator.refreshing.isEmpty }
+        let time = UsageObservationCount(), settings = UsageObservationCount(), history = UsageObservationCount()
+        withObservationTracking { _ = f.coordinator.currentDate } onChange: { MainActor.assumeIsolated { time.value += 1 } }
+        withObservationTracking { _ = f.coordinator.settings } onChange: { MainActor.assumeIsolated { settings.value += 1 } }
+        withObservationTracking { _ = f.coordinator.histories } onChange: { MainActor.assumeIsolated { history.value += 1 } }
+        f.clock.date.addTimeInterval(10); await f.coordinator.tick()
+        #expect(time.value == 1 && settings.value == 0 && history.value == 0)
     }
     private func wait(_ condition: () -> Bool) async throws {
         for _ in 0 ..< 1000 {

@@ -112,9 +112,11 @@ enum BootstrapTerminalTheme {
     private var screen: TerminalView?
     private var delegate: TerminalDelegate?
     private var presentation: String?
-    init(model: TaskCoordinator, record: TaskRecord) {
+    private var inputEnabled = false
+    private var selected = false
+    init(model: TaskCoordinator, record: TaskRecord, replay: Data? = nil) {
         self.model = model; self.id = record.id
-        self.snapshot = Data(model.replay(id: record.id).suffix(128 * 1024)); self.hasOutput = !self.snapshot.isEmpty
+        self.snapshot = Data((replay ?? model.replay(id: record.id)).suffix(128 * 1024)); self.hasOutput = !self.snapshot.isEmpty
         model.attachTerminal(owner: self.owner) { [weak self] task, bytes in
             guard let self, task == self.id else { return }
             if !self.hasOutput, !bytes.isEmpty { self.hasOutput = true }
@@ -127,6 +129,8 @@ enum BootstrapTerminalTheme {
             self.screen?.feed(byteArray: Array(bytes)[...])
         }
     }
+    isolated deinit { self.model?.detachTerminal(owner: self.owner) }
+
     func view() -> TerminalView {
         if let screen { return screen }
         let view = TerminalView(frame: .zero)
@@ -136,7 +140,7 @@ enum BootstrapTerminalTheme {
         view.setAccessibilityLabel(text("terminal"))
         if let model {
             let delegate = TerminalDelegate(model: model, id: self.id)
-            self.delegate = delegate; view.terminalDelegate = delegate
+            self.delegate = delegate
         }
         view.feed(byteArray: Array(self.snapshot)[...]); self.screen = view
         return view
@@ -156,7 +160,11 @@ enum BootstrapTerminalTheme {
     }
     /// A mounted screen may keep its scrollback, but echoed input cannot become replay data.
     func discardReplayAfterPrivateInput() { self.snapshot = Data(); if self.screen == nil { self.hasOutput = false } }
-    func setInputEnabled(_ enabled: Bool) { self.screen?.terminalDelegate = enabled ? self.delegate : nil }
+    func setInputEnabled(_ enabled: Bool) {
+        self.inputEnabled = enabled
+        self.screen?.terminalDelegate = enabled && self.selected ? self.delegate : nil
+    }
+    func setSelected(_ selected: Bool) { self.selected = selected; self.setInputEnabled(self.inputEnabled) }
     func stop() {
         self.model?.detachTerminal(owner: self.owner)
         self.screen?.terminalDelegate = nil; self.delegate = nil
@@ -170,12 +178,14 @@ struct BootstrapTerminalContainer: NSViewRepresentable {
     let record: TaskRecord
     var visible = true
     var fontSize: CGFloat = 12
+    var session: BootstrapTerminalSession? = nil
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.mimicPanelAppearance) private var appearance
     func makeNSView(context: Context) -> NSView { NSView() }
     func updateNSView(_ host: NSView, context: Context) {
-        let terminal = self.model.bootstrapTerminal(for: self.record).view()
+        let session = self.session ?? self.model.bootstrapTerminal(for: self.record)
+        let terminal = session.view()
         let previousRow = terminal.getTerminal().buffer.yDisp
         let followingOutput = !terminal.canScroll || terminal.scrollPosition >= 1
         if terminal.superview !== host {
@@ -183,7 +193,6 @@ struct BootstrapTerminalContainer: NSViewRepresentable {
             terminal.removeFromSuperview(); host.addSubview(terminal)
             terminal.autoresizingMask = [.width, .height]
         }
-        let session = self.model.bootstrapTerminal(for: self.record)
         session.configure(fontSize: self.fontSize, dark: self.colorScheme == .dark, increasedContrast: self.contrast == .increased, appearance: self.appearance)
         session.setInputEnabled(false)
         if self.visible { terminal.frame = host.bounds }

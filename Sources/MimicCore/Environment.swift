@@ -12,6 +12,10 @@ public enum EnvironmentInspector {
         return (result.0, trim ? result.1.trimmingCharacters(in: .whitespacesAndNewlines) : result.1)
     }
 
+    /// Bounded execution primitive for native fixed-argument queries; public callers cannot supply shell text.
+    public static func boundedCapture(_ executable: String, _ arguments: [String], directory: String? = nil, environment: [String: String]? = nil, timeout: TimeInterval = 8, maximumBytes: Int = 2 * 1024 * 1024) -> (Int32, String) {
+        ReadOnlyProcess.capture(executable, arguments, directory: directory, environment: environment, timeout: timeout, maximumBytes: maximumBytes)
+    }
     public static func project(path: String, developerDirectory: String? = nil, appleTarget: AppleTarget? = nil) throws -> ProjectContext {
         let root = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         let branch = self.capture("/usr/bin/git", ["-C", root, "rev-parse", "--abbrev-ref", "HEAD"])

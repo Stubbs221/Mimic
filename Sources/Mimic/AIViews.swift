@@ -147,7 +147,7 @@ private struct AnalysisEditor: View {
 struct AIIntegrationsSettingsView: View {
     @ObservedObject var model: TaskCoordinator
     @ObservedObject var settings: AISettingsModel
-    @ObservedObject var usage: AIUsageCoordinator
+    let usage: AIUsageCoordinator
     @ObservedObject var analysis: AnalysisCoordinator
 
     var body: some View {

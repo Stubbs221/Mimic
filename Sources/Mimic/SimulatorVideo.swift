@@ -11,6 +11,7 @@ import MimicCore
     private static var stopping: [ObjectIdentifier: Process] = [:]
     static var canExit: Bool { stopping.values.allSatisfy { !$0.isRunning } }
     var onExit: @MainActor @Sendable () -> Void = {}
+    var recording: SimulatorRecording?
     private var process: Process?
     private var input: FileHandle?
     private var output: FileHandle?
@@ -94,6 +95,7 @@ import MimicCore
             guard buffer.count >= count + 4 else { return }
             let packet = Data(buffer.dropFirst(4).prefix(count)); buffer.removeFirst(count + 4)
             let sequence = packet[1..<9].reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+            recording?.append(packet)
             packets.append(sequence: sequence, data: packet, keyframe: packet[0] == 1)
         }
     }
@@ -109,6 +111,7 @@ import MimicCore
         }
     }
     private func send(_ value: [String: Any]) { guard let data = try? JSONSerialization.data(withJSONObject: value) else { return }; try? input?.write(contentsOf: data + Data([10])) }
+    func requestRecordingKeyframe() { send(["keyframe": true]) }
     func visibility(_ visible: Bool) { send(["enabled": visible]) }
     func orientation(_ value: String) { send(["orientation": value]) }
     func grant(_ viewer: UUID) -> BridgeValue {

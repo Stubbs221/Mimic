@@ -20,6 +20,9 @@ public struct MimicProfile: Codable, Equatable, Sendable {
     public let services: ProfileServices?
     public let actions: [ActionDefinition]
     public let interface: ProfileInterface?
+    public var sourceExclusions: [String]? = nil
+    public var preparation: PreparationRequirement? = nil
+    public var simulatorScenarios: [SimulatorScenario]? = nil
 }
 
 public struct AppleTarget: Codable, Equatable, Sendable {
@@ -191,6 +194,21 @@ public enum ProfileValidation {
         if let artifact = profile.services?.reportArtifactPath { guard relativePath(artifact) else { throw ProfileError.path } }
         if let pattern = profile.services?.branchOwnerPattern { _ = try NSRegularExpression(pattern: pattern.replacingOccurrences(of: "{username}", with: "username")) }
         guard profile.requiredFiles.allSatisfy(relativePath) else { throw ProfileError.path }
+        try SourceRevisionReader.validate(exclusions: profile.sourceExclusions ?? [])
+        if let requirement = profile.preparation {
+            guard !requirement.platforms.isEmpty, !requirement.inputs.isEmpty, requirement.inputs.allSatisfy(relativePath),
+                  let action = profile.actions.first(where: { $0.id == requirement.actionID && $0.remote == nil && $0.presentation == .preparation }) else { throw ProfileError.action }
+            guard (requirement.stages ?? []).allSatisfy({ action.steps.indices.contains($0) }) else { throw ProfileError.action }
+            _ = try parameters(requirement.parameters, action: action)
+        }
+        let scenarios = profile.simulatorScenarios ?? []
+        guard scenarios.count <= 100, Set(scenarios.map(\.id)).count == scenarios.count else { throw ProfileError.parameter }
+        for scenario in scenarios {
+            guard identifier(scenario.id), scenario.deeplinkSchemes.allSatisfy({ $0.range(of: #"^[a-zA-Z][a-zA-Z0-9+.-]{0,63}$"#, options: .regularExpression) != nil }),
+                  let action = profile.actions.first(where: { $0.id == scenario.actionID && $0.allowsMCP && $0.remote == nil && $0.presentation == .regular }) else { throw ProfileError.action }
+            _ = try parameters(scenario.parameters, action: action)
+        }
+
         for action in profile.actions {
             guard identifier(action.id), !action.title.isEmpty, action.title.count <= 256, action.parameters.count <= 64, Set(action.parameters.map(\.id)).count == action.parameters.count,
                   action.requiredFiles.allSatisfy(relativePath), action.requiredTools.allSatisfy({ identifier($0) }) else { throw ProfileError.action }

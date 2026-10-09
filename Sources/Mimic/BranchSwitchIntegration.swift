@@ -9,6 +9,7 @@ extension MimicIntegration {
                  "targetBranch": .string(op.target), "phase": .string(op.phase.rawValue), "holdsCheckout": .bool(op.phase.holdsCheckout),
                  "delivery": .string(op.delivery.rawValue), "ownerThreadID": op.ownerThreadID.map(BridgeValue.string) ?? .null,
                  "stashName": op.stashName.map(BridgeValue.string) ?? .null, "stashSHA": op.stashSHA.map(BridgeValue.string) ?? .null,
+                 "completedAt": op.completedAt.map { .number($0.timeIntervalSince1970 * 1000) } ?? .null,
                  "error": op.error.map { .string(text($0)) } ?? .null])
     }
 

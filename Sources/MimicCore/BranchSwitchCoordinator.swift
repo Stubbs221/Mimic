@@ -145,7 +145,11 @@ import Foundation
     // MARK: - Journal and recovery
 
     private var updater: BranchSwitchGit.Update { { [weak self] op in try await self?.save(op) } }
-    private func save(_ op: BranchSwitchOperation) throws {
+    private func save(_ initial: BranchSwitchOperation) throws {
+        var op = initial
+        if op.phase == .succeeded {
+            op.completedAt = self.operations.first(where: { $0.id == op.id })?.completedAt ?? op.completedAt ?? Date()
+        }
         var next = self.operations
         if let index = next.firstIndex(where: { $0.id == op.id }) { next[index] = op } else { next.append(op) }
         if next.count > 100 { next.removeFirst(next.count - 100) }

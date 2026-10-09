@@ -114,6 +114,9 @@ public enum MimicError: Error, Equatable { case invalidBootstrap, invalidProject
 /// Exit status is stored independently from an execution error or terminating signal.
 public enum TaskStatus: String, Codable, Sendable { case queued, running, succeeded, failed, cancelled, interrupted }
 public struct TaskRecord: Codable, Identifiable, Sendable {
+    public var completedProfileSteps: Int?
+    public var preparationReceipt: PreparationReceipt?
+    public var changes: ActivityChanges?
     public let id: UUID
     public let action: MimicAction
     /// Refreshed during admission, then pinned while the task waits in the queue.

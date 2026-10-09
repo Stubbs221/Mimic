@@ -34,6 +34,8 @@ public struct BranchSwitchOperation: Codable, Identifiable, Sendable {
     public var refUpdated = false
     public var didSwitch = false
     public var diagnostic = ""
+    /// Success feedback expires from this persisted instant, including after reopening a panel.
+    public var completedAt: Date?
     public let createdAt: Date
 
     public init(id: UUID, source: ProjectContext, target: String, rebase: Bool, sourceThreadID: String? = nil) {
@@ -44,7 +46,7 @@ public struct BranchSwitchOperation: Codable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, source, target, rebase, sourceThreadID, phase, targetSHA, developSHA, resultSHA, worktree
         case stashSHA, stashName, conflict, conflictPaths, stoppedCommit, ownerThreadID, delivery, deliveryThreadID
-        case error, refUpdated, didSwitch, createdAt
+        case error, refUpdated, didSwitch, createdAt, completedAt
     }
 }
 

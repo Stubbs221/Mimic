@@ -20,30 +20,30 @@ public struct CIContext: Equatable, Sendable {
 /// Owns the personal feed and shared request cache. Background interests poll only the compact personal selection.
 @MainActor
 public final class CIState: ObservableObject {
-    @Published public private(set) var pipelines: [CIPipeline] = []
-    @Published public private(set) var reasons: [Int: Set<CIOwnershipReason>] = [:]
-    @Published public private(set) var user: CIUser?
-    @Published public private(set) var trackedUsers: [CITrackedUser] = []
+    @Published public private(set) var pipelines: [CIPipeline] = [] { didSet { self.invalidateFeed() } }
+    @Published public private(set) var reasons: [Int: Set<CIOwnershipReason>] = [:] { didSet { self.invalidateFeed() } }
+    @Published public private(set) var user: CIUser? { didSet { self.invalidateFeed() } }
+    @Published public private(set) var trackedUsers: [CITrackedUser] = [] { didSet { self.invalidateFeed() } }
     @Published public private(set) var searchResults: [CIUser] = []
     @Published public private(set) var searching = false
     @Published public private(set) var searchError: CIError?
-    @Published public private(set) var historyIncomplete = false
-    @Published public private(set) var loadedAt: Date?
-    @Published public private(set) var error: CIError?
-    @Published public private(set) var loading = false
+    @Published public private(set) var historyIncomplete = false { didSet { self.scheduleCompactPresentation() } }
+    @Published public private(set) var loadedAt: Date? { didSet { self.invalidateFeed() } }
+    @Published public private(set) var error: CIError? { didSet { self.scheduleCompactPresentation() } }
+    @Published public private(set) var loading = false { didSet { self.scheduleCompactPresentation() } }
     @Published public private(set) var details: CIPipelineDetails?
     @Published public private(set) var detailError: CIError?
     @Published public private(set) var loadingDetails = false
     @Published public private(set) var selectedPipelineID: Int?
     @Published public private(set) var historyLimit = 3
-    @Published public private(set) var summaries: [Int: CIProgressSummary] = [:]
+    @Published public private(set) var summaries: [Int: CIProgressSummary] = [:] { didSet { self.scheduleCompactPresentation() } }
     @Published public private(set) var enrichmentErrors: [Int: CIError] = [:]
-    @Published public private(set) var enrichedPipelines: [Int: CIPipeline] = [:]
-    @Published public private(set) var metadataStates: [Int: CILoadState] = [:]
-    @Published public private(set) var checkStates: [Int: CILoadState] = [:]
+    @Published public private(set) var enrichedPipelines: [Int: CIPipeline] = [:] { didSet { self.invalidateFeed() } }
+    @Published public private(set) var metadataStates: [Int: CILoadState] = [:] { didSet { self.scheduleCompactPresentation() } }
+    @Published public private(set) var checkStates: [Int: CILoadState] = [:] { didSet { self.scheduleCompactPresentation() } }
     @Published public private(set) var commitTitles: [String: String] = [:]
     private var commitFailures: Set<String> = []
-    private var metadataDates: [Int: Date] = [:]
+    private var metadataDates: [Int: Date] = [:] { didSet { self.invalidateFeed() } }
     private var expandedLoads: Set<Int> = []
     private var fullyLoadedChecks: Set<Int> = []
     private var childDetails: [String: CIPipelineDetails] = [:]
@@ -54,14 +54,14 @@ public final class CIState: ObservableObject {
         let date: Date
     }
     private var inspections: [String: Inspection] = [:]
-    private var summaryDates: [Int: Date] = [:]
+    private var summaryDates: [Int: Date] = [:] { didSet { self.scheduleCompactPresentation() } }
     private var enrichmentTask: Task<Void, Never>?
     private var enrichmentTimer: Task<Void, Never>?
     private var enrichmentRevision = UUID()
     private var initiatedPipelines: [CIPipeline] = []
     private var initiatedNextPage: Int?
     private var trackedNextPages: [Int: Int] = [:]
-    public private(set) var context: CIContext?
+    public private(set) var context: CIContext? { didSet { self.invalidateFeed() } }
     public private(set) var visible = false
     public private(set) var monitoring = false
     private var polling: Bool { self.visible || self.monitoring }
@@ -89,11 +89,56 @@ public final class CIState: ObservableObject {
     private var retryAt: Date?
     private var nextHistoryPage: Int?
     private var branchPipelines: [CIPipeline] = []
-    private var remoteRuns: [RemoteTestRun] = []
-    private var jenkins: JenkinsConnection?
+    private var remoteRuns: [RemoteTestRun] = [] { didSet { self.invalidateFeed() } }
+    private var jenkins: JenkinsConnection? { didSet { self.invalidateFeed() } }
 
     public init(client: any GitLabService = GitLabClient(), interval: Duration = .seconds(30), enrichmentInterval: Duration = .seconds(15), trackingStore: any CITrackingStore = DefaultsCITrackingStore(), token: @escaping @MainActor (GitLabConnection) throws -> String) {
         self.client = client; self.interval = interval; self.enrichmentInterval = enrichmentInterval; self.trackingStore = trackingStore; self.token = token
+    }
+
+    // MARK: - Committed presentation and feed cache
+
+    public let compactPresentation = CICompactPresentation()
+    private var cachedFeed: [CIFeedEntry]?
+    private var cachedPersonal: [CIFeedEntry]?
+    private var cachedCompact: [CIFeedEntry]?
+    private var presentationTask: Task<Void, Never>?
+    private var freshnessTask: Task<Void, Never>?
+
+    private func invalidateFeed() {
+        self.cachedFeed = nil; self.cachedPersonal = nil; self.cachedCompact = nil
+        self.scheduleCompactPresentation()
+    }
+
+    /// Published will-change callbacks run before assignment; defer until the response is committed.
+    private func scheduleCompactPresentation() {
+        guard self.presentationTask == nil else { return }
+        self.presentationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.presentationTask = nil
+            self.refreshCompactPresentation()
+        }
+    }
+
+    /// Direct bridge reads stay synchronous; native readers receive only changed display values.
+    public func refreshCompactPresentation(now: Date = .now) {
+        let summaries = self.compactEntries.compactMap { self.compactSummary(for: $0, now: now) }
+        if self.compactPresentation.summaries != summaries { self.compactPresentation.summaries = summaries }
+        var footer = CICompactFooter()
+        footer.loading = self.loading; footer.error = self.error; footer.pipeline = self.pipelines.first
+        footer.context = self.context; footer.loadedAt = self.loadedAt; footer.historyIncomplete = self.historyIncomplete
+        if self.compactPresentation.footer != footer { self.compactPresentation.footer = footer }
+        self.freshnessTask?.cancel(); self.freshnessTask = nil
+        // A paused poll must still become stale at the original 45-second boundary.
+        let deadline = summaries.filter { !$0.stale }.compactMap { $0.updatedAt?.addingTimeInterval(45) }.min()
+        if let deadline {
+            let delay = max(0.001, deadline.timeIntervalSince(now) + 0.001)
+            self.freshnessTask = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                guard let self, !Task.isCancelled else { return }
+                self.refreshCompactPresentation()
+            }
+        }
     }
 
     // MARK: - Context and lifetime
@@ -180,6 +225,13 @@ public final class CIState: ObservableObject {
 
     /// History is combined independently of the personal pipeline array used by the footer.
     public var feedEntries: [CIFeedEntry] {
+        if let cachedFeed { return cachedFeed }
+        let value = self.makeFeedEntries()
+        self.cachedFeed = value
+        return value
+    }
+
+    private func makeFeedEntries() -> [CIFeedEntry] {
         var entries: [CIFeedEntry] = [], seen = Set<Int>(), runIDs = Set<UUID>()
         let runs = self.scopedRuns
         for value in self.pipelines + self.trackedUsers.flatMap(\.pipelines) {
@@ -205,12 +257,16 @@ public final class CIState: ObservableObject {
     }
     /// Subscription-only pipelines never enter compact or floating selections.
     public var personalEntries: [CIFeedEntry] {
+        if let cachedPersonal { return cachedPersonal }
         let ownIDs = Set(self.pipelines.map(\.id))
-        return self.feedEntries.filter { $0.run != nil || $0.pipeline.map { ownIDs.contains($0.id) } == true }
+        let value = self.feedEntries.filter { $0.run != nil || $0.pipeline.map { ownIDs.contains($0.id) } == true }
+        self.cachedPersonal = value
+        return value
     }
     /// Active runs precede terminal runs; unknown start times affect ordering only, never displayed timing.
     public var compactEntries: [CIFeedEntry] {
-        Array(self.personalEntries.sorted {
+        if let cachedCompact { return cachedCompact }
+        let value = Array(self.personalEntries.sorted {
             let leftActive = CICompactSummary.isActive($0.status), rightActive = CICompactSummary.isActive($1.status)
             if leftActive != rightActive { return leftActive }
             let left = $0.pipeline?.startedAt ?? $0.createdAt ?? .distantPast
@@ -220,6 +276,8 @@ public final class CIState: ObservableObject {
             let rightID = $1.pipeline?.id ?? $1.run?.pipelineID ?? 0
             return leftID == rightID ? $0.id > $1.id : leftID > rightID
         }.prefix(2))
+        self.cachedCompact = value
+        return value
     }
 
     /// Compatibility projection for floating activity and older bridge clients.
@@ -235,11 +293,11 @@ public final class CIState: ObservableObject {
         return self.compactSummary(for: entry, context: context)
     }
     /// Reads an exact retained entry, including a completion temporarily held by the floating section.
-    public func compactSummary(for entry: CIFeedEntry, context: CIContext? = nil) -> CICompactSummary? {
+    public func compactSummary(for entry: CIFeedEntry, context: CIContext? = nil, now: Date = .now) -> CICompactSummary? {
         guard let context = context ?? self.context else { return nil }
         let id = entry.pipeline?.id ?? entry.run?.pipelineID
         let updated = id.flatMap { self.summaryDates[$0] } ?? self.loadedAt
-        let stale = self.error != nil || id.map { self.checkStates[$0] == .failed || self.metadataStates[$0] == .failed } == true || updated.map { Date().timeIntervalSince($0) > 45 } == true
+        let stale = self.error != nil || id.map { self.checkStates[$0] == .failed || self.metadataStates[$0] == .failed } == true || updated.map { now.timeIntervalSince($0) > 45 } == true
         return CICompactSummary(entry: entry, context: context, accountID: self.user?.id, checks: id.flatMap { self.summaries[$0] }, updatedAt: updated, stale: stale)
     }
 

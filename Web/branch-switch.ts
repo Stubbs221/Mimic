@@ -1,5 +1,5 @@
 // Created by Василий Маслов on 07.10.2026.
-export type BranchOperation={id:string;checkout:string;sourceBranch:string;targetBranch:string;phase:string;holdsCheckout:boolean;delivery:string;ownerThreadID?:string|null;stashName?:string|null;stashSHA?:string|null;error?:string|null};
+export type BranchOperation={id:string;checkout:string;sourceBranch:string;targetBranch:string;phase:string;holdsCheckout:boolean;delivery:string;ownerThreadID?:string|null;stashName?:string|null;stashSHA?:string|null;completedAt?:number|null;error?:string|null};
 type BranchState={context:{checkoutId:string}|null;branchRebase?:boolean;branchSwitch?:BranchOperation|null;checkoutLocked?:boolean};
 type Dependencies={tool:(name:string,args?:Record<string,unknown>)=>Promise<any>;t:(key:string)=>string;refresh:()=>Promise<void>;canSend:()=>boolean;send:(prompt:string)=>Promise<unknown>;open:(url:string)=>Promise<unknown>;error:(error:unknown)=>void;preview:boolean};
 
@@ -16,6 +16,7 @@ export class BranchSwitchPanel {
  private state:BranchState={context:null};
  private polling=false;
  private saving=false;
+ private successTimer:ReturnType<typeof setTimeout>|undefined;
  constructor(private readonly dependencies:Dependencies){
   const {t}=dependencies;
   this.preference.className='branch-rebase';this.preference.title=t('branch.rebase.help');
@@ -33,7 +34,10 @@ export class BranchSwitchPanel {
  update(state:BranchState,busy=false){
   this.state=state;this.checkbox.checked=!!state.branchRebase;this.checkbox.disabled=!state.context||!!state.checkoutLocked||busy||this.saving;
   const op=state.branchSwitch;
-  this.status.hidden=!op||op.phase==='succeeded'&&!op.stashSHA;
+  clearTimeout(this.successTimer);
+  const remaining=op?.completedAt==null?0:op.completedAt+5000-Date.now();
+  this.status.hidden=!op||op.phase==='succeeded'&&remaining<=0;
+  if(op?.phase==='succeeded'&&remaining>0)this.successTimer=setTimeout(()=>{this.status.hidden=true;},remaining);
   if(!op)return;
   this.status.dataset.phase=op.phase;this.text.textContent=this.dependencies.t('branch.phase.'+op.phase);
   this.detail.textContent=[op.phase==='awaitingAgent'?this.dependencies.t('branch.delivery.'+op.delivery):'',op.error].filter(Boolean).join(' · ');
@@ -41,7 +45,7 @@ export class BranchSwitchPanel {
   this.openButton.hidden=!op.ownerThreadID;
   this.cancelButton.hidden=!op.holdsCheckout||!!op.ownerThreadID&&op.phase!=='needsReview';
   this.cancelButton.disabled=busy;this.cancelButton.textContent=this.dependencies.t(op.phase==='needsReview'?'branch.review.acknowledge':'cancel');
-  this.backup.hidden=!op.stashName;this.backup.textContent=op.stashName?this.dependencies.t('branch.stash.backup')+' '+op.stashName:'';this.backup.title=op.stashName??'';
+  this.backup.hidden=!op.stashName;this.backup.textContent=op.stashName?this.dependencies.t('branch.stash.backup')+' '+op.sourceBranch:'';this.backup.title=op.stashName??'';
  }
  private async savePreference(){
   if(this.saving)return;

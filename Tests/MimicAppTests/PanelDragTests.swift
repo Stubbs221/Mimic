@@ -30,6 +30,53 @@ import MimicCore
             #expect(view.receive(event) === event)
         }
     }
+    /// Real compact Bootstrap controls must keep their mouse events without launching a task.
+    @Test func compactBootstrapControlsKeepPressesInBothLayouts() async throws {
+        let suite = "BootstrapPress-" + UUID().uuidString
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let model = TaskCoordinator(directory: directory, defaults: defaults)
+        model.aiUsage.stop()
+        defer { model.records = []; model.stopAndExit(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        let project = ProjectContext(path: directory.path)
+        model.projects = [project]; model.selectedProjectPath = project.path
+        func markers(in node: NSView) -> [PanelControlRegion.MarkerView] {
+            (node as? PanelControlRegion.MarkerView).map { [$0] } ?? node.subviews.flatMap { markers(in: $0) }
+        }
+        for (mode, width) in [(BootstrapCardMode.mini, CGFloat(214)), (.full, 464)] {
+            for state in ["ready", "running", "blocked"] {
+                let running = state != "ready"
+                model.records = []; model.launchState = .idle
+                if running {
+                    var record = TaskRecord(action: .bootstrap, project: project); record.status = .running
+                    model.records = [record]
+                    if state == "blocked" { record.status = .queued; model.records = [record]; model.launchState = .blockedByXcode(record.id) }
+                }
+                for appearance in [PanelAppearance.legacy, .tileGrid] {
+                    let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: width, height: 160), styleMask: .borderless, backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false
+                    let root = NSHostingView(rootView: BootstrapCard(model: model, mode: mode).environment(\.mimicPanelAppearance, appearance).frame(width: width, height: 160, alignment: .topLeading))
+                    window.contentView = root
+                    var clicks = 0
+                    let bridge = PanelDragBridge(cancellationID: 0, enabled: true, candidate: { _ in .init(block: .bootstrap) }, click: { _ in clicks += 1 }, lift: { _, _, _, _ in }, move: { _, _, _, _ in }, end: { _, _, _ in }, cancel: {})
+                    let view = PanelDragBridge.TrackingView(callbacks: bridge)
+                    view.frame = root.bounds; root.addSubview(view); window.orderFront(nil)
+                    defer { view.stop(); window.close() }
+                    try await Task.sleep(for: .milliseconds(50)); root.layoutSubtreeIfNeeded()
+                    let controls = markers(in: root).filter { $0.bounds.height > 0 && $0.bounds.height <= 32 }
+                    #expect(controls.count == (state == "running" ? 1 : 2), "\(mode), \(state), \(appearance)")
+                    for control in controls {
+                        let point = control.convert(CGPoint(x: control.bounds.midX, y: control.bounds.midY), to: nil)
+                        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                            let event = try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                            #expect(view.receive(event) === event)
+                        }
+                    }
+                    #expect(clicks == 0)
+                }
+            }
+        }
+    }
     @Test func nativeBridgeLeavesSwiftUILaunchButtonUntouched() async throws {
         let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 400, height: 240), styleMask: .borderless, backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -78,6 +125,59 @@ import MimicCore
             #expect(view.receive(controlEvent) === controlEvent)
         }
         #expect(clicks == 1)
+    }
+    /// Every card shares a protected body and an explicit draggable disclosure, including new catalogue entries.
+    @Test func everyCardProtectsHostedContentAndKeepsHeaderDragging() async throws {
+        let suite = "CardInput-" + UUID().uuidString
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let model = TaskCoordinator(directory: directory, defaults: defaults)
+        model.aiUsage.stop()
+        defer { model.records = []; model.stopAndExit(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        func markers<T: NSView>(_ type: T.Type, in node: NSView) -> [T] {
+            (node as? T).map { [$0] } ?? node.subviews.flatMap { markers(type, in: $0) }
+        }
+        for block in PanelBlockKind.catalog(for: .desktop) {
+            for presentation in ["mini", "full", "expanded", "editing"] {
+                let width: CGFloat = presentation == "mini" ? 214 : 464
+                let row = PanelLayoutRow(id: UUID(), slots: presentation == "mini" ? [block, nil] : [block])
+                model.panelLayout.begin()
+                model.panelLayout.edit { $0 = PanelLayout(rows: [row]) }
+                if presentation != "editing" { model.panelLayout.finish() }
+                model.panelLayout.expanded = presentation == "expanded" ? block : nil
+                for appearance in PanelAppearance.allCases {
+                    let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: width, height: 800), styleMask: .borderless, backing: .buffered, defer: false)
+                    window.isReleasedWhenClosed = false
+                    let grid = PanelGrid(model: model, layout: model.panelLayout)
+                    let root = NSHostingView(rootView: grid.card(block, row: row.id).environment(\.mimicPanelAppearance, appearance).frame(width: width))
+                    window.contentView = root
+                    var clicks = 0, lifts = 0
+                    let bridge = PanelDragBridge(cancellationID: 0, enabled: true, candidate: { _ in .init(block: block) }, click: { _ in clicks += 1 }, lift: { _, _, _, _ in lifts += 1 }, move: { _, _, _, _ in }, end: { _, _, _ in }, cancel: {})
+                    let view = PanelDragBridge.TrackingView(callbacks: bridge)
+                    view.frame = root.bounds; root.addSubview(view); window.orderFront(nil)
+                    defer { view.stop(); window.close() }
+                    try await Task.sleep(for: .milliseconds(30)); root.layoutSubtreeIfNeeded()
+                    let header = try #require(markers(PanelDragHeaderRegion.MarkerView.self, in: root).first)
+                    let regions = markers(PanelControlRegion.MarkerView.self, in: root)
+                    let surface = try #require(presentation == "editing" ? regions.first { $0.bounds.width < 60 && $0.bounds.height > 0 } : regions.max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height })
+                    let headerPoint = header.convert(CGPoint(x: header.bounds.midX, y: header.bounds.midY), to: nil)
+                    let bodyY = presentation == "editing" ? surface.bounds.midY : surface.isFlipped ? surface.bounds.maxY - 2 : surface.bounds.minY + 2
+                    let bodyPoint = surface.convert(CGPoint(x: surface.bounds.midX, y: bodyY), to: nil)
+                    #expect(!PanelDragHeaderRegion.MarkerView.contains(bodyPoint, in: root), "\(block), \(presentation), \(appearance)")
+                    func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
+                        try #require(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                    }
+                    for type in [NSEvent.EventType.leftMouseDown, .leftMouseDragged, .leftMouseUp] {
+                        let input = try event(type, bodyPoint)
+                        #expect(view.receive(input) === input, "\(block), \(presentation), \(appearance)")
+                    }
+                    #expect(clicks == 0 && lifts == 0)
+                    #expect(view.receive(try event(.leftMouseDown, headerPoint)) == nil)
+                    #expect(view.receive(try event(.leftMouseUp, headerPoint)) == nil)
+                    #expect(clicks == 1)
+                }
+            }
+        }
     }
     @Test func stationaryLiftStartsHalfSecondDwellAndAllowsFiftyPoints() {
         var resize = PanelDragResize(size: .mini, pointer: .zero)
@@ -222,6 +322,21 @@ import MimicCore
         for _ in 0..<100 { store.record(frames) }
         await Task.yield()
         #expect(publications == 1)
+        withExtendedLifetime(observation) {}
+    }
+    @Test func geometryEventsCarryCommittedFramesForStationaryDragReactions() async {
+        let store = PanelFrameStore()
+        let first = ["utils": CGRect(x: 0, y: 172, width: 238, height: 160)]
+        let resized = ["utils": CGRect(x: 0, y: 172, width: 488, height: 160)]
+        var events: [PanelFrameStore.Change] = []
+        let observation = store.changes.sink { change in
+            #expect(store.snapshot == change.next && store.logical == change.next)
+            events.append(change)
+        }
+        store.record(first); await Task.yield()
+        store.record(resized); await Task.yield()
+        #expect(events.count == 2)
+        #expect(events.first?.old.isEmpty == true && events.last?.old == first && events.last?.next == resized)
         withExtendedLifetime(observation) {}
     }
 }

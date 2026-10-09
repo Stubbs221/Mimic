@@ -305,9 +305,9 @@ struct MimicFooter: View {
     }
 }
 
-/// Observes the existing CI owner directly; no network lifetime is attached to this view.
+/// Observes committed footer inputs; no network lifetime is attached to this view.
 struct FooterCIButton: View {
-    @ObservedObject var state: CIState
+    let state: CIState
     @ObservedObject var settings: CISettingsModel
     let expanded: Bool
     let action: () -> Void
@@ -316,8 +316,10 @@ struct FooterCIButton: View {
     @Environment(\.mimicPanelAppearance) private var appearance
     @Environment(\.mimicTextScale) private var textScale
     var presentation: FooterCIStatus {
-        FooterCIStatus(connected: self.settings.connection != nil, loading: self.state.loading, error: self.state.error,
-                       pipeline: self.state.pipelines.first, commit: self.state.context?.commit, loadedAt: self.state.loadedAt, branch: self.state.context?.branch, historyIncomplete: self.state.historyIncomplete)
+        let footer = self.state.compactPresentation.footer
+        return FooterCIStatus(connected: self.settings.connection != nil, loading: footer.loading, error: footer.error,
+                              pipeline: footer.pipeline, commit: footer.context?.commit, loadedAt: footer.loadedAt,
+                              branch: footer.context?.branch, historyIncomplete: footer.historyIncomplete)
     }
     var body: some View {
         let status = self.presentation

@@ -1,5 +1,7 @@
 // Created by Василий Маслов on 06.10.2026.
 import Foundation
+import Combine
+import Observation
 import Testing
 @testable import MimicCore
 
@@ -49,6 +51,8 @@ private actor CompactClient: GitLabService {
     func commit(connection _: GitLabConnection, sha: String, token _: String) async throws -> CICommit { CICommit(id: sha, title: "Fixture") }
 }
 
+@MainActor private final class CompactObservationCount { var value = 0 }
+
 @MainActor private struct CompactTracking: CITrackingStore {
     func users(connection _: GitLabConnection, owner _: CIUser) -> [CIUser] { [CIUser(id: 2, username: "other", name: "Other")] }
     func save(_: [CIUser], connection _: GitLabConnection, owner _: CIUser) { }
@@ -64,6 +68,61 @@ private actor CompactClient: GitLabService {
     private func wait(_ condition: () -> Bool) async throws {
         for _ in 0..<400 { if condition() { return }; try await Task.sleep(for: .milliseconds(5)) }
         try #require(condition())
+    }
+
+    @Test func nativeProjectionIgnoresSearchAndStillExpiresWhilePollingIsPaused() async throws {
+        let client = CompactClient(own: [try compactPipeline(3, status: "success")])
+        let state = self.state(client); state.setMonitoring(true); state.setVisible(true)
+        defer { state.setVisible(false); state.setMonitoring(false) }
+        try await self.wait { state.compactPresentation.summaries.first?.completed == 2 && !state.loading }
+        let count = CompactObservationCount()
+        withObservationTracking { _ = state.compactPresentation.summaries } onChange: { MainActor.assumeIsolated { count.value += 1 } }
+        state.searchUsers("fixture"); try await self.wait { !state.searching }
+        #expect(count.value == 0)
+        state.setVisible(false); state.setMonitoring(false)
+        let date = try #require(state.compactSummary?.updatedAt)
+        state.refreshCompactPresentation(now: date.addingTimeInterval(44))
+        #expect(state.compactPresentation.summaries.first?.stale == false)
+        state.refreshCompactPresentation(now: date.addingTimeInterval(46))
+        #expect(state.compactPresentation.summaries.first?.stale == true)
+        #expect(count.value == 1)
+    }
+
+    @Test func cacheInvalidationKeepsDirectBridgeReadsAndCommittedNativeIdentityCurrent() async throws {
+        let client = CompactClient(own: [try compactPipeline(3)])
+        let state = self.state(client); state.setMonitoring(true)
+        defer { state.setMonitoring(false) }
+        try await self.wait { state.compactPresentation.summaries.first?.completed == 1 }
+        _ = state.feedEntries; _ = state.compactEntries
+        try await client.finish(3); state.refresh()
+        try await self.wait { state.compactPresentation.summaries.first?.status == "success" }
+        #expect(state.compactSummary?.status == "success" && state.feedEntries.first?.status == "success")
+        let changed = self.context("/changed-checkout")
+        state.select(changed)
+        #expect(state.compactSummary?.checkout == changed.checkout)
+        try await self.wait { state.compactPresentation.footer.context == changed }
+        state.credentialsChanged()
+        #expect(state.compactSummary == nil && state.feedEntries.isEmpty)
+    }
+
+    @Test func monitorCoalescesSynchronousChangesAndCancelsPendingWorkOnStop() async throws {
+        let client = CompactClient(own: [try compactPipeline(3, status: "success")])
+        let monitor = CIActivityMonitor { _ in CIState(client: client) { _ in "fixture" } }
+        monitor.setDesktop(self.context())
+        let state = try #require(monitor.desktopState)
+        try await self.wait { state.compactPresentation.summaries.first?.completed == 2 && !state.loading }
+        let changes = CompactObservationCount()
+        let subscription = monitor.objectWillChange.sink { changes.value += 1 }
+        defer { subscription.cancel(); monitor.stop() }
+        // Clearing a search commits three Published fields in the same actor turn.
+        state.searchUsers("")
+        try await self.wait { changes.value > 0 }
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(changes.value == 1)
+        state.searchUsers(""); monitor.stop()
+        let stopped = changes.value
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(changes.value == stopped)
     }
 
     @Test func twoRunsPreferActivityThenActualStartAndLoadChecksOnce() async throws {

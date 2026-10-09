@@ -197,6 +197,12 @@ final class TaskCoordinator: ObservableObject {
     let profileRemote: ProfileRemoteCoordinator
     let builds: BuildCoordinator
     let simulatorScreen: SimulatorCoordinator
+    var agentChangeSnapshots: [UUID: GitActivitySnapshot] = [:]
+    var preparationInputs: [UUID: String] = [:]
+    var preparationToolchains: [UUID: String] = [:]
+    private var agentMetadataPending: Set<UUID> = []
+    var identifyPreparationToolchain: (String) async -> String? = { developer in await Task.detached { PreparationToolchain.identify(developer: developer) }.value }
+    var preparationReceipts: [String: PreparationReceipt] = [:]
     private let history: HistoryStore
     private let defaults: UserDefaults
     private let branchService: any GitBranchService
@@ -270,7 +276,7 @@ final class TaskCoordinator: ObservableObject {
     private var subscriptions = Set<AnyCancellable>()
     private var stateChangeQueued = false
 
-    init(directory: URL? = nil, simulatorServices: SimulatorPanelServices = SimulatorPanelServices(), helperURL: URL? = nil, buildCoordinator: BuildCoordinator? = nil, simulatorCoordinator: SimulatorCoordinator? = nil, xcodeApplications: any XcodeApplicationService = SystemXcodeApplications(), branchService: any GitBranchService = LocalGitBranchService(), usageStore: (any SimulatorUsageStore)? = nil, defaults: UserDefaults = .standard, ciClient: (any GitLabService)? = nil, ciSettings: CISettingsModel? = nil, jenkinsSettings: JenkinsSettings? = nil, analysis: AnalysisCoordinator? = nil, inspectBootstrapAdmission: @escaping @Sendable (ProjectContext, BootstrapOptions) async -> BootstrapAdmissionResult = { await BootstrapAdmissionResult.inspect(project: $0, options: $1) }, inspectProject: @escaping @Sendable (ProjectContext) async -> (ProjectContext?, [String], GitSummary?) = { current in
+    init(directory: URL? = nil, simulatorServices: SimulatorPanelServices = SimulatorPanelServices(), helperURL: URL? = nil, buildCoordinator: BuildCoordinator? = nil, simulatorCoordinator: SimulatorCoordinator? = nil, xcodeApplications: any XcodeApplicationService = SystemXcodeApplications(), branchService: any GitBranchService = LocalGitBranchService(), usageStore: (any SimulatorUsageStore)? = nil, defaults: UserDefaults = .standard, ciClient: (any GitLabService)? = nil, ciSettings: CISettingsModel? = nil, jenkinsSettings: JenkinsSettings? = nil, analysis: AnalysisCoordinator? = nil, usageCoordinator: AIUsageCoordinator? = nil, inspectBootstrapAdmission: @escaping @Sendable (ProjectContext, BootstrapOptions) async -> BootstrapAdmissionResult = { await BootstrapAdmissionResult.inspect(project: $0, options: $1) }, inspectProject: @escaping @Sendable (ProjectContext) async -> (ProjectContext?, [String], GitSummary?) = { current in
         await Task.detached { () -> (ProjectContext?, [String], GitSummary?) in
             guard let updated = try? EnvironmentInspector.project(path: current.path, developerDirectory: current.developerDirectory, appleTarget: current.appleTarget) else { return (nil, [], nil) }
             let status = EnvironmentInspector.capture("/usr/bin/git", ["-C", updated.path, "status", "--porcelain=v1", "-z"], trim: false)
@@ -302,7 +308,7 @@ final class TaskCoordinator: ObservableObject {
         let aiSettings = AISettingsModel(defaults: defaults, helper: helper)
         self.aiSettings = aiSettings
         let locations = AIUsageLocations(), scanner = AIUsageActivityScanner()
-        self.aiUsage = AIUsageCoordinator(defaults: defaults, fallback: aiSettings.settings.provider, adapters: [
+        self.aiUsage = usageCoordinator ?? AIUsageCoordinator(defaults: defaults, fallback: aiSettings.settings.provider, adapters: [
             CodexUsageAdapter(executable: {
                 if let configured = AIProviderAdapters.resolve(provider: .codex, configuredPath: aiSettings.settings.codexPath) { return configured }
                 guard aiSettings.settings.codexPath.isEmpty, let app = MimicPluginInstaller.findCodex() else { return nil }
@@ -314,6 +320,7 @@ final class TaskCoordinator: ObservableObject {
         let directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mimic")
         self.history = HistoryStore(directory: directory)
         self.supportDirectory = directory
+        if let data = defaults.data(forKey: "agentPreparationReceipts"), let receipts = try? JSONDecoder().decode([String: PreparationReceipt].self, from: data) { preparationReceipts = receipts }
         self.profileStore = ProfileStore(directory: directory.appendingPathComponent("Profiles"))
         self.activeProfile = try? self.profileStore.active()
         self.builds = buildCoordinator ?? BuildCoordinator(directory: directory, helper: helper, defaults: defaults)
@@ -327,6 +334,10 @@ final class TaskCoordinator: ObservableObject {
         do { self.records = try self.history.load(); try self.history.save(self.records) } catch { self.message = text("history.error") + ": " + error.localizedDescription }
         if let data = defaults.data(forKey: "projects"), let saved = try? JSONDecoder().decode([ProjectContext].self, from: data) { self.projects = saved }
         self.selectedProjectPath = defaults.string(forKey: "selectedProject") ?? self.projects.first?.path ?? ""
+        self.builds.checkPreparation = { [weak self] project, parameters in
+            guard let self else { throw BuildError.unavailable }
+            if await self.preparationState(project: project, platform: parameters.platform ?? .ios)["blocking"] == .bool(true) { throw BuildError.preparationRequired }
+        }
         self.launchPreparation.onStateChange = { [weak self] state in self?.launchState = state }
         settings.onConnectionChange = { [weak self] in
             guard let self else { return }
@@ -382,6 +393,11 @@ final class TaskCoordinator: ObservableObject {
         self.builds.mayAdmit = { [weak self] in self.map { !$0.admissionsClosed && !$0.switchingBranch && !$0.hasGitOperation } ?? false }
         self.builds.schedule = { [weak self] in self?.startNext(); self?.finishExitIfReady() }
         self.builds.showResult = { [weak self] in self?.showBuildResult($0) }
+        self.builds.showSimulator = { [weak self] record in
+            guard let self, self.project == record.project else { return }
+            self.revealSection(.simulators); self.showPanel?()
+            Task { await self.pollSimulators(); if let device = self.simulators.first(where: { $0.id.uuidString == record.parameters.destinationID }) { self.selectSimulator(device) } }
+        }
         self.builds.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
         self.builds.xcode.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
         self.simulatorScreen.currentProject = { [weak self] in self?.project }
@@ -414,7 +430,7 @@ final class TaskCoordinator: ObservableObject {
 
     var activeID: UUID? { self.records.first { $0.status == .running }?.id }
     var preparing: Bool { self.launchState.holdsQueue }
-    var busy: Bool { self.activeID != nil || self.preparing || self.builds.busy || self.simulatorScreen.busy }
+    var busy: Bool { !self.agentMetadataPending.isEmpty || self.activeID != nil || self.preparing || self.builds.busy || self.simulatorScreen.busy }
     /// Development replacement waits for admissions, queued work and simulator ownership; it never cancels them.
     var canQuitForDevelopmentUpdate: Bool { self.developmentUpdateBlockers.isEmpty }
     /// Only fixed lifecycle labels are exposed to the development installer, never task contents.
@@ -1273,7 +1289,8 @@ final class TaskCoordinator: ObservableObject {
         let adapterPath = self.adapter.path
         let profileStore = self.profileStore
         self.launchPreparation.start(record: next, inspect: { next in
-            await Task.detached { () -> CommandPreparation in
+            await self.prepareAgentMetadata(next)
+            return await Task.detached { () -> CommandPreparation in
                 do {
                     var actual = try EnvironmentInspector.project(path: next.project.path, developerDirectory: next.project.developerDirectory, appleTarget: next.project.appleTarget)
                     guard QueuePolicy.matches(actual, request: next.project) else { return .failed("checkout.changed") }
@@ -1385,6 +1402,7 @@ final class TaskCoordinator: ObservableObject {
 
     private func finished(id: UUID, event: HostEvent?) {
         guard let index = records.firstIndex(where: { $0.id == id }) else { return }
+        if event?.cancelled != true, event?.code == 0, event?.signal == 0, event?.launchError == 0, records[index].profileExecution != nil { records[index].completedProfileSteps = (records[index].completedProfileSteps ?? 0) + 1 }
         if event?.cancelled != true, event?.code == 0, event?.signal == 0, event?.launchError == 0,
            var remaining = self.pipelineCommands[id], !remaining.isEmpty, !self.admissionsClosed {
             let next = remaining.removeFirst(); self.pipelineCommands[id] = remaining
@@ -1402,6 +1420,13 @@ final class TaskCoordinator: ObservableObject {
         self.records[index].truncated = (self.log?.truncated ?? false) || self.truncatedBuffers.contains(id)
         self.log?.close(); self.log = nil; self.session = nil
         if self.records[index].action == .bootstrap { self.bootstrapProgress.finish(succeeded: self.records[index].status == .succeeded) }
+        let completedRecord = self.records[index]
+        agentMetadataPending.insert(id)
+        Task {
+            await self.finishAgentMetadata(completedRecord)
+            self.agentMetadataPending.remove(id)
+            if self.stoppingForExit { self.finishExitIfReady() } else { self.startNext() }
+        }
         self.captureBootstrapDiagnostic(id: id, output: self.buffers[id] ?? Data())
         let keep = Set(records.suffix(8).map(\.id)); self.buffers = self.buffers.filter { keep.contains($0.key) }; self.truncatedBuffers.formIntersection(keep)
         if let execution = self.records[index].profileExecution, execution.preview, self.records[index].status == .succeeded {
@@ -1515,7 +1540,7 @@ final class TaskCoordinator: ObservableObject {
     }
 
     private func finishExitIfReady() {
-        guard self.stoppingForExit, self.builds.active == nil, self.simulatorScreen.canExit, !self.requestingBootstrap, self.session == nil, !self.switchingBranch, !self.analysis.isActive, self.aiSettings.checking == nil else { return }
+        guard self.stoppingForExit, self.agentMetadataPending.isEmpty, self.builds.active == nil, self.simulatorScreen.canExit, !self.requestingBootstrap, self.session == nil, !self.switchingBranch, !self.analysis.isActive, self.aiSettings.checking == nil else { return }
         self.afterStopped?()
     }
 
@@ -1575,6 +1600,8 @@ final class TaskCoordinator: ObservableObject {
         }
     }
 
+    func storePreparationReceipts() { defaults.set(try? JSONEncoder().encode(preparationReceipts), forKey: "agentPreparationReceipts") }
+    func persistAgentHistory() { persist() }
     private func persist() {
         if let id = self.quickBootstrapActivity?.request.id, let record = self.records.first(where: { $0.id == id }) { self.quickBootstrapActivity?.request = record; if self.bootstrapProgressID == id { self.quickBootstrapActivity?.progress = self.bootstrapProgress } }
         let live = self.records.filter { $0.status == .queued || $0.status == .running }

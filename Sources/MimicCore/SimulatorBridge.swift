@@ -7,7 +7,7 @@ import Foundation
 
 /// Persisted queue metadata deliberately excludes commands, typed text, Apple keys and artifact paths.
 public struct SimulatorActivity: Codable, Sendable, Identifiable {
-    public enum Kind: String, Codable, Sendable { case start, install, action, refresh, close }
+    public enum Kind: String, Codable, Sendable { case start, install, action, refresh, close, launch, deeplink }
     public let id: UUID
     public let project: ProjectContext
     public let developer: String
@@ -21,6 +21,8 @@ public struct SimulatorActivity: Codable, Sendable, Identifiable {
     public var profileID: String?
     public var profileRevision: String?
     /// Device-only views carry no checkout execution authority; legacy project is a queue-display adapter.
+    public var observedRevision: UInt64?
+    public var resultRevision: UInt64?
     public var deviceOnly: Bool?
     public init(id: UUID, project: ProjectContext, developer: String, deviceID: UUID, sessionID: UUID?, kind: Kind, createdAt: Date = Date()) {
         self.id = id; self.project = project; self.developer = developer; self.deviceID = deviceID; self.sessionID = sessionID; self.kind = kind; self.createdAt = createdAt

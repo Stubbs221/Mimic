@@ -4,6 +4,7 @@
 //
 //  Created by Василий Маслов on 06.10.2026.
 import AppKit
+import Combine
 import SwiftUI
 import MimicCore
 import os
@@ -11,6 +12,9 @@ import os
 /// Publishes at most one changed geometry snapshot per layout pass, never one Task per card per tick.
 @MainActor final class PanelFrameStore: ObservableObject {
     @Published private(set) var snapshot: [String: CGRect] = [:]
+    struct Change: Sendable { let old: [String: CGRect]; let next: [String: CGRect] }
+    /// Input reactions receive committed geometry without subscribing the entire grid to every layout.
+    let changes = PassthroughSubject<Change, Never>()
     private struct Pending: Sendable { var frames: [String: CGRect] = [:]; var scheduled = false }
     private nonisolated let buffer = OSAllocatedUnfairLock(initialState: Pending())
     nonisolated var logical: [String: CGRect] { buffer.withLock { $0.frames } }
@@ -27,7 +31,11 @@ import os
         Task { @MainActor [weak self] in
             guard let self else { return }
             let next = buffer.withLock { pending in pending.scheduled = false; return pending.frames }
-            if snapshot != next { snapshot = next }
+            if snapshot != next {
+                let old = snapshot
+                snapshot = next
+                changes.send(Change(old: old, next: next))
+            }
         }
     }
 }
@@ -260,6 +268,7 @@ struct PanelDragBridge: NSViewRepresentable {
             let point = convert(windowPoint, from: nil)
             switch event.type {
             case .leftMouseDown:
+                BootstrapTerminalActivation.EventView.clearSelection(outside: event)
                 guard !gesture.ownsPress, isVisible(point), let item = callbacks.candidate(point) else { return event }
                 let header = window.contentView.map { PanelDragHeaderRegion.MarkerView.contains(event.locationInWindow, in: $0) } == true
                 guard header || !isControl(at: event.locationInWindow) else { return event }

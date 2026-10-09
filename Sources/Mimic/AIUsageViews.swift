@@ -23,7 +23,7 @@ enum AIUsageStatusPresentation {
 
 struct AIUsageSection: View {
     @ObservedObject var model: TaskCoordinator
-    @ObservedObject var usage: AIUsageCoordinator
+    let usage: AIUsageCoordinator
     var showsHeader = true
     private var expanded: Bool { !self.showsHeader || self.model.expandedSection == .usage }
     var body: some View {
@@ -62,7 +62,7 @@ struct AIUsageSection: View {
 private struct AIUsageProviderView: View {
     private var theme = MimicTheme()
     let provider: AIProvider
-    @ObservedObject var usage: AIUsageCoordinator
+    let usage: AIUsageCoordinator
     private var snapshot: AIUsageSnapshot? { self.usage.snapshots[self.provider] }
     private var expanded: Bool { self.usage.isExpanded(self.provider) }
     var body: some View {
@@ -84,7 +84,7 @@ private struct AIUsageProviderView: View {
                 if self.expanded {
                     Text(self.snapshot?.plan ?? text("usage.plan.unknown")).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(1)
                     ForEach(AIUsagePeriod.allCases, id: \.self) { period in self.window(period) }
-                    AIUsageTrendView(provider: self.provider, points: self.usage.histories[self.provider] ?? [], unknownModels: self.usage.unknownModels[self.provider] ?? [])
+                    AIUsageTrendView(provider: self.provider, points: self.usage.histories[self.provider] ?? [], unknownModels: self.usage.unknownModels[self.provider] ?? []).equatable()
                         .accessibilityIdentifier("usage.trend." + self.provider.rawValue)
                     if let error = self.usage.errors[self.provider] {
                         Text(text(error.localizationKey)).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -177,4 +177,3 @@ private struct AIUsageProviderView: View {
         }
     }
 }
-

@@ -23,6 +23,7 @@ import Foundation
     private var hidden: Set<String> = []
     private var deadline: Date?
     private var timer: Task<Void, Never>?
+    private var pendingReconcile: Task<Void, Never>?
     private var stopped = false
     private let makeState: (CIContext) -> CIState
     private let now: () -> Date
@@ -48,15 +49,21 @@ import Foundation
         state.branchOwnerPattern = self.branchOwnerPattern
         state.select(context); state.setJenkinsRuns(self.runs, connection: self.jenkins)
         let subscription = state.objectWillChange.sink { [weak self] in
-            // Published values are committed after objectWillChange; never select the preceding snapshot.
-            Task { @MainActor [weak self] in
-                guard let self, !self.stopped else { return }
-                self.reconcile(); self.objectWillChange.send()
-            }
+            self?.scheduleReconcile()
         }
         self.entries[key] = Entry(state: state, subscription: subscription)
         self.startTimer()
         return state
+    }
+
+    /// One response commits several Published values synchronously. Reconcile once after that commit.
+    private func scheduleReconcile() {
+        guard !self.stopped, self.pendingReconcile == nil else { return }
+        self.pendingReconcile = Task { @MainActor [weak self] in
+            guard let self, !Task.isCancelled, !self.stopped else { return }
+            self.pendingReconcile = nil
+            self.reconcile(); self.objectWillChange.send()
+        }
     }
 
     public func setDesktop(_ context: CIContext?) {
@@ -146,13 +153,15 @@ import Foundation
                 replace = current.active ? Self.newest(active, current) : self.deadline == nil && Self.newest(active, current)
             } else { replace = true }
             if replace {
-                self.overlay = active; self.deadline = nil
+                var candidate = active
                 // Prefer the desktop checkout when several checkouts share a remote project.
                 if self.state(for: active) === self.desktopState, let checkout = self.desktopCheckout {
-                    self.overlay?.checkout = checkout
+                    candidate.checkout = checkout
                 } else if let lease = self.leases.values.sorted(by: { $0.date == $1.date ? $0.checkout < $1.checkout : $0.date > $1.date }).first(where: { self.entries[$0.key]?.state === self.state(for: active) }) {
-                    self.overlay?.checkout = lease.checkout
+                    candidate.checkout = lease.checkout
                 }
+                if self.overlay != candidate { self.overlay = candidate }
+                self.deadline = nil
             }
         }
         let retained = self.overlay.flatMap(self.state)
@@ -182,6 +191,7 @@ import Foundation
 
     public func stop() {
         self.stopped = true; self.timer?.cancel(); self.timer = nil
+        self.pendingReconcile?.cancel(); self.pendingReconcile = nil
         for entry in self.entries.values { entry.state.setVisible(false); entry.state.setMonitoring(false) }
         self.leases = [:]; self.overlay = nil
     }

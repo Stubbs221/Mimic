@@ -9,7 +9,7 @@ import SwiftUI
 import MimicCore
 
 /// The inline chart and native detail consume the same ordered calendar points.
-struct AIUsageTrendView: View {
+struct AIUsageTrendView: View, Equatable {
     private var theme = MimicTheme()
     let provider: AIProvider
     let points: [AIUsageDailyPoint]
@@ -19,6 +19,10 @@ struct AIUsageTrendView: View {
         self.provider = provider; self.points = points; self.unknownModels = unknownModels
         self._hover = StateObject(wrappedValue: AIUsageTrendPopoverState(points: points))
     }
+    /// Hover state has its own publisher; unrelated usage-window updates retain the static chart.
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.provider == rhs.provider && lhs.points == rhs.points && lhs.unknownModels == rhs.unknownModels
+    }
     var body: some View {
         HStack(spacing: 8) {
             Text(text("usage.trend")).fontWeight(.semibold)
@@ -27,11 +31,12 @@ struct AIUsageTrendView: View {
                 Text(text("usage.trend.empty")).foregroundStyle(.secondary)
             } else {
                 Button { self.hover.toggleExplicit() } label: {
+                    let peak = self.points.map(\.tokens).max() ?? 0
                     HStack(alignment: .bottom, spacing: 1) {
                         ForEach(self.points, id: \.date) { point in
                             RoundedRectangle(cornerRadius: 1).fill(theme.tiled ? theme.color(provider == .codex ? "usagePurple" : "usageRose") : .blue)
                                 .frame(minWidth: 2, maxWidth: .infinity)
-                                .frame(height: AIUsageTrendFormat.barHeight(point.tokens, peak: self.points.map(\.tokens).max() ?? 0, height: 18, floor: 0.18))
+                                .frame(height: AIUsageTrendFormat.barHeight(point.tokens, peak: peak, height: 18, floor: 0.18))
                         }
                     }.frame(minWidth: 90, maxWidth: 150).frame(height: 18, alignment: .bottom)
                         .contentShape(Rectangle())

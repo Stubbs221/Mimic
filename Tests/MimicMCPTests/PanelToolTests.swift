@@ -6,6 +6,31 @@ import Testing
 @testable import MimicMCP
 
 struct PanelToolTests {
+    @Test func agentWorkflowSchemasAndConnectionIdentityDoNotGrantHostOwnership() async throws {
+        let tools = MimicMCPMain.tools()
+        for name in ["bind_project", "get_build_readiness", "wait_build_activity", "get_build_result"] {
+            let tool = try #require(tools.first { $0.name == name })
+            #expect(tool._meta?["ui"]?.objectValue?["resourceUri"] == nil)
+            #expect(tool.inputSchema.objectValue?["properties"]?.objectValue?["clientSessionID"] == nil)
+        }
+        let wait = try #require(tools.first { $0.name == "wait_build_activity" })
+        #expect(wait.inputSchema.objectValue?["required"] == .array([.string("activityID")]))
+        #expect(wait.inputSchema.objectValue?["properties"]?.objectValue?["timeoutMs"]?.objectValue?["maximum"] == .int(25_000))
+        let build = try #require(tools.first { $0.name == "build_project" })
+        #expect(build.inputSchema.objectValue?["required"]?.arrayValue?.contains(.string("workflowID")) == false)
+        let session = MimicClientSession(), other = MimicClientSession()
+        await session.initialize(name: "claude-code")
+        #expect(await session.name == "Claude Code" && session.id != other.id)
+        let client = MimicMCPMain.bridgeRequest(method: "bind_project", arguments: [:], threadID: nil, sessionID: session.id, clientName: await session.name)
+        #expect(client.threadID == "" && client.clientSessionID == session.id)
+        let host = MimicMCPMain.bridgeRequest(method: "bind_project", arguments: [:], threadID: "host-chat", sessionID: session.id)
+        #expect(host.threadID == "host-chat" && host.clientSessionID == nil)
+        #expect(MimicMCPMain.threadID(Metadata(additionalFields: ["threadId": .string("mcp-session:" + session.id)])) == nil)
+        let result = try MimicMCPMain.toolReply(.init(id: UUID(), result: .object(["workspace": .object(["draft": .string("private")]), "capabilities": .object(["buildWorkflowVersion": .number(1)])])), name: "bind_project")
+        #expect(result.structuredContent?.objectValue?["workspace"] == nil)
+        #expect(result.structuredContent?.objectValue?["capabilities"] != nil)
+    }
+
     @Test func appearanceIsOptionalPrivateMetadataAndSetupSchemaIsAligned() throws {
         let negotiated = MimicMCPMain.bridgeRequest(method: "get_state", arguments: [:], threadID: "fixture")
         #expect(negotiated.presentationMetadataVersion == 1 && negotiated.parameters.isEmpty)

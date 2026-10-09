@@ -53,5 +53,30 @@ try{
  });
  assert.equal(result.identity,'current','late open must not replace the current task');assert(result.discarded>=1,'stale server subscription must close');assert.equal(result.nextIdentity,'next');assert.deepEqual(result.inputs,[{task:'next',input:'CURRENT-TASK-INPUT'}],'queued input must never cross task identity');assert.equal(result.remaining,0);assert.deepEqual(result.errors,[]);
  assert.equal(result.queued,'Ожидание запуска…');assert.equal(result.waiting,'Ожидание вывода…');assert(result.noExampleInBuffer);assert(result.firstHidden&&result.emptyHidden&&result.finishedHidden);assert(result.sameScreen&&result.retainedScroll);assert(result.unavailable.includes('$ mimic bootstrap tvos')&&result.unavailable.includes('Вывод этого запуска недоступен'));
+ await page.setViewportSize({width:440,height:500});
+ await page.evaluate(async()=>{
+  document.body.style.height='2200px';
+  const root=document.querySelector('#root');root.style.height='280px';root.style.background='#282738';
+  const terminal=new MimicTerminal.PrivateTerminal(async()=>({}),error=>{throw error;});root.append(terminal.host);
+  terminal.host.style.height='280px';terminal.host.style.position='relative';terminal.host.style.overflow='hidden';
+  const style=document.createElement('style');style.textContent='.terminal-selectable[data-selected=false] .xterm{pointer-events:none}';document.head.append(style);
+  terminal.setBootstrapPlaceholder({example:'Example',queued:'Queued',waiting:'Waiting',unavailable:'Unavailable'},'ios');
+  terminal.hasOutput=true;terminal.updatePlaceholder();
+  terminal.terminal.write(Array.from({length:200},(_,i)=>'ROW '+i+'\r\n').join(''));
+  window.wheelFixture=terminal;
+  await new Promise(resolve=>setTimeout(resolve,100));terminal.terminal.scrollToTop();
+ });
+ const host=page.locator('.terminal-host').last();await host.hover();
+ const initial=await page.evaluate(()=>window.wheelFixture.terminal.buffer.active.viewportY);
+ await page.mouse.wheel(0,120);await page.waitForTimeout(200);
+ assert((await page.evaluate(()=>window.scrollY))>0,'inactive terminal permits panel scrolling');
+ assert.equal(await page.evaluate(()=>window.wheelFixture.terminal.buffer.active.viewportY),initial,'inactive wheel leaves terminal scrollback unchanged');
+ await host.click();const selectedScroll=await page.evaluate(()=>window.scrollY);
+ assert.equal(await host.getAttribute('data-selected'),'true');
+ await page.mouse.wheel(0,120);await page.waitForTimeout(200);
+ assert((await page.evaluate(()=>window.wheelFixture.terminal.buffer.active.viewportY))>initial,'selected terminal scrolls its buffer');
+ assert.equal(await page.evaluate(()=>window.scrollY),selectedScroll,'selected terminal owns wheel instead of panel');
+ await page.mouse.click(420,450);assert.equal(await host.getAttribute('data-selected'),'false','outside click clears selection');
+ await page.evaluate(()=>window.wheelFixture.dispose());
  console.log('PASS: late terminal open discarded, stale subscription closed, queued input isolated per task, encrypted input, first-output placeholder removal, empty polls, scroll retention and dispose');
 }finally{await browser.close();server.close();}

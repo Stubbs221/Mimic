@@ -59,6 +59,9 @@ private struct BranchSnapshotFixture: GitBranchService {
         #expect(model.branchSwitch.operations.count == 1)
         try await self.waitUntil { !model.branchSwitch.isExecuting }
         #expect(model.branchSwitch.operations.last?.phase == .succeeded)
+        let completedAt = try #require(model.branchSwitch.operations.last?.completedAt)
+        let restored = BranchSwitchCoordinator(defaults: defaults)
+        #expect(restored.operations.last?.completedAt == completedAt)
         #expect(model.project?.branch == "target")
         #expect(EnvironmentInspector.capture("/usr/bin/git", ["branch", "--show-current"], directory: checkout.path).1 == "target")
         try await self.waitUntil { !model.checking }

@@ -60,7 +60,7 @@ struct TaskHistoryContent: View {
     }
 }
 
-/// Task result and diagnostic output precede actions; analysis belongs to the original ID.
+/// Bootstrap uses the enclosing row as its header; all analysis stays bound to the original ID.
 struct TaskDetails: View {
     @ObservedObject
     var model: TaskCoordinator
@@ -75,6 +75,11 @@ struct TaskDetails: View {
     }
 
     var body: some View {
+        if self.record.action == .bootstrap { BootstrapHistoryDetails(model: self.model, record: self.record) }
+        else { self.generalBody }
+    }
+
+    private var generalBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 ActionIcon(action: self.record.action)
@@ -95,7 +100,6 @@ struct TaskDetails: View {
             if self.record.requiresXcodeQuit, self.record.status == .queued {
                 BootstrapPreparationView(model: self.model, record: self.record, showCancel: false)
             } else if !self.failed, !self.record.metadataOnly || self.record.status == .running {
-                if self.record.action == .bootstrap, let stage = self.model.bootstrapStage { Text(stage).font(.system(size: 12)) }
                 TerminalContainer(model: self.model, id: self.record.id).id("terminal." + self.record.id.uuidString).frame(height: 240).clipShape(RoundedRectangle(cornerRadius: 8)).mimicImmediate()
                 if self.record.status == .running { Label(text("terminal.hint"), systemImage: "info.circle").font(.system(size: 11)).foregroundStyle(.secondary) }
             }
@@ -143,7 +147,14 @@ struct LegacyHistoryRow: View {
                                     Text(taskResultTitle(record)).font(.system(size: 12, weight: .semibold))
                                     if let name = record.generation?.name ?? record.simulator?.name { Text(name).mimicFont(.caption).lineLimit(2).help(name) }
                                     Text(URL(fileURLWithPath: record.project.path).lastPathComponent + " · " + record.project.branch).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(2).help(record.project.path + " · " + record.project.branch)
-                                    HStack { Text(text("status." + record.status.rawValue)); Spacer(); Text(record.createdAt, style: .time) }.mimicFont(.caption).foregroundStyle(.secondary)
+                                    HStack {
+                                        Text(record.action == .bootstrap ? taskResultStatus(record) : text("status." + record.status.rawValue))
+                                        if record.action == .bootstrap, record.startedAt != nil {
+                                            MimicActivityClock(running: record.status == .running) { _ in Text(duration(record)).monospacedDigit() }.mimicImmediate()
+                                        }
+                                        Spacer()
+                                        Text(record.createdAt, style: .time)
+                                    }.mimicFont(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 0)
                                 Image(systemName: self.model.selectedTaskID == record.id ? "chevron.down" : "chevron.right").font(.system(size: 9)).foregroundStyle(.secondary)

@@ -121,7 +121,7 @@ struct AICompactProviderSummary: Identifiable {
 // MARK: - Provider columns and meters
 
 struct AICompactProviders: View {
-    @ObservedObject var usage: AIUsageCoordinator
+    let usage: AIUsageCoordinator
     let full: Bool
     let open: () -> Void
     var body: some View {
@@ -151,7 +151,7 @@ struct AICompactColumns: View {
                         if let anchor, summary.showsTrend {
                             GeometryReader { geometry in
                                 let frame = geometry[anchor]
-                                AICompactTrendView(summary: summary, now: self.now)
+                                AICompactTrendView(summary: summary, now: self.now).equatable()
                                     .frame(width: frame.width, height: frame.height)
                                     .position(x: frame.midX, y: frame.midY)
                             }
@@ -201,21 +201,31 @@ private struct AICompactTrendAnchor: PreferenceKey {
     static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) { value = nextValue() ?? value }
 }
 
-private struct AICompactTrendView: View {
+private struct AICompactTrendView: View, Equatable {
     private var theme = MimicTheme()
     let summary: AICompactProviderSummary
     let now: Date
+    private let calendar: Calendar
+    private let day: Date
     @StateObject private var hover: AIUsageTrendPopoverState
     init(summary: AICompactProviderSummary, now: Date) {
         self.summary = summary; self.now = now
+        let calendar = Calendar.current
+        self.calendar = calendar; self.day = calendar.startOfDay(for: now)
         self._hover = StateObject(wrappedValue: AIUsageTrendPopoverState(points: summary.points))
     }
+    /// Pacing ticks do not change history; the calendar day still changes today's readout.
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.summary.provider == rhs.summary.provider && lhs.summary.points == rhs.summary.points &&
+        lhs.summary.unknownModels == rhs.summary.unknownModels &&
+        lhs.day == rhs.day && lhs.calendar == rhs.calendar
+    }
     private var todayReadout: String {
-        let count = self.summary.todayTokens(now: self.now).map { $0.formatted(.number.notation(.compactName).precision(.fractionLength(0...1))) } ?? "—"
+        let count = self.summary.todayTokens(now: self.now, calendar: self.calendar).map { $0.formatted(.number.notation(.compactName).precision(.fractionLength(0...1))) } ?? "—"
         return String(format: text("usage.compact.todayTokens"), count)
     }
     private var description: String {
-        let exact = self.summary.todayTokens(now: self.now).map { $0.formatted() } ?? text("usage.unavailable")
+        let exact = self.summary.todayTokens(now: self.now, calendar: self.calendar).map { $0.formatted() } ?? text("usage.unavailable")
         var parts = [String(format: text("usage.compact.todayTokens"), exact), AIUsageTrendFormat.description(self.summary.points, provider: self.summary.provider)]
         if !self.summary.unknownModels.isEmpty { parts.append(text("usage.trend.unknownModels") + " " + self.summary.unknownModels.joined(separator: ", ")) }
         return parts.joined(separator: "\n")

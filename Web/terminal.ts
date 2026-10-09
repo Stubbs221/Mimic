@@ -7,6 +7,23 @@ type Tool=(name:string,args?:Record<string,unknown>)=>Promise<any>;
 const bytes=(value:string)=>Uint8Array.from(atob(value),c=>c.charCodeAt(0));
 const base64=(value:Uint8Array)=>btoa(Array.from(value,b=>String.fromCharCode(b)).join(''));
 const utf8=new TextEncoder();
+/** Click selection leaves inactive wheel gestures to the document and clears on outside presses. */
+export class TerminalSelection {
+ private active=false;
+ get selected(){return this.active;}
+ private press=(event:PointerEvent)=>{if(!this.host.hidden&&!this.host.inert)this.select(this.host.contains(event.target as Node));};
+ private blur=()=>this.select(false);
+ private focus=()=>{if(!this.active)(document.activeElement as HTMLElement)?.blur();};
+ private wheel=(event:WheelEvent)=>{if(!this.active)event.stopImmediatePropagation();};
+ constructor(private host:HTMLElement,private changed:(selected:boolean)=>void=()=>{}){
+  this.host.classList.add('terminal-selectable');this.host.dataset.selected='false';
+  window.addEventListener('blur',this.blur);document.addEventListener('pointerdown',this.press,true);this.host.addEventListener('focusin',this.focus);
+  this.host.addEventListener('wheel',this.wheel,{capture:true,passive:true});
+ }
+ select(selected:boolean){if(selected===this.active)return;this.active=selected;this.host.dataset.selected=String(selected);this.changed(selected);if(!selected&&this.host.contains(document.activeElement))(document.activeElement as HTMLElement)?.blur();}
+ dispose(){this.select(false);window.removeEventListener('blur',this.blur);document.removeEventListener('pointerdown',this.press,true);this.host.removeEventListener('focusin',this.focus);this.host.removeEventListener('wheel',this.wheel,true);}
+}
+
 /** One xterm instance survives polls, collapse and layout edits. No plaintext is sent to model context. */
 export class PrivateTerminal {
  readonly host=document.createElement('div');
@@ -20,8 +37,10 @@ export class PrivateTerminal {
  private taskID:string|null=null;private finished=false;private status='running';private visible=true;
  private message=document.createElement('p');
  private presentation='';
+ private selection:TerminalSelection|null=null;
  private placeholder:BootstrapTerminalPlaceholder|null=null;private platform:'ios'|'tvos'='ios';private hasOutput=false;
  setBootstrapPlaceholder(labels:BootstrapPlaceholderLabels,platform:'ios'|'tvos'){
+  if(!this.selection)this.selection=new TerminalSelection(this.host,selected=>{this.updateInput();if(selected)this.terminal.focus();});
   if(!this.placeholder){this.placeholder=new BootstrapTerminalPlaceholder(labels);this.host.append(this.placeholder.host);}
   this.platform=platform;this.updatePlaceholder();
  }
@@ -38,7 +57,7 @@ export class PrivateTerminal {
   this.timer=setInterval(()=>{if(this.channel&&!this.finished)void this.poll();},700);
  }
  private aad(direction:string,sequence:number){const c=this.channel!;return utf8.encode(`${c.channelID}|${c.taskID}|${c.threadID}|${direction}|${sequence}`);}
- private enqueue(payload:Record<string,unknown>){const channel=this.channel;if(!channel||!this.canInput||!this.visible||this.status!=='running')return;this.inputQueue=this.inputQueue.then(()=>this.channel===channel?this.send(payload):undefined).catch(this.onError);}
+ private enqueue(payload:Record<string,unknown>){const channel=this.channel;if(!channel||!this.canInput||!this.visible||this.status!=='running'||('input' in payload&&this.selection&&!this.selection.selected))return;this.inputQueue=this.inputQueue.then(()=>this.channel===channel?this.send(payload):undefined).catch(this.onError);}
  /** Bootstrap opts in to its own palette; history terminals retain their default styling. */
  setBootstrapPresentation(fontSize:number,dark:boolean,increasedContrast=false,appearance:'tileGrid'|'legacy'='legacy'){
   const tiled=appearance==='tileGrid',palette=tokens.palettes[dark?'dark':'light'];if(tiled)dark=true;
@@ -55,9 +74,9 @@ export class PrivateTerminal {
  private refit(row=this.terminal.buffer.active.viewportY,following=row===this.terminal.buffer.active.baseY){
   if(this.visible&&this.host.getBoundingClientRect().width>20){this.fit.fit();if(following)this.terminal.scrollToBottom();else this.terminal.scrollToLine(Math.min(row,this.terminal.buffer.active.baseY));this.enqueue({columns:this.terminal.cols,rows:this.terminal.rows});}
  }
- setVisibility(visible:boolean){this.visible=visible;this.host.inert=!visible;this.updateInput();if(visible)this.refit();if(!visible&&this.host.contains(document.activeElement))(document.activeElement as HTMLElement)?.blur();}
+ setVisibility(visible:boolean){this.visible=visible;if(!visible)this.selection?.select(false);this.host.inert=!visible;this.updateInput();if(visible)this.refit();if(!visible&&this.host.contains(document.activeElement))(document.activeElement as HTMLElement)?.blur();}
  setTaskStatus(status:string){this.status=status;this.updateInput();this.updatePlaceholder();}
- private updateInput(){this.terminal.options.disableStdin=!this.visible||!this.canInput||this.status!=='running';}
+ private updateInput(){this.terminal.options.disableStdin=!this.visible||!this.canInput||this.status!=='running'||!!this.selection&&!this.selection.selected;}
  async attach(taskID:string){if(this.taskID===taskID)return;const closing=this.detach(),generation=this.generation;this.taskID=taskID;this.finished=false;this.message.hidden=false;this.message.textContent='';this.updatePlaceholder();await closing;
   if(generation!==this.generation)return;
   const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},false,['deriveBits']);
@@ -88,6 +107,6 @@ export class PrivateTerminal {
   this.message.textContent=this.finished?this.labels.unavailable:this.labels.waiting;
   this.hasOutput=this.hasOutput||!!output.bytes||output.outputAvailable===true;this.updatePlaceholder();
  }catch(e){if(this.channel===channel){this.channel=null;this.key=null;this.canInput=false;this.updateInput();this.onError(e);}}finally{this.polling=false;}}
- async detach(){this.generation++;this.taskID=null;this.finished=false;this.hasOutput=false;this.updatePlaceholder();const channel=this.channel;this.channel=null;this.key=null;this.canInput=false;this.terminal.options.disableStdin=true;this.terminal.reset();if(channel)await this.tool('panel_terminal_close',{channelID:channel.channelID}).catch(()=>{});}
- async dispose(){clearInterval(this.timer);this.subscription.dispose();this.observer.disconnect();this.placeholder?.dispose();await this.detach();this.terminal.dispose();}
+ async detach(){this.selection?.select(false);this.generation++;this.taskID=null;this.finished=false;this.hasOutput=false;this.updatePlaceholder();const channel=this.channel;this.channel=null;this.key=null;this.canInput=false;this.terminal.options.disableStdin=true;this.terminal.reset();if(channel)await this.tool('panel_terminal_close',{channelID:channel.channelID}).catch(()=>{});}
+ async dispose(){this.selection?.dispose();clearInterval(this.timer);this.subscription.dispose();this.observer.disconnect();this.placeholder?.dispose();await this.detach();this.terminal.dispose();}
 }

@@ -100,7 +100,7 @@ def prepare(args):
     setup = args.output / ('MimicSetup-' + value['version'])
     setup.mkdir()
     run('/usr/bin/ditto', app, setup / 'Mimic.app')
-    for source, name in [('scripts/setup-mimic.command', 'setup-mimic.command'), ('scripts/setup-mimic.ru.plist', 'setup-mimic.ru.plist'), ('docs/MimicSetup.md', 'README.md'), ('LICENSE', 'LICENSE')]:
+    for source, name in [('scripts/setup-mimic.command', 'setup-mimic.command'), ('scripts/setup-mimic.ru.plist', 'setup-mimic.ru.plist'), ('docs/MimicSetup.md', 'README.md'), ('docs/AgentChecks.md', 'AgentChecks.md'), ('LICENSE', 'LICENSE')]:
         shutil.copy2(ROOT / source, setup / name)
     run('/usr/bin/ditto', '-c', '-k', '--sequesterRsrc', '--keepParent', setup, pathlib.Path(str(setup) + '.zip'))
     signature = run(tools / 'sign_update', '--account', config['keyAccount'], '-p', archive)
