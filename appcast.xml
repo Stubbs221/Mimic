@@ -1,10 +1,33 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
 --><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-  <!-- Created by Василий Маслов on 08.10.2026. -->
+  <!-- Created by Василий Маслов on 09.10.2026. -->
   <channel>
     <title>Mimic</title>
     <link>https://github.com/Stubbs221/Mimic</link>
+    <item>
+      <title>Mimic 1.5.0</title>
+      <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 09.10.2026. --&gt;
+# Mimic 1.5.0
+
+- Сборка, запуск приложения и выбранные тесты доступны прямо в компактных карточках macOS и Codex. Общая очередь сохраняется до завершения запуска; прогресс, отмена и выбор приложения доступны без раскрытия подробностей.
+- Явная загрузка каталога тестов, поиск и точный выбор методов. Агент получает отдельный результат проверки: успешный процесс с пропущенными тестами или изменившимися исходниками не считается полной успешной проверкой.
+- Новый MCP-цикл для внешних агентов: привязка проекта, проверка готовности, ожидание операции, структурированные результаты и история. Добавлены проверка актуальности исходников и подтверждения подготовки проекта.
+- Проверки симулятора можно связать со сборкой, вести журнал и явно записывать видео. Запуск использует продукт конкретной сборки; неопределённые действия не повторяются автоматически.
+- Предпросмотр очистки управляемых артефактов и наблюдение изменений проекта. Очистка требует отдельного явного запроса и не затрагивает исходники.
+- Обновлены история Bootstrap, компактные CI-карточки, статистика AI, терминалы и перенос карточек. Mini и Full сохраняют общий размер и самостоятельные действия.
+
+Apple Silicon · macOS 14+. Для экрана Simulator требуется Xcode 27+. Профиль команды устанавливается отдельно.
+
+[Установка и настройка](https://github.com/Stubbs221/Mimic/blob/main/docs/MimicSetup.md) · [Проверки через агента](https://github.com/Stubbs221/Mimic/blob/main/docs/AgentChecks.md) · [Иллюстрированные материалы](https://github.com/Stubbs221/Mimic/tree/main/docs/releases/1.5.0)
+</description>
+      <pubDate>Fri, 09 Oct 2026 18:15:26 GMT</pubDate>
+      <sparkle:version>150</sparkle:version>
+      <sparkle:shortVersionString>1.5.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <enclosure url="https://github.com/Stubbs221/Mimic/releases/download/v1.5.0/Mimic-1.5.0.zip" length="17630028" type="application/octet-stream" sparkle:edSignature="vcCHkLik7mcOD89OeP1oD2mWOnh5kRl/cONlCr23SLo82itRj5sAATXnfX92GcLu6XdXiLNj510JuLVl5XfiCA=="></enclosure>
+    </item>
     <item>
       <title>Mimic 1.4.0</title>
       <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 08.10.2026. --&gt;
@@ -67,6 +90,6 @@ Apple-разработка под рукой — в macOS и внутри Codex.
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: mTjazfeWsGw5nyFo+zLEKubTbpe6M4lYjOPGJW7FRVCPejFvYX003zkCnkaaKBDMTGn8rPMDUO60qnwJ0DtGCw==
-length: 8222
+edSignature: SyINZw8Y9XbegkFzKlCEx3ZBB8W2Glu4Uo1Y/ZLMxKESNtj0lHTrGttU4tWCb7CqI61U8Mk6KbGNvnFy0vF6AQ==
+length: 11615
 -->
