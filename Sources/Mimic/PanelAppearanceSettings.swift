@@ -19,6 +19,7 @@ struct PanelAppearanceSettings: View {
     @ObservedObject var model: TaskCoordinator
     var showsPreviews = true
     @State private var previewsExpanded = false
+    @State private var selectionError = ""
     @Environment(\.mimicTextScale) private var textScale
     @FocusState private var focused: PanelAppearance?
     private var theme = MimicTheme()
@@ -38,6 +39,10 @@ struct PanelAppearanceSettings: View {
                 DisclosureGroup(text("settings.appearance.previews"), isExpanded: $previewsExpanded) {
                     previewChoices.padding(.top, 8)
                 }.mimicFont(.caption)
+            }
+            if !selectionError.isEmpty { Text(selectionError).mimicFont(.caption).foregroundStyle(.red).accessibilityIdentifier("appearance.error") }
+            if model.appearance.saveFailed || model.appearance.persistenceFailed {
+                Text(text("appearance.persistence.error")).mimicFont(.caption).foregroundStyle(.red).accessibilityIdentifier("appearance.persistence.error")
             }
             Text(text("appearance.shared")).mimicFont(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -64,12 +69,12 @@ struct PanelAppearanceSettings: View {
                         .accessibilityHidden(true)
                 }.frame(minHeight: 20 * textScale)
             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                .background(selected ? (theme.tiled ? theme.color("accentSoft") : accent.opacity(0.08)) : Color.clear, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10)
+                .background(selected ? (theme.tiled ? theme.color("accentSoft") : accent.opacity(0.08)) : Color.clear, in: RoundedRectangle(cornerRadius: theme.retro ? 0 : 10))
+                .overlay(RoundedRectangle(cornerRadius: theme.retro ? 0 : 10)
                     .strokeBorder(selected ? accent : Color.secondary.opacity(accessibility.increasedContrast ? 0.65 : 0.35), lineWidth: selected ? 2 : 1))
-                .overlay(RoundedRectangle(cornerRadius: 13)
+                .overlay(RoundedRectangle(cornerRadius: theme.retro ? 0 : 13)
                     .strokeBorder(focused == value ? accent : Color.clear, lineWidth: 2).padding(-3))
-                .contentShape(RoundedRectangle(cornerRadius: 10))
+                .contentShape(RoundedRectangle(cornerRadius: theme.retro ? 0 : 10))
         }.buttonStyle(.plain).focusable().focused($focused, equals: value)
             .onKeyPress(.leftArrow) { move(from: value); return .handled }
             .onKeyPress(.rightArrow) { move(from: value); return .handled }
@@ -81,6 +86,9 @@ struct PanelAppearanceSettings: View {
     }
 
     private func select(_ value: PanelAppearance) {
+        let missing = NativeRetro.missingFonts(value)
+        guard missing.isEmpty else { selectionError = text("appearance.fonts.missing") + ": " + missing.joined(separator: ", "); return }
+        selectionError = ""
         focused = value
         model.panelLayout.cancelDrag()
         model.appearance.select(value)
@@ -130,7 +138,10 @@ private struct PanelAppearanceMiniature: View {
 
     private func tile(_ title: String, detail: String, block: PanelBlockKind) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(size: 9, weight: .semibold)).lineLimit(1)
+            Text(title).font(appearance.isRetro ? Font(NativeRetro.font(appearance, role: .heading, bold: true, scale: 0.7)) : .system(size: 9, weight: .semibold)).lineLimit(1)
+                .foregroundStyle(appearance.isRetro ? .white : color("ink"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background { if appearance.isRetro { NativeRetroArtwork(appearance: appearance, kind: .title) } }
             Text(detail).font(.system(size: 7)).foregroundStyle(color("muted")).lineLimit(1)
         }.frame(maxWidth: .infinity, minHeight: 25, alignment: .leading).padding(6)
             .background(tileColor(block), in: RoundedRectangle(cornerRadius: tiled ? 9 : 6))
@@ -138,6 +149,7 @@ private struct PanelAppearanceMiniature: View {
     }
 
     private func tileColor(_ block: PanelBlockKind) -> Color {
+        if appearance.isRetro { return color("surface") }
         if tiled { return color("surface") }
         var fill = NSColor.controlBackgroundColor
         NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)?.performAsCurrentDrawingAppearance {
@@ -148,6 +160,7 @@ private struct PanelAppearanceMiniature: View {
     }
 
     private func color(_ key: String) -> Color {
+        if appearance.isRetro { return Color(nsColor: NativeRetro.color(key, appearance: appearance)) }
         if tiled { return Color(nsColor: MimicTheme.native(key, dark: scheme == .dark)) }
         switch key {
         case "paper": return Color(nsColor: .windowBackgroundColor)

@@ -4,12 +4,14 @@ import Foundation
 
 /// Shares one CIState per credential reference/server/project. Account changes invalidate its cache.
 /// Codex leases retain their own checkout; a displayed active run outlives its last panel lease.
+/// Unowned states expire after a short idle grace period; durable runs and tracking live elsewhere.
 @MainActor public final class CIActivityMonitor: ObservableObject {
     @Published public private(set) var desktopState: CIState?
     @Published public private(set) var overlay: CICompactSummary?
     private struct Entry {
         let state: CIState
         let subscription: AnyCancellable
+        var idleSince: Date?
     }
     private struct Lease {
         let key: String
@@ -28,12 +30,14 @@ import Foundation
     private let makeState: (CIContext) -> CIState
     private let now: () -> Date
     private let completionDelay: TimeInterval
+    private let idleRetention: TimeInterval
     public var branchOwnerPattern: String? { didSet { for entry in self.entries.values { entry.state.branchOwnerPattern = self.branchOwnerPattern } } }
     public var jenkins: JenkinsConnection?
     public var runs: [RemoteTestRun] = []
 
-    public init(completionDelay: TimeInterval = 5, now: @escaping () -> Date = { .now }, makeState: @escaping (CIContext) -> CIState) {
-        self.completionDelay = completionDelay; self.now = now; self.makeState = makeState
+    /// Idle retention starts only after the last lease, desktop, visible inspection and overlay leave.
+    public init(completionDelay: TimeInterval = 5, idleRetention: TimeInterval = 60, now: @escaping () -> Date = { .now }, makeState: @escaping (CIContext) -> CIState) {
+        self.completionDelay = completionDelay; self.idleRetention = max(0, idleRetention); self.now = now; self.makeState = makeState
     }
 
     // MARK: - Checkout interests
@@ -51,7 +55,7 @@ import Foundation
         let subscription = state.objectWillChange.sink { [weak self] in
             self?.scheduleReconcile()
         }
-        self.entries[key] = Entry(state: state, subscription: subscription)
+        self.entries[key] = Entry(state: state, subscription: subscription, idleSince: nil)
         self.startTimer()
         return state
     }
@@ -67,6 +71,7 @@ import Foundation
     }
 
     public func setDesktop(_ context: CIContext?) {
+        guard !self.stopped else { return }
         let old = self.desktopState
         self.desktopKey = context.map(self.key); self.desktopCheckout = context?.checkout
         self.desktopState = context.map(self.register)
@@ -167,7 +172,19 @@ import Foundation
         let retained = self.overlay.flatMap(self.state)
         for (key, entry) in self.entries {
             entry.state.setMonitoring(interested.contains(key) || self.overlay?.active == true && entry.state === retained)
+            // A terminal overlay (including a failure awaiting dismissal) and native inspection
+            // still own their presentation even when they no longer require background polling.
+            if interested.contains(key) || entry.state.visible || entry.state === retained {
+                self.entries[key]?.idleSince = nil
+            } else {
+                let idleSince = entry.idleSince ?? now
+                if now.timeIntervalSince(idleSince) >= self.idleRetention {
+                    entry.subscription.cancel()
+                    self.entries[key] = nil
+                } else { self.entries[key]?.idleSince = idleSince }
+            }
         }
+        if self.entries.isEmpty { self.timer?.cancel(); self.timer = nil }
     }
 
     private static func newest(_ left: CICompactSummary, _ right: CICompactSummary) -> Bool {
@@ -192,7 +209,13 @@ import Foundation
     public func stop() {
         self.stopped = true; self.timer?.cancel(); self.timer = nil
         self.pendingReconcile?.cancel(); self.pendingReconcile = nil
-        for entry in self.entries.values { entry.state.setVisible(false); entry.state.setMonitoring(false) }
-        self.leases = [:]; self.overlay = nil
+        for entry in self.entries.values {
+            entry.subscription.cancel(); entry.state.setVisible(false); entry.state.setMonitoring(false)
+        }
+        self.entries = [:]; self.leases = [:]; self.overlay = nil; self.deadline = nil
+        self.desktopState = nil; self.desktopKey = nil; self.desktopCheckout = nil; self.hidden = []
     }
+
+    /// Lifetime metadata for deterministic eviction fixtures; no feed or credential contents.
+    var cacheLifetime: (entries: Int, timerRunning: Bool) { (self.entries.count, self.timer != nil) }
 }

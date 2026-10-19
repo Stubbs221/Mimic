@@ -9,6 +9,7 @@ CHECK_ONLY=false
 UNINSTALL=false
 ASSUME_YES=false
 BACKGROUND=false
+DEFER_LAUNCH=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --app) [ "$#" -ge 2 ] || exit 64; APP="$2"; shift 2 ;;
@@ -17,6 +18,7 @@ while [ "$#" -gt 0 ]; do
     --uninstall-integration) UNINSTALL=true; shift ;;
     --yes) ASSUME_YES=true; shift ;;
     --background) BACKGROUND=true; shift ;;
+    --defer-launch) DEFER_LAUNCH=true; shift ;;
     *) echo 'Usage: setup-mimic.command [--app Mimic.app] [--destination path] [--check-only] [--uninstall-integration] [--yes] [--background]'; exit 64 ;;
   esac
 done
@@ -95,6 +97,9 @@ if [ "$APP" != "$DESTINATION" ]; then
     fail destination
   fi
 fi
+# The development owner retains the native instance lock until replacement finishes.
+# It launches and verifies the new owner after releasing that lock; keep backups meanwhile.
+if "$DEFER_LAUNCH"; then printf '%s\n' "$DESTINATION"; exit 0; fi
 # Remove only installer-owned Mimic backups after replacement and launch succeed.
 # Keep unrelated bundles, symlinks, and the source bundle intact.
 cleanup_backups() {

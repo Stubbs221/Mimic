@@ -1,0 +1,23 @@
+/* Created by Василий Маслов on 12.10.2026. */
+:root[data-appearance=windowsXP]{font-family:'Mimic Tahoma';font-size:11px;--retro-surface:#ece9d8;--retro-line:#aca899;--retro-input-line:#7f9db9;--retro-title:#0050ee;--retro-progress:#2fbe2f;--retro-button:linear-gradient(#fff,#ecebe5 86%,#d8d0c4);--retro-button-radius:3px;--retro-title-gradient:linear-gradient(#0997ff,#0053ee 8%,#0050ee 40%,#06f 88%,#06f 93%,#005bff 95%,#003dd7 96%,#003dd7)}
+:root[data-appearance=windowsXP] button{background:var(--retro-button);color:#000;border:1px solid #003c74;border-radius:3px;box-shadow:none}
+:root[data-appearance=windowsXP] button:hover:not(:disabled){background:linear-gradient(#fff,#f5f2e5 86%,#e6ddc4);box-shadow:inset 0 0 0 2px #f6c26b}
+:root[data-appearance=windowsXP] button[data-pressed]{background:linear-gradient(#c9c3b6,#e3e0d7 14%,#f5f4ee);box-shadow:inset 1px 1px #9d9688;transform:none}
+:root[data-appearance=windowsXP] .panel-block{border:0;border-radius:8px 8px 0 0;padding:0 0 6px;background:#ece9d8;box-shadow:inset 1px 0 #0831d9,inset 2px 0 #166aee,inset 3px 0 #0855dd,inset -1px 0 #00138c,inset -2px 0 #001ea0,inset -3px 0 #003bda,inset 0 -1px #00138c,inset 0 -2px #001ea0,inset 0 -3px #003bda}
+:root[data-appearance=windowsXP] .panel-block .block-title{height:28px;padding:6px 33px 6px 7px;border-radius:8px 8px 0 0;background:var(--retro-title-gradient);color:#fff;box-shadow:none;font-family:'Mimic XP Caption';font-size:13px;font-weight:700;text-shadow:1px 1px #0f0f8a}
+:root[data-appearance=windowsXP] .chrome-identity{border-radius:6px 6px 0 0}
+:root[data-appearance=windowsXP] .chrome-project{font-family:'Mimic XP Caption';font-size:13px;font-weight:700}
+:root[data-appearance=windowsXP] .retro-caption{top:3px;right:6px;width:21px;height:21px;border:0;background-color:#0050ee;box-shadow:none;border-radius:3px}
+:root[data-appearance=windowsXP] .retro-caption:hover,:root[data-appearance=windowsXP] .retro-caption[data-pressed]{box-shadow:none}
+:root[data-appearance=windowsXP] .retro-scroll-track{background:linear-gradient(90deg,#f3f1ec,#e8e6df)}
+:root[data-appearance=windowsXP] .retro-scrollbar button{border-color:#91b5f0;background:linear-gradient(90deg,#fff,#d5e2fa);border-radius:2px}
+:root[data-appearance=windowsXP] .retro-scrollbar button::before{background:#4d6185}
+:root[data-appearance=windowsXP] .retro-scroll-thumb{border:1px solid #91b5f0;border-radius:2px;background:linear-gradient(90deg,#c7dcff,#a9c5f5)}
+:root[data-appearance=windowsXP] .retro-scroll-thumb::after{content:'';position:absolute;left:4px;right:4px;top:calc(50% - 3px);height:7px;background:repeating-linear-gradient(#fff 0 1px,#91b5f0 1px 2px,transparent 2px 3px)}
+
+:root[data-appearance=windowsXP] .retro-close-control{width:21px;height:21px;border:0;background-color:#0050ee;box-shadow:none}
+
+:root[data-appearance=windowsXP] .panel-block>.block-title{position:relative}
+:root[data-appearance=windowsXP] .panel-block>.block-title::before,:root[data-appearance=windowsXP] .panel-block>.block-title::after{content:'';position:absolute;top:0;width:8px;height:8px;pointer-events:none;background-image:var(--retro-top-contour);background-repeat:no-repeat}
+:root[data-appearance=windowsXP] .panel-block>.block-title::before{left:0;background-position:left top}
+:root[data-appearance=windowsXP] .panel-block>.block-title::after{right:0;background-position:right top}

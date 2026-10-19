@@ -56,7 +56,7 @@ struct AIUsageTrendView: View, Equatable {
             }
             if !self.unknownModels.isEmpty {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.secondary)
-                    .help(text("usage.trend.unknownModels") + " " + self.unknownModels.joined(separator: ", "))
+                    .mimicHelp(text("usage.trend.unknownModels") + " " + self.unknownModels.joined(separator: ", "))
                     .accessibilityLabel(text("usage.trend.unknownModels") + " " + self.unknownModels.joined(separator: ", "))
             }
         }.mimicFont(.caption).padding(.vertical, 4).mimicImmediate()
@@ -83,11 +83,11 @@ struct AIUsageTrendDetail: View {
                 Text(self.state.points.first.map { AIUsageTrendFormat.date($0.date) } ?? "")
                 Spacer()
                 Text(self.state.points.last.map { AIUsageTrendFormat.date($0.date) } ?? "")
-            }.font(.system(size: 10)).foregroundStyle(.secondary).monospacedDigit()
-            Text(AIUsageTrendFormat.source(self.provider)).font(.system(size: 10))
+            }.mimicRetrofittedFont(.system(size: 10), role: .caption).foregroundStyle(.secondary).monospacedDigit()
+            Text(AIUsageTrendFormat.source(self.provider)).mimicRetrofittedFont(.system(size: 10), role: .caption)
                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity)
-        }.padding(12).background(appearance == .tileGrid ? Color(nsColor: MimicTheme.adaptive("surface")) : Color(nsColor: .windowBackgroundColor)).frame(width: 340).fixedSize(horizontal: false, vertical: true).mimicImmediate()
+        }.padding(12).background(appearance.isRetro ? Color(nsColor: NativeRetro.color("surface", appearance: appearance)) : appearance == .tileGrid ? Color(nsColor: MimicTheme.adaptive("surface")) : Color(nsColor: .windowBackgroundColor)).frame(width: 340).fixedSize(horizontal: false, vertical: true).mimicImmediate()
             .environment(\.mimicPanelAppearance, appearance).modifier(MimicTextSizingRoot())
             .onContinuousHover { phase in
                 guard self.state.isPresented else { return }
@@ -96,10 +96,10 @@ struct AIUsageTrendDetail: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("usage.trend.detail." + self.provider.rawValue)
     }
-    private var title: some View { Text(text("usage.trend")).font(.system(size: 13, weight: .semibold)) }
+    private var title: some View { Text(text("usage.trend")).mimicRetrofittedFont(.system(size: 13, weight: .semibold), role: .heading) }
     private var readout: some View {
         Text(self.state.selectedPoint.map { AIUsageTrendFormat.readout($0) } ?? text("usage.trend.empty"))
-            .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+            .mimicRetrofittedFont(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityLabel(self.state.selectedPoint.map { AIUsageTrendFormat.exact($0) } ?? text("usage.trend.empty"))
     }
@@ -109,7 +109,7 @@ struct AIUsageTrendDetail: View {
             ForEach(points.indices, id: \.self) { index in
                 Color.clear.frame(maxWidth: .infinity).frame(height: 76)
                     .overlay(alignment: .bottom) {
-                        RoundedRectangle(cornerRadius: 1.5).fill(appearance == .tileGrid ? Color(nsColor: MimicTheme.adaptive(provider == .codex ? "usagePurple" : "usageRose")) : .blue)
+                        RoundedRectangle(cornerRadius: appearance.isRetro ? 0 : 1.5).fill(appearance == .tileGrid ? Color(nsColor: MimicTheme.adaptive(provider == .codex ? "usagePurple" : "usageRose")) : .blue)
                             .frame(height: AIUsageTrendFormat.barHeight(points[index].tokens, peak: peak, height: 76, floor: 0.06))
                             .padding(.horizontal, 1)
                             .opacity(self.state.activeIndex == nil || self.state.activeIndex == index ? 1 : 0.35)

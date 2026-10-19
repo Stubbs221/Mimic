@@ -26,6 +26,7 @@ struct SimulatorCompactDevices: View {
     let full: Bool
     let open: () -> Void
     private var devices: [SimulatorDevice] { self.model.simulatorPresentation.compact(full: self.full) }
+    private var physical: SimulatorDevice? { self.devices.first { $0.physical != nil && $0.isActive } }
     var body: some View {
         Group {
             if self.devices.isEmpty {
@@ -37,9 +38,22 @@ struct SimulatorCompactDevices: View {
                     }.buttonStyle(RowButtonStyle()).background(PanelControlRegion())
                 }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else {
-                SimulatorCompactLayout(columns: self.full ? 2 : 1) {
-                    ForEach(self.devices) { device in
-                        SimulatorDeviceCard(model: self.model, device: device, compact: true)
+                VStack(alignment: .leading, spacing: 8) {
+                    SimulatorCompactLayout(columns: self.full ? 2 : 1) {
+                        ForEach(self.devices) { device in
+                            SimulatorDeviceCard(model: self.model, device: device, compact: true)
+                        }
+                    }
+                    if let physical {
+                        HStack(spacing: 8) {
+                            Button(text("devices.openScreen")) { self.model.activateSimulator(physical) }
+                                .disabled(!self.model.canActivateSimulator(physical))
+                                .accessibilityIdentifier("device.openScreen." + physical.id.uuidString)
+                            if self.full, let simulator = self.devices.first(where: { $0.physical == nil && $0.isBooted }) {
+                                Button(text("devices.openSimulator")) { self.model.activateSimulator(simulator) }
+                                    .disabled(!self.model.canActivateSimulator(simulator))
+                            }
+                        }.buttonStyle(MimicAuxiliaryButtonStyle(height: 24, horizontalPadding: 8))
                     }
                 }.frame(maxHeight: .infinity, alignment: .top)
             }
@@ -80,6 +94,7 @@ struct SimulatorCompactLayout: Layout {
 
 /// Feedback stays immediate and uses the same rounded boundary as the full activation target.
 private struct SimulatorCompactButtonStyle: ButtonStyle {
+    var physical = false
     private var theme = MimicTheme()
     private var accessibility = MimicAccessibility()
     @Environment(\.isEnabled) private var enabled
@@ -89,7 +104,7 @@ private struct SimulatorCompactButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background {
-                RoundedRectangle(cornerRadius: 10).fill(theme.tiled ? theme.color("paper") : Color(nsColor: .controlBackgroundColor))
+                RoundedRectangle(cornerRadius: 10).fill(physical ? theme.tiled ? theme.color("accentSoft") : Color.accentColor.opacity(0.08) : theme.tiled ? theme.color("paper") : Color(nsColor: .controlBackgroundColor))
                 RoundedRectangle(cornerRadius: 10).fill(theme.tiled ? theme.color("accentSoft") : Color.accentColor)
                     .opacity(enabled && (hovered || configuration.isPressed) ? configuration.isPressed ? 0.8 : theme.tiled ? 1 : 0.12 : 0)
             }
@@ -110,8 +125,10 @@ struct SimulatorDeviceCard: View {
     private var pending: TaskRecord? { self.model.simulatorPendingRecord(self.device) }
     private var failure: SimulatorPanelFailure? { self.model.simulatorFailure(self.device) }
     private var busy: Bool { self.model.simulatorBusy(self.device) }
+    private var stale: Bool { self.model.simulatorStale || self.device.physical != nil && !self.model.simulatorPanel.physicalError.isEmpty }
     private var status: String {
         if self.model.simulatorOpening[self.device.id] != nil { return text("simulators.opening") }
+        if self.device.physical != nil { return self.stale ? text("simulators.stale") : SimulatorPresentation.status(self.device, compact: self.compact) }
         if let pending {
             if pending.status == .queued { return text("simulators.queued") }
             return text(pending.action == .simulatorBoot ? "simulators.booting" : "simulators.shuttingDown")
@@ -122,18 +139,18 @@ struct SimulatorDeviceCard: View {
         return self.device.state
     }
     private var statusColor: Color {
-        if self.model.simulatorStale { return self.compact && self.theme.tiled ? self.theme.color("warning") : .orange }
+        if self.stale { return self.compact && self.theme.tiled ? self.theme.color("warning") : .orange }
         if self.busy { return self.compact && self.theme.tiled ? self.theme.color("accent") : .accentColor }
-        if self.device.isBooted { return self.compact && self.theme.tiled ? self.theme.color("success") : .green }
+        if self.device.isActive { return self.compact && self.theme.tiled ? self.theme.color("success") : .green }
         return self.compact && self.theme.tiled ? self.theme.color("muted") : .secondary.opacity(0.45)
     }
     private var description: String {
         [self.device.name, self.device.runtime, self.status, self.device.id.uuidString,
-         self.model.simulatorStale ? text("simulators.stale") : "", self.failure?.message ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+         self.device.physical?.udid ?? "", self.stale ? text("simulators.stale") : "", self.failure?.message ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
     }
     private var detailLine: String { self.device.runtime + " · " + self.status }
     private var accessibleName: String { self.device.name + (self.presentation.shortID(self.device).map { " · " + $0 } ?? "") }
-    private var accessibleValue: String { self.detailLine + (self.model.simulatorStale ? " · " + text("simulators.stale") : "") }
+    private var accessibleValue: String { self.detailLine + (self.stale ? " · " + text("simulators.stale") : "") }
 
     var body: some View {
         Group {
@@ -149,9 +166,9 @@ struct SimulatorDeviceCard: View {
 
     private var accessories: some View {
         HStack(spacing: 4) {
-            if self.model.simulatorStale || self.failure != nil {
+            if self.stale || self.failure != nil {
                 Image(systemName: "exclamationmark.circle").foregroundStyle(.orange).mimicFont(.caption)
-                    .help(self.failure?.message ?? text("simulators.stale"))
+                    .mimicHelp(self.failure?.message ?? text("simulators.stale"))
                     .accessibilityLabel(self.failure?.message ?? text("simulators.stale"))
                     .allowsHitTesting(false)
             }
@@ -166,7 +183,7 @@ struct SimulatorDeviceCard: View {
         }.padding(8).frame(minWidth: 0, maxWidth: .infinity)
             .frame(height: SimulatorCatalogContent.rowHeight)
             .background {
-                RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.025))
+                RoundedRectangle(cornerRadius: 8).fill(self.device.physical != nil ? self.theme.tiled ? self.theme.color("accentSoft") : Color.accentColor.opacity(0.08) : Color.primary.opacity(0.025))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
             }
     }
@@ -177,20 +194,20 @@ struct SimulatorDeviceCard: View {
                 Button { self.model.activateSimulator(self.device) } label: {
                     self.deviceLabel
                         .padding(.leading, 8)
-                        .padding(.trailing, self.model.simulatorStale || self.failure != nil ? 48 : 32)
+                        .padding(.trailing, self.stale || self.failure != nil ? 48 : 32)
                         .padding(.vertical, 8)
                         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
                         .contentShape(RoundedRectangle(cornerRadius: 10))
-                }.buttonStyle(SimulatorCompactButtonStyle())
+                }.buttonStyle(SimulatorCompactButtonStyle(physical: self.device.physical != nil))
             } else {
                 Button { self.model.activateSimulator(self.device) } label: { self.deviceLabel }
                     .buttonStyle(.plain)
             }
         }.disabled(!self.model.canActivateSimulator(self.device))
             .frame(minWidth: 0, maxWidth: .infinity)
-            .background(PanelControlRegion()).help(self.description)
+            .background(PanelControlRegion()).mimicHelp(self.description)
             .accessibilityLabel(self.accessibleName).accessibilityValue(self.accessibleValue)
-            .accessibilityHint(text(self.device.isBooted ? "simulators.open" : "simulators.boot"))
+            .accessibilityHint(text(self.device.physical != nil ? "devices.openScreen" : self.device.isBooted ? "simulators.open" : "simulators.boot"))
             .accessibilityIdentifier("simulator.activate." + self.device.id.uuidString)
     }
 
@@ -230,7 +247,12 @@ struct SimulatorDeviceCard: View {
 
     private var actions: some View {
         Menu {
-            if self.model.simulatorStale {
+            if self.device.physical != nil {
+                Button(text("devices.openScreen")) { self.model.activateSimulator(self.device) }
+                    .disabled(!self.model.canActivateSimulator(self.device))
+                Button(text("devices.copyUDID")) { self.model.copyDeviceUDID(self.device) }
+            }
+            if self.stale {
                 Button(text("simulators.retry")) { self.model.refreshSimulators() }.disabled(self.model.loadingSimulators)
             }
             if self.device.isBooted {
@@ -243,16 +265,33 @@ struct SimulatorDeviceCard: View {
             if let id = self.failure?.taskID ?? self.pending?.id {
                 Button(text("simulators.showTask")) { self.model.showHistory(id: id) }
             }
-            if !self.device.isBooted, !self.presentation.isRecent(self.device), self.failure?.taskID == nil, self.pending == nil, !self.model.simulatorStale {
+            if self.device.physical == nil, !self.device.isBooted, !self.presentation.isRecent(self.device), self.failure?.taskID == nil, self.pending == nil, !self.model.simulatorStale {
                 Button(text("simulators.boot")) { self.model.activateSimulator(self.device) }
                     .disabled(!self.model.canActivateSimulator(self.device))
             }
         } label: { Image(systemName: "ellipsis").frame(width: 20, height: 28).contentShape(Rectangle()) }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().tint(.primary)
+            .mimicMenu("…", items: retroActions)
             .frame(minHeight: self.compact ? 28 : nil).contentShape(Rectangle())
-            .background(PanelControlRegion()).help(text("simulators.actions"))
+            .background(PanelControlRegion()).mimicHelp(text("simulators.actions"))
             .accessibilityLabel(text("simulators.actions") + " · " + self.accessibleName)
             .accessibilityIdentifier("simulator.actions." + self.device.id.uuidString)
+    }
+
+    private var retroActions: [NativeRetroMenuEntry] {
+        var result: [NativeRetroMenuEntry] = []
+        if device.physical != nil {
+            result.append(.init(text("devices.openScreen"), enabled: { model.canActivateSimulator(device) }) { model.activateSimulator(device) })
+            result.append(.init(text("devices.copyUDID")) { model.copyDeviceUDID(device) })
+        }
+        if stale { result.append(.init(text("simulators.retry"), enabled: { !model.loadingSimulators }) { model.refreshSimulators() }) }
+        if device.isBooted { result.append(.init(text("simulators.shutdown"), enabled: { model.canActivateSimulator(device) }) { model.requestSimulator(.simulatorShutdown, device: device) }) }
+        if presentation.isRecent(device) { result.append(.init(text("simulators.forget")) { model.forgetSimulator(device) }) }
+        if let id = failure?.taskID ?? pending?.id { result.append(.init(text("simulators.showTask")) { model.showHistory(id: id) }) }
+        if device.physical == nil, !device.isBooted, !presentation.isRecent(device), failure?.taskID == nil, pending == nil, !model.simulatorStale {
+            result.append(.init(text("simulators.boot"), enabled: { model.canActivateSimulator(device) }) { model.activateSimulator(device) })
+        }
+        return result
     }
 
 }
@@ -264,7 +303,7 @@ private struct SimulatorRefreshButton: View {
     let model: TaskCoordinator
     var body: some View {
         Button { model.refreshSimulators() } label: { Image(systemName: "arrow.clockwise").frame(width: 26, height: 26) }
-            .buttonStyle(.plain).disabled(model.loadingSimulators).help(text("refresh"))
+            .buttonStyle(.plain).disabled(model.loadingSimulators).mimicHelp(text("refresh"))
             .accessibilityLabel(text("refresh")).accessibilityIdentifier("simulators.refresh")
     }
 }
@@ -281,21 +320,25 @@ struct SimulatorCatalogContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                TextField(text("simulators.search"), text: self.$model.simulatorSearch).textFieldStyle(.roundedBorder)
+                TextField(text("simulators.search"), text: self.$model.simulatorSearch).textFieldStyle(.roundedBorder).mimicInput()
                     .accessibilityIdentifier("simulators.search")
                 SimulatorRefreshButton(model: model)
             }
             Picker(text("simulators.filter"), selection: self.$model.simulatorFilter) {
                 ForEach(SimulatorFilter.allCases, id: \.self) { filter in Text(filter.title).tag(filter) }
-            }.pickerStyle(.segmented).accessibilityIdentifier("simulators.filter")
+            }.pickerStyle(.segmented).mimicSegments(selection: $model.simulatorFilter, options: SimulatorFilter.allCases.map { .init($0.title, $0) }).accessibilityIdentifier("simulators.filter")
             if self.model.simulatorStale {
                 HStack(spacing: 6) {
                     Label(text("simulators.stale"), systemImage: "exclamationmark.circle").foregroundStyle(.orange)
-                        .help(self.model.simulatorError)
+                        .mimicHelp(self.model.simulatorError)
                     Spacer(minLength: 0)
                     Button(text("simulators.retry")) { self.model.refreshSimulators() }.disabled(self.model.loadingSimulators)
                     Button(text("ready.open.settings")) { self.model.openSettings(group: .environment) }
                 }.mimicFont(.caption)
+            }
+            if !self.model.simulatorPanel.physicalError.isEmpty {
+                Label(self.model.simulatorPanel.physicalError, systemImage: "exclamationmark.circle")
+                    .mimicFont(.caption).foregroundStyle(.orange)
             }
             if self.page.devices.isEmpty {
                 if self.model.simulatorPanel.initialLoading {

@@ -14,15 +14,16 @@ export function scrollSpeed(y:number,height:number){if(y<48)return -400*Math.min
 
 /** Window/viewport coordinates keep document scrolling out of the dwell tolerance. */
 export type ResizeZone='left'|'center'|'right';
-export function resizeZone(x:number,width:number):ResizeZone|null{if(width<=0||x<0||x>width)return null;return x<=width*.3?'left':x>=width*.7?'right':'center';}
+export function resizeZone(x:number,width:number):ResizeZone|null{if(width<=0||x<0||x>width)return null;const edge=width*tokens.metrics.dragMiniZonePercent/100;return x<=edge?'left':x>=width-edge?'right':'center';}
 export class DragResize {
- pending:ResizeZone|null=null;progress=0;private anchor={x:0,y:0};private started=0;
- constructor(public size:'full'|'mini',_pointer:{x:number;y:number}){}
+ pending:ResizeZone|null=null;progress=0;private anchor={x:0,y:0};private started=0;private hasMoved=false;private readonly liftPointer:{x:number;y:number};
+ constructor(public size:'full'|'mini',pointer:{x:number;y:number}){this.liftPointer={...pointer};}
  update(zone:ResizeZone|null,pointer:{x:number;y:number},time:number){
+  if(pointer.x!==this.liftPointer.x||pointer.y!==this.liftPointer.y)this.hasMoved=true;
   const requested=zone==='center'?'full':'mini';
-  if(zone===null||requested===this.size){this.pending=null;this.progress=0;return false;}
-  if(zone!==this.pending||Math.hypot(pointer.x-this.anchor.x,pointer.y-this.anchor.y)>50){this.pending=zone;this.anchor={...pointer};this.started=time;this.progress=0;return false;}
-  this.progress=Math.min(1,Math.max(0,(time-this.started)/500));
+  if(!this.hasMoved||zone===null||requested===this.size){this.pending=null;this.progress=0;return false;}
+  if(zone!==this.pending||Math.hypot(pointer.x-this.anchor.x,pointer.y-this.anchor.y)>8){this.pending=zone;this.anchor={...pointer};this.started=time;this.progress=0;return false;}
+  this.progress=Math.min(1,Math.max(0,(time-this.started)/tokens.metrics.dragResizeMS));
   if(this.progress<1)return false;this.size=requested;this.pending=null;this.progress=0;return true;
  }
 }

@@ -19,7 +19,7 @@ struct CILaunchButton: View {
                 .padding(.horizontal, MimicMetrics.medium).frame(height: MimicMetrics.footerRow)
         }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).disabled(self.disabled)
             .background(PanelControlRegion())
-            .help(text(self.helpKey ?? "ci.launch." + self.kind.rawValue))
+            .mimicHelp(text(self.helpKey ?? "ci.launch." + self.kind.rawValue))
             .accessibilityIdentifier("ci.launch." + self.kind.rawValue)
     }
 }
@@ -73,22 +73,22 @@ struct CILaunchActions: View {
     private func form(_ kind: RemoteCIKind) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(text(kind.localizationKey)).mimicFont(.body, weight: .semibold)
-            TextField(text("ci.launch.branch"), text: self.$launch.branch).textFieldStyle(.roundedBorder)
+            TextField(text("ci.launch.branch"), text: self.$launch.branch).textFieldStyle(.roundedBorder).mimicInput()
                 .accessibilityLabel(text("ci.launch.branch")).accessibilityIdentifier("ci.launch.branch")
                 .onChange(of: self.launch.branch) { _, query in self.launch.searchBranches(query) }
             if !self.launch.branches.isEmpty {
                 Menu(text("ci.launch.chooseBranch")) {
                     ForEach(self.launch.branches, id: \.self) { branch in Button(branch) { self.launch.branch = branch } }
-                }
+                }.mimicMenu(text("ci.launch.chooseBranch"), items: launch.branches.map { branch in .init(branch, checked: launch.branch == branch) { launch.branch = branch } })
             }
             if kind == .uiTests {
                 Picker(text("ci.launch.plan"), selection: self.$launch.plan) {
                     ForEach(self.launch.availablePlans, id: \.self) { plan in Text(plan.rawValue).tag(plan) }
-                }
+                }.mimicSelection(text("ci.launch.plan"), selection: self.$launch.plan, options: self.launch.availablePlans.map { .init($0.rawValue, $0) })
             }
             if kind == .qualityGates {
                 ForEach(QualityGate.allCases, id: \.self) { gate in
-                    Toggle(text(gate.localizationKey), isOn: Binding(get: { self.launch.gates[gate] == true }, set: { self.launch.gates[gate] = $0 }))
+                    Toggle(text(gate.localizationKey), isOn: Binding(get: { self.launch.gates[gate] == true }, set: { self.launch.gates[gate] = $0 })).toggleStyle(MimicCheckboxStyle())
                 }
             }
             if kind == .beta, self.launch.reviewedContract != nil {

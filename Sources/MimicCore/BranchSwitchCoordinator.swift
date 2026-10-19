@@ -24,9 +24,18 @@ import Foundation
         if let data = defaults.data(forKey: "branchSwitchOperations"), let saved = try? JSONDecoder().decode([BranchSwitchOperation].self, from: data) {
             self.operations = saved.map { record in
                 var recovered = record
-                if recovered.phase.holdsCheckout { recovered.phase = .needsReview; recovered.delivery = .unknown }
+                if recovered.phase.holdsCheckout {
+                    // Checking performs only Git reads. Its journal precedes all
+                    // worktree/stash/ref mutations, so a stopped preflight has no
+                    // checkout ownership to recover and must never run again.
+                    let readOnly = recovered.phase == .checking && !recovered.didSwitch && !recovered.refUpdated
+                        && recovered.worktree == nil && recovered.stashName == nil && recovered.stashSHA == nil
+                        && recovered.conflict == nil && recovered.ownerThreadID == nil
+                    recovered.phase = readOnly ? .cancelled : .needsReview; recovered.delivery = .unknown
+                }
                 return recovered
             }
+            if let data = try? JSONEncoder().encode(self.operations) { self.defaults.set(data, forKey: "branchSwitchOperations") }
         }
     }
 

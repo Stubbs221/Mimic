@@ -58,6 +58,9 @@
     "body": 13,
     "caption": 11,
     "heading": 13,
-    "dragHoldMS": 350
+    "dragMiniZonePercent": 40,
+    "dragHoldMS": 180,
+    "dragResizeMS": 250,
+    "dragGeometryMS": 160
   }
 }

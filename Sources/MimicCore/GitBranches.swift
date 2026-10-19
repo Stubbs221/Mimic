@@ -26,6 +26,7 @@ public enum BranchError: Error, Equatable {
     case dirty
     case operation
     case missing
+    case timeout
     case command(String)
 }
 
@@ -75,21 +76,16 @@ public struct LocalGitBranchService: GitBranchService {
             .split(separator: "\n").map { LocalBranch(name: String($0)) }
     }
 
-    /// One pipe avoids stdout/stderr deadlocks; only Git's error text is surfaced.
+    /// Own the entire process group: a stalled fsmonitor/helper cannot retain
+    /// the pipe forever after the Git leader exits or ignores termination.
     @discardableResult
     private static func git(_ project: ProjectContext, _ arguments: [String], trim: Bool = true, timeout: TimeInterval = 8) throws -> String {
-        let process = Process(), pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["-C", project.path] + arguments
-        process.standardOutput = pipe; process.standardError = pipe
-        process.environment = ProcessInfo.processInfo.environment.merging(["GIT_TERMINAL_PROMPT": "0"]) { _, new in new }
-        try process.run()
-        let deadline = DispatchWorkItem { if process.isRunning { process.terminate() } }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit(); deadline.cancel()
-        let output = String(decoding: data, as: UTF8.self)
-        guard process.terminationStatus == 0 else { throw BranchError.command(String(output.prefix(2000))) }
+        let environment = ProcessInfo.processInfo.environment.merging(["GIT_TERMINAL_PROMPT": "0"]) { _, new in new }
+        let result = BranchGitProcess.capture("/usr/bin/git", ["-C", project.path] + arguments, directory: project.path,
+                                              environment: environment, timeout: timeout, maximumBytes: 8 * 1024 * 1024)
+        if result.0 == BranchGitProcess.timeoutExitCode { throw BranchError.timeout }
+        let output = result.1
+        guard result.0 == 0 else { throw BranchError.command(String(output.prefix(2000))) }
         return trim ? output.trimmingCharacters(in: .whitespacesAndNewlines) : output
     }
 }

@@ -26,15 +26,18 @@ Mimic собирает привычные сценарии команды в о�
 
 ## Посмотреть и поделиться
 
-Три иллюстрированных документа на русском, в палитре Mimic. **PDF можно посмотреть на GitHub; HTML скачай и открой в браузере** — стили, скриншоты и увеличение изображений работают без интернета.
+Материалы предварительного **кандидата 1.6.0/160**, подготовленные 13 октября. Изображения карточки задачи предшествуют макету 02. Три документа на русском, в палитре Mimic. **PDF можно посмотреть на GitHub; HTML скачай и открой в браузере** — стили, скриншоты и увеличение изображений работают без интернета.
 
 | Документ | PDF | HTML |
 | --- | --- | --- |
-| **Знакомство за 2–3 минуты** — главное о Mimic | [Посмотреть](docs/releases/1.5.0/quick-preview.pdf) | [Скачать](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/quick-preview.html) |
-| **Полный обзор** — возможности, схемы и безопасность | [Посмотреть](docs/releases/1.5.0/overview.pdf) | [Скачать](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/overview.html) |
-| **Инструкция** — установка, настройка и ежедневная работа | [Посмотреть](docs/releases/1.5.0/guide.pdf) | [Скачать](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/guide.html) |
+| **Знакомство за 2–3 минуты** — главное о Mimic | [Посмотреть](docs/releases/1.6.0/quick-preview.pdf) | [Скачать](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.6.0/quick-preview.html) |
+| **Полный обзор** — возможности, схемы и безопасность | [Посмотреть](docs/releases/1.6.0/overview.pdf) | [Скачать](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.6.0/overview.html) |
+| **Инструкция** — установка, настройка и ежедневная работа | [Посмотреть](docs/releases/1.6.0/guide.pdf) | [Скачать](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.6.0/guide.html) |
 
-[**Все HTML одним архивом**](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/Mimic-1.5.0-HTML.zip) — распакуй три файла рядом для переходов между документами. [О материалах](docs/releases/1.5.0/README.md).
+[**Все HTML одним архивом**](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.6.0/Mimic-1.6.0-HTML.zip) — распакуй три файла рядом для переходов между документами. [О материалах](docs/releases/1.6.0/README.md).
+
+
+Публикация 1.6.0 готовится. [Материалы стабильной 1.5.0](docs/releases/1.5.0/README.md) сохранены; ссылка на загрузку приложения ниже по-прежнему ведёт на стабильный выпуск.
 
 ## Меньше переключений. Больше дела.
 
@@ -53,6 +56,10 @@ Mimic собирает привычные сценарии команды в о�
 Экран, tap, swipe, ввод текста, Home и поворот — внутри панели. Источники изображения и ввода выбираются независимо: видео MCP или снимки, непрерывные HID-жесты или Apple MCP. «Авто» использует снимки, если видео недоступно. **Для экрана нужен Xcode 27+** и доступные нативные инструменты Apple. WSS требует отдельного доверенного endpoint. [Как подключить](docs/CodexPlugin.md#экран-симулятора).
 
 <sub>macOS — реальные экраны установленной 1.5.0/150. Codex и Simulator — свежие preview bundled HTML 1.5.0 с безопасными фикстурами; экран устройства демонстрационный. Рабочие данные скрыты непрозрачно. [Об изображениях](docs/images/README.md).</sub>
+
+## Готовится 1.6.0
+
+Контекст Jira/Confluence, карточки задачи Mini и Full по макету 02, документы по запросу и исправление ресурсов установленного приложения. Кандидат 1.6.0/161 проходит подготовку; опубликованная стабильная версия ниже остаётся 1.5.0. [Изменения](CHANGELOG.md).
 
 ## Новое в 1.5.0
 
@@ -85,7 +92,7 @@ Mimic проверяет подписанную ленту раз в час. Р�
 
 ---
 
-[Инструкция](docs/MimicSetup.md) · [Codex](docs/CodexPlugin.md) · [Частые проблемы](docs/Troubleshooting.md) · [Сообщить об ошибке](https://github.com/Stubbs221/Mimic/issues)
+[Инструкция](docs/MimicSetup.md) · [Codex](docs/CodexPlugin.md) · [Jira и Confluence](docs/Atlassian.md) · [Частые проблемы](docs/Troubleshooting.md) · [Сообщить об ошибке](https://github.com/Stubbs221/Mimic/issues)
 
 [Участие в разработке](CONTRIBUTING.md) · [MIT](LICENSE) · [Лицензии компонентов](ThirdPartyNotices/README.md)
 

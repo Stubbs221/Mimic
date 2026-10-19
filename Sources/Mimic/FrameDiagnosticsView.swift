@@ -36,7 +36,7 @@ struct FrameDiagnosticsView: NSViewRepresentable {
     @Environment(\.mimicPanelAppearance) private var appearance
     func makeNSView(context: Context) -> FrameDiagnosticsNativeView { FrameDiagnosticsNativeView() }
     func updateNSView(_ view: FrameDiagnosticsNativeView, context: Context) {
-        view.configure(scale: scale, tiled: appearance == .tileGrid)
+        view.configure(scale: scale, tiled: appearance == .tileGrid, choice: appearance)
         view.updateSampling()
     }
     static func dismantleNSView(_ view: FrameDiagnosticsNativeView, coordinator: ()) { view.stop() }
@@ -54,6 +54,8 @@ struct FrameDiagnosticsView: NSViewRepresentable {
 final class FrameDiagnosticsNativeView: NSView {
     var tiled = false
     var textScale: CGFloat = 1
+    private var choice = PanelAppearance.legacy
+    private let nativeHelp = NativeRetroHelpAnchor()
     private(set) var displayLink: CADisplayLink?
     private(set) var snapshot = FrameDiagnosticsSnapshot()
     private var samples = FrameDiagnosticsSamples()
@@ -66,6 +68,7 @@ final class FrameDiagnosticsNativeView: NSView {
         setAccessibilityIdentifier("footer.performance")
         setAccessibilityLabel(text("diagnostics.accessibility"))
         setAccessibilityHelp(text("diagnostics.help"))
+        nativeHelp.autoresizingMask = [.width, .height]; nativeHelp.message = text("diagnostics.help"); nativeHelp.isHidden = true; addSubview(nativeHelp)
     }
     required init?(coder: NSCoder) { nil }
     isolated deinit { displayLink?.invalidate(); NotificationCenter.default.removeObserver(self) }
@@ -95,9 +98,13 @@ final class FrameDiagnosticsNativeView: NSView {
         updateSampling()
     }
     /// Unrelated owner updates must not schedule extra diagnostic redraws.
-    func configure(scale: CGFloat, tiled: Bool) {
-        guard textScale != scale || self.tiled != tiled else { return }
-        textScale = scale; self.tiled = tiled; needsDisplay = true
+    func configure(scale: CGFloat, tiled: Bool, choice: PanelAppearance? = nil) {
+        let selection = choice ?? (tiled ? .tileGrid : .legacy)
+        guard textScale != scale || self.tiled != tiled || self.choice != selection else { return }
+        textScale = scale; self.tiled = tiled; self.choice = selection; needsDisplay = true
+        NativeRetroHelpCoordinator.shared.cancel(anchor: nativeHelp)
+        nativeHelp.choice = selection; nativeHelp.scale = scale; nativeHelp.frame = bounds; nativeHelp.isHidden = !selection.isRetro
+        updateTrackingAreas()
     }
     func updateSampling() {
         guard let window, window.isVisible, !window.isMiniaturized, !NSApp.isHidden,
@@ -159,7 +166,20 @@ final class FrameDiagnosticsNativeView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         removeAllToolTips()
-        addToolTip(bounds, owner: self, userData: nil)
+        trackingAreas.forEach(removeTrackingArea)
+        if choice.isRetro { addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self)) }
+        else { addToolTip(bounds, owner: self, userData: nil) }
+    }
+    override func mouseMoved(with event: NSEvent) {
+        guard choice.isRetro else { super.mouseMoved(with: event); return }
+        let point = convert(event.locationInWindow, from: nil)
+        let message = view(self, stringForToolTip: 0, point: point, userData: nil)
+        if nativeHelp.message != message { NativeRetroHelpCoordinator.shared.cancel(anchor: nativeHelp); nativeHelp.message = message; NativeRetroHelpCoordinator.shared.pointerEntered(nativeHelp) }
+    }
+    override func layout() {
+        super.layout()
+        // A slightly smaller child area wins over the footer's generic help anchor.
+        nativeHelp.frame = CGRect(x: 0.5, y: 0.5, width: max(0, bounds.width - 1), height: max(0, bounds.height - 1))
     }
     @objc func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData: UnsafeMutableRawPointer?) -> String {
         if graphRect.contains(point) { return graphHelp(at: point) }
@@ -167,11 +187,11 @@ final class FrameDiagnosticsNativeView: NSView {
         return text("diagnostics.help") + String(format: "\np95 %.2f · p99 %.2f %@ · >2×: %d (%.0f s)", report.p95MS, report.p99MS, text("diagnostics.ms"), report.overTwoBudgets, report.elapsedSeconds)
     }
     override func draw(_ dirtyRect: NSRect) {
-        let font = NSFont.monospacedDigitSystemFont(ofSize: 11 * textScale, weight: .regular)
+        let font = choice.isRetro ? NativeRetro.font(choice, scale: textScale) : NSFont.monospacedDigitSystemFont(ofSize: 11 * textScale, weight: .regular)
         let label = fpsLabel as NSString
         label.draw(at: NSPoint(x: 0, y: (bounds.height - label.size(withAttributes: [.font: font]).height) / 2),
-                   withAttributes: [.font: font, .foregroundColor: tiled ? MimicTheme.adaptive("ink") : NSColor.labelColor])
-        let unitFont = NSFont.systemFont(ofSize: 10 * textScale), unit = text("diagnostics.ms") as NSString
+                   withAttributes: [.font: font, .foregroundColor: choice.isRetro ? NativeRetro.color("ink", appearance: choice) : tiled ? MimicTheme.adaptive("ink") : NSColor.labelColor])
+        let unitFont = choice.isRetro ? NativeRetro.font(choice, role: .caption, scale: textScale) : NSFont.systemFont(ofSize: 10 * textScale), unit = text("diagnostics.ms") as NSString
         let size = unit.size(withAttributes: [.font: unitFont])
         unit.draw(at: NSPoint(x: bounds.maxX - size.width, y: (bounds.height - size.height) / 2),
                   withAttributes: [.font: unitFont, .foregroundColor: NSColor.secondaryLabelColor])
@@ -187,7 +207,7 @@ final class FrameDiagnosticsNativeView: NSView {
             if connected { graph.line(to: point) } else { graph.move(to: point) }
             connected = true
         }
-        graph.lineWidth = 1.2; (tiled ? MimicTheme.adaptive("accent") : NSColor.controlAccentColor).setStroke(); graph.stroke()
+        graph.lineWidth = 1.2; (choice.isRetro ? NativeRetro.color("accent", appearance: choice) : tiled ? MimicTheme.adaptive("accent") : NSColor.controlAccentColor).setStroke(); graph.stroke()
     }
 }
 

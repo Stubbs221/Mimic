@@ -38,7 +38,7 @@ struct AIUsageSection: View {
                     Text(self.usage.percentage).monospacedDigit()
                     Image(systemName: self.expanded ? "chevron.up" : "chevron.down").font(.system(size: 9))
                 }.contentShape(Rectangle())
-            }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets(top: MimicMetrics.medium, leading: MimicMetrics.medium, bottom: MimicMetrics.medium, trailing: MimicMetrics.medium))).help(self.usage.statusDescription)
+            }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets(top: MimicMetrics.medium, leading: MimicMetrics.medium, bottom: MimicMetrics.medium, trailing: MimicMetrics.medium))).mimicHelp(self.usage.statusDescription)
                 .accessibilityIdentifier("usage.toggle").accessibilityValue(disclosureValue(self.expanded) + " · " + self.usage.statusDescription)
             }
             MimicCollapse(expanded: self.expanded, source: self.model.navigationSource) {
@@ -114,14 +114,17 @@ private struct AIUsageProviderView: View {
             }
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
+                    if theme.retro { NativeRetroArtwork(appearance: theme.appearance, kind: .progress(remaining.map { $0 / 100 })) }
+                    else {
                     Capsule().fill(Color.primary.opacity(0.12))
                     Capsule().fill(theme.tiled ? theme.usageColor(state, provider: provider) : self.color(state)).frame(width: geometry.size.width * (remaining ?? 0) / 100)
+                    }
                     if let tick = state.tick {
-                        RoundedRectangle(cornerRadius: 1).fill(Color.secondary)
-                            .frame(width: 2, height: 10).offset(x: max(0, min(geometry.size.width - 2, geometry.size.width * tick - 1)))
+                        RoundedRectangle(cornerRadius: theme.retro ? 0 : 1).fill(Color.secondary)
+                            .frame(width: 2, height: theme.retro ? 7 : 10).offset(x: theme.retro ? 3 + max(0, min(geometry.size.width - 8, (geometry.size.width - 6) * tick - 1)) : max(0, min(geometry.size.width - 2, geometry.size.width * tick - 1)))
                     }
                 }
-            }.frame(height: 6).help(self.tooltip(state))
+            }.frame(height: theme.retro ? 13 : 6).mimicHelp(self.tooltip(state))
                 .accessibilityLabel(text("usage.period." + period.rawValue))
                 .accessibilityValue(self.remainingText(remaining) + " · " + self.tooltip(state))
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -151,7 +154,7 @@ private struct AIUsageProviderView: View {
     @ViewBuilder private func warning(_ state: AIUsagePace.State) -> some View {
         switch state {
         case let .closeToLimit(spare, _, _):
-            Text(String(format: text("usage.pace.spare"), spare)).mimicFont(.caption).foregroundStyle(.secondary).help(self.tooltip(state))
+            Text(String(format: text("usage.pace.spare"), spare)).mimicFont(.caption).foregroundStyle(.secondary).mimicHelp(self.tooltip(state))
         case .spent:
             self.flame(text("usage.pace.spent"), state: state)
         case let .runningOut(at, _, _):
@@ -163,7 +166,7 @@ private struct AIUsageProviderView: View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             Image(systemName: "flame.fill").foregroundStyle(.red).accessibilityLabel(text("usage.pace.limit"))
             if let label { Text(label).foregroundStyle(.secondary).multilineTextAlignment(.trailing) }
-        }.mimicFont(.caption).help(self.tooltip(state))
+        }.mimicFont(.caption).mimicHelp(self.tooltip(state))
     }
     private func tooltip(_ state: AIUsagePace.State) -> String {
         switch state {

@@ -1,0 +1,10 @@
+<!-- Created by Василий Маслов on 12.10.2026. Exported from approved R1 Figma component. -->
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Group">
+<path id="Vector" d="M0 0H14V14H0V0Z" fill="black"/>
+<path id="Vector_2" d="M1 1H13V3H1V1Z" fill="#C0C0C0"/>
+<path id="Vector_3" d="M1 4H13V13H1V4Z" fill="white"/>
+<path id="Vector_4" d="M2 5H4V7H2V5ZM2 9H4V11H2V9Z" fill="#008000"/>
+<path id="Vector_5" d="M5 5H11V6H5V5ZM5 9H11V10H5V9Z" fill="#808080"/>
+</g>
+</svg>

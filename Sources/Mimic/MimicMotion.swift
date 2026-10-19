@@ -6,6 +6,7 @@
 import AppKit
 import Observation
 import SwiftUI
+import MimicCore
 
 /// Input origin belongs to a navigation request, not to execution state or saved preferences.
 enum MimicMotionSource: Equatable, Sendable {
@@ -53,16 +54,19 @@ final class MimicMotionSettings {
 
 /// All durations are seconds. Keyboard paths have no animation in either accessibility mode.
 struct MimicMotionPolicy: Equatable {
-    enum Kind { case disclosure, status, enter, exit, geometry, progress, feedback }
+    enum Kind { case disclosure, status, enter, exit, geometry, dragGeometry, progress, feedback }
     let source: MimicMotionSource
     let reduceMotion: Bool
     var multiplier: Double = 1
+    /// R1 changes artwork immediately; drag recognition still uses shared production timings.
+    var retro = false
 
     func duration(_ kind: Kind) -> Double {
-        guard self.source != .keyboard else { return 0 }
-        if self.reduceMotion { return kind == .geometry || kind == .progress ? 0 : 0.125 * self.multiplier }
+        guard !retro, self.source != .keyboard else { return 0 }
+        if self.reduceMotion { return kind == .geometry || kind == .dragGeometry || kind == .progress ? 0 : 0.125 * self.multiplier }
         let duration: Double = switch kind {
         case .disclosure, .geometry, .progress: 0.2
+        case .dragGeometry: PanelDesignTokens.shared.metrics["dragGeometryMS"]! / 1000
         case .status, .enter: 0.15
         case .exit, .feedback: 0.125
         }
@@ -73,11 +77,11 @@ struct MimicMotionPolicy: Equatable {
         let duration = self.duration(kind)
         guard duration > 0 else { return nil }
         if kind == .progress { return .linear(duration: duration) }
-        if kind == .geometry { return .timingCurve(0.77, 0, 0.175, 1, duration: duration) }
+        if kind == .geometry || kind == .dragGeometry { return .timingCurve(0.77, 0, 0.175, 1, duration: duration) }
         return .timingCurve(0.23, 1, 0.32, 1, duration: duration)
     }
 
-    var moves: Bool { !self.reduceMotion && self.source != .keyboard }
+    var moves: Bool { !retro && !self.reduceMotion && self.source != .keyboard }
 
     /// The AppKit driver evaluates the same cubic Bézier used by SwiftUI.
     static func fraction(_ elapsed: Double, geometry: Bool = false) -> Double {
@@ -108,10 +112,11 @@ extension EnvironmentValues {
 }
 
 struct MimicMotion: DynamicProperty {
+    @Environment(\.mimicPanelAppearance) private var appearance
     private var accessibility = MimicAccessibility()
     @Environment(\.mimicMotionSettings) private var settings
     @MainActor func policy(_ source: MimicMotionSource = .automatic) -> MimicMotionPolicy {
-        MimicMotionPolicy(source: source, reduceMotion: self.accessibility.reduceMotion, multiplier: self.settings?.multiplier ?? 1)
+        MimicMotionPolicy(source: source, reduceMotion: self.accessibility.reduceMotion, multiplier: self.settings?.multiplier ?? 1, retro: appearance.isRetro)
     }
 }
 

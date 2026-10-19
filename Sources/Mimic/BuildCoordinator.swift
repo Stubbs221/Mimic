@@ -662,8 +662,11 @@ import os
         guard canInput(id), let worker = workers[id] else { throw BuildError.notFound }
         try await worker.makePrivate()
         guard canInput(id) else { throw BuildError.stopped }
-        update(id) { $0.hasPrivateInput = true; $0.needsInput = false }; persist()
-        session?.send(bytes)
+        update(id) { $0.hasPrivateInput = true }
+        let accepted = session?.send(bytes) == true
+        if accepted { update(id) { $0.needsInput = false } }
+        persist()
+        guard accepted else { throw BuildError.capacity }
     }
     func resize(_ id: UUID, columns: Int, rows: Int) { if canInput(id) { session?.resize(columns: columns, rows: rows) } }
 

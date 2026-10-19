@@ -59,15 +59,15 @@ export class PrivateTerminal {
  private aad(direction:string,sequence:number){const c=this.channel!;return utf8.encode(`${c.channelID}|${c.taskID}|${c.threadID}|${direction}|${sequence}`);}
  private enqueue(payload:Record<string,unknown>){const channel=this.channel;if(!channel||!this.canInput||!this.visible||this.status!=='running'||('input' in payload&&this.selection&&!this.selection.selected))return;this.inputQueue=this.inputQueue.then(()=>this.channel===channel?this.send(payload):undefined).catch(this.onError);}
  /** Bootstrap opts in to its own palette; history terminals retain their default styling. */
- setBootstrapPresentation(fontSize:number,dark:boolean,increasedContrast=false,appearance:'tileGrid'|'legacy'='legacy'){
-  const tiled=appearance==='tileGrid',palette=tokens.palettes[dark?'dark':'light'];if(tiled)dark=true;
+ setBootstrapPresentation(fontSize:number,dark:boolean,increasedContrast=false,appearance:'tileGrid'|'legacy'|'windows95'|'windowsXP'='legacy'){
+  const retro=appearance==='windows95'||appearance==='windowsXP',tiled=appearance==='tileGrid',palette=tokens.palettes[dark?'dark':'light'];if(tiled||retro)dark=true;
   const signature=`${fontSize}-${dark}-${increasedContrast}-${appearance}-${palette.terminal}`;if(signature===this.presentation)return;this.presentation=signature;
   const buffer=this.terminal.buffer.active,row=buffer.viewportY,following=row===buffer.baseY;
   const foreground=increasedContrast?(dark?'#ffffff':'#000000'):(dark?'#DCE3ED':'#263445');
   const ansi=dark?['#202833','#F08D91','#9EC89B','#E3C182','#91B5E0','#C9A4DA','#8ECACE','#DCE3ED','#A6B3C5','#FFADB0','#B8DCAF','#F3D6A0','#B1CEF2','#DABCE8','#B1E1E3','#FFFFFF']
    :['#263445','#A42D36','#386B3C','#795717','#355F96','#79438D','#286970','#546274','#5C6879','#B2343F','#356C39','#7A5610','#315F9B','#814593','#216B72','#263445'];
   const keys=['black','red','green','yellow','blue','magenta','cyan','white','brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightMagenta','brightCyan','brightWhite'];
-  this.terminal.options.fontSize=fontSize;this.terminal.options.theme={background:tiled?palette.terminal:dark?'#202833':'#F0F3F7',foreground:tiled?palette.terminalText:foreground,cursor:tiled?palette.terminalText:foreground,selectionBackground:dark?'#3D4C63':'#CCD8E8',...Object.fromEntries(keys.map((key,i)=>[key,ansi[i]]))};
+  this.terminal.options.fontSize=fontSize;this.terminal.options.theme={background:retro?'#000000':tiled?palette.terminal:dark?'#202833':'#F0F3F7',foreground:retro?'#c0c0c0':tiled?palette.terminalText:foreground,cursor:retro?'#c0c0c0':tiled?palette.terminalText:foreground,selectionBackground:dark?'#3D4C63':'#CCD8E8',...Object.fromEntries(keys.map((key,i)=>[key,ansi[i]]))};
   this.host.dataset.fontSize=String(fontSize);
   this.refit(row,following);
  }

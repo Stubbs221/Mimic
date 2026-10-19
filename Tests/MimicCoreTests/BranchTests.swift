@@ -32,6 +32,18 @@ private struct GitFixture {
 }
 
 struct BranchTests {
+    @Test func stalledFsmonitorCannotKeepPickerInspectionWaiting() async throws {
+        let fixture = try GitFixture(); defer { fixture.remove() }
+        let hook = fixture.root.appendingPathComponent(".git/stalled-fsmonitor")
+        try Data("#!/bin/sh\ntrap '' TERM\nsleep 60 &\nwait\n".utf8).write(to: hook)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: hook.path)
+        try fixture.git(["config", "core.fsmonitor", hook.path])
+        let start = ContinuousClock.now
+        await #expect(throws: BranchError.timeout) { try await LocalGitBranchService().inspect(fixture.project) }
+        #expect(ContinuousClock.now - start < .seconds(12))
+        try fixture.git(["config", "--unset", "core.fsmonitor"])
+        #expect(try await !LocalGitBranchService().inspect(fixture.project).hasOperation)
+    }
     @Test func staleRebaseHeadDoesNotBlockCompletedOperation() async throws {
         let fixture = try GitFixture(); defer { fixture.remove() }
         try Data((fixture.project.commit + "\n").utf8).write(to: fixture.root.appendingPathComponent(".git/REBASE_HEAD"))

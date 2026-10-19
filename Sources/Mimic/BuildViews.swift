@@ -43,8 +43,9 @@ struct XcodeConnectionFields: View {
             if connection.connecting { ProgressView().controlSize(.small) }
             if !connection.message.isEmpty { Text(connection.message).foregroundStyle(.orange) }
             Picker(text("build.workspace"), selection: $builds.draft.workspaceTab) { Text(text("build.choose")).tag(""); ForEach(connection.windows.keys.sorted(), id: \.self) { tab in Text(tab + " · " + (connection.windows[tab] ?? "")).tag(tab) } }
+                .mimicSelection(text("build.workspace"), selection: $builds.draft.workspaceTab, options: [.init(text("build.choose"), "")] + connection.windows.keys.sorted().map { .init($0 + " · " + (connection.windows[$0] ?? ""), $0) })
             Text(text("build.xcode.settings")).font(.system(size: 11)).foregroundStyle(.secondary)
-            Toggle(text("build.xcode.simulator.confirm"), isOn: $builds.xcodeSimulatorConfirmed).font(.system(size: 11)).accessibilityIdentifier("build.xcode.simulator.confirm")
+            Toggle(text("build.xcode.simulator.confirm"), isOn: $builds.xcodeSimulatorConfirmed).toggleStyle(MimicCheckboxStyle()).font(.system(size: 11)).accessibilityIdentifier("build.xcode.simulator.confirm")
             if !connection.version.isEmpty { Text("Xcode MCP · " + connection.version).font(.system(size: 11)).foregroundStyle(.secondary) }
         }
     }
@@ -90,14 +91,14 @@ struct BuildResultView: View {
             if let path = record.resultBundlePath { Button(text("build.testResult")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } }
             if let path = record.resultSummaryPath { Button(text("build.testResult")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } }
             ViewThatFits { HStack { actions }; VStack(alignment: .leading) { actions } }
-            if !diagnostic.isEmpty { TextEditor(text: $diagnostic).frame(height: 180).font(.system(size: 11, design: .monospaced)).accessibilityLabel(text("build.diagnostic.preview")); Button(text("build.diagnostic.copy")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(diagnostic, forType: .string) } }
+            if !diagnostic.isEmpty { TextEditor(text: $diagnostic).frame(height: 180).font(.system(size: 11, design: .monospaced)).mimicInput().accessibilityLabel(text("build.diagnostic.preview")); Button(text("build.diagnostic.copy")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(diagnostic, forType: .string) } }
         }.font(.system(size: 12)).accessibilityIdentifier("build.result")
     }
     @ViewBuilder private var actions: some View {
         if record.canCancel { Button(text("build.stop")) { builds.cancel(record.id) } }
         if record.parameters.backend == .xcodeMCP, record.status == .running { Text(text("build.stop.xcode")).font(.system(size: 11)).foregroundStyle(.secondary) }
         if record.diagnosticAvailable { Button(text("build.diagnostic.prepare")) { diagnostic = (try? builds.diagnostic(record.id)) ?? "" } }
-        if record.status == .unknown, record.queueReleased != true { Button(text("build.unknown.acknowledge")) { builds.acknowledgeUnknown(record.id) }.help(text("build.unknown.help")) }
+        if record.status == .unknown, record.queueReleased != true { Button(text("build.unknown.acknowledge")) { builds.acknowledgeUnknown(record.id) }.mimicHelp(text("build.unknown.help")) }
     }
 }
 

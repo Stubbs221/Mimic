@@ -12,6 +12,7 @@ import Observation
     private(set) var presentation = SimulatorPresentation(devices: [], usage: SimulatorUsage(), developer: "")
     var loading = false
     var error = ""
+    var physicalError = ""
     var search = "" { didSet { if oldValue != search { pageIndex = 0 } } }
     var filter = SimulatorFilter.all { didSet { if oldValue != filter { pageIndex = 0 } } }
     var pageIndex = 0
@@ -42,7 +43,9 @@ struct SimulatorPresentation {
 
     init(devices: [SimulatorDevice], usage: SimulatorUsage, developer: String) {
         self.devices = devices; self.usage = usage; self.developer = developer
-        self.ordered = usage.recent(devices, developer: developer, limit: devices.count)
+        let recent = usage.recent(devices, developer: developer, limit: devices.count)
+        let connected = recent.filter { $0.physical != nil && $0.isActive }
+        self.ordered = connected + recent.filter { $0.physical == nil || !$0.isActive }
         struct Identity: Hashable { let name: String; let runtime: String }
         let groups = Dictionary(grouping: self.ordered) { Identity(name: $0.name, runtime: $0.runtime) }
         var identifiers: [UUID: String] = [:]
@@ -60,21 +63,31 @@ struct SimulatorPresentation {
     }
     func isRecent(_ device: SimulatorDevice) -> Bool { self.usage.dates[self.developer]?[device.id] != nil }
     func compact(full: Bool) -> [SimulatorDevice] {
-        Array(self.ordered.filter { $0.isBooted || self.isRecent($0) }.prefix(full ? 4 : 2))
+        let connected = self.ordered.contains { $0.physical != nil && $0.isActive }
+        return Array(self.ordered.filter { $0.isActive || self.isRecent($0) }.prefix(connected ? (full ? 2 : 1) : (full ? 4 : 2)))
     }
     func catalog(filter: SimulatorFilter, search: String) -> [SimulatorDevice] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return self.ordered.filter { device in
-            (filter == .all || (filter == .booted ? device.isBooted : self.isRecent(device))) &&
-            (query.isEmpty || (device.name + " " + device.runtime + " " + device.state + " " + device.id.uuidString + " " + text(device.isBooted ? "simulators.booted" : "simulators.off")).localizedCaseInsensitiveContains(query))
+            (filter == .all || (filter == .booted ? device.isActive : self.isRecent(device))) &&
+            (query.isEmpty || (device.name + " " + device.runtime + " " + device.state + " " + device.id.uuidString + " " + (device.physical?.udid ?? "") + " " + Self.status(device)).localizedCaseInsensitiveContains(query))
         }
+    }
+    static func status(_ device: SimulatorDevice, compact: Bool = false) -> String {
+        guard let physical = device.physical else { return text(device.isBooted ? "simulators.booted" : "simulators.off") }
+        if device.isActive {
+            if physical.transport == "wired" { return text(compact ? "devices.usb" : "devices.connected.usb") }
+            if physical.transport == "localNetwork" || physical.transport == "network" { return text(compact ? "devices.network" : "devices.connected.network") }
+            return text("devices.connected")
+        }
+        return text(device.state == "connecting" ? "devices.connecting" : "devices.disconnected")
     }
     func shortID(_ device: SimulatorDevice) -> String? {
         self.shortIDs[device.id]
     }
     static func symbol(_ device: SimulatorDevice) -> String {
         if device.runtime.hasPrefix("tvOS") { return "appletv" }
-        return device.name.localizedCaseInsensitiveContains("ipad") ? "ipad" : "iphone"
+        return device.runtime.hasPrefix("iPadOS") || device.name.localizedCaseInsensitiveContains("ipad") ? "ipad" : "iphone"
     }
 }
 
@@ -95,6 +108,7 @@ struct SimulatorCatalogPage {
 struct SimulatorCatalogSnapshot: Sendable {
     let devices: [SimulatorDevice]
     let developer: String
+    var physicalError: String = ""
 }
 
 /// Injectable system boundaries keep catalogue, admission and window tests off live simulators.
@@ -106,21 +120,35 @@ struct SimulatorPanelServices {
             var environment = EnvironmentInspector.environment(project: project); environment["DEVELOPER_DIR"] = developer
             let result = EnvironmentInspector.capture("/usr/bin/xcrun", ["simctl", "list", "devices", "available", "--json"], environment: environment)
             guard result.0 == 0 else { throw MimicError.invalidSimulator }
-            return SimulatorCatalogSnapshot(devices: try SimulatorCatalog.parse(Data(result.1.utf8)), developer: developer)
+            let simulators = try SimulatorCatalog.parse(Data(result.1.utf8))
+            do {
+                let physical = try PhysicalDeviceCatalog.discover(developer: developer, environment: environment)
+                return SimulatorCatalogSnapshot(devices: simulators + physical, developer: developer)
+            } catch {
+                return SimulatorCatalogSnapshot(devices: simulators, developer: developer, physicalError: text("devices.discovery.error"))
+            }
         }.value
     }
     var inspect: @Sendable (ProjectContext) async throws -> ProjectContext = { project in
         try await Task.detached { try EnvironmentInspector.project(path: project.path, developerDirectory: project.developerDirectory, appleTarget: project.appleTarget) }.value
     }
     var open: @MainActor (SimulatorDevice, String) async throws -> Void = { device, developer in
-        let url = try SimulatorWindowTarget.application(developer: developer)
-        let configuration = NSWorkspace.OpenConfiguration(); configuration.arguments = ["-CurrentDeviceUDID", device.id.uuidString]
+        let url = try SimulatorWindowTarget.application(developer: developer, physical: device.physical != nil)
+        let configuration = NSWorkspace.OpenConfiguration()
+        if device.physical == nil { configuration.arguments = ["-CurrentDeviceUDID", device.id.uuidString] }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
             let completion: @Sendable (NSRunningApplication?, (any Error)?) -> Void = { _, error in
                 if let error { continuation.resume(throwing: error) } else { continuation.resume() }
             }
             if url.lastPathComponent == "DeviceHub.app" {
-                NSWorkspace.shared.open([SimulatorWindowTarget.deviceURL(device.id)], withApplicationAt: url, configuration: configuration, completionHandler: completion)
+                let target: URL
+                if let physical = device.physical {
+                    guard device.isActive, let validated = PhysicalDeviceCatalog.viewingURL(physical.screenViewingURL?.absoluteString, deviceID: device.id) else {
+                        continuation.resume(throwing: MimicError.invalidSimulator); return
+                    }
+                    target = validated
+                } else { target = SimulatorWindowTarget.deviceURL(device.id) }
+                NSWorkspace.shared.open([target], withApplicationAt: url, configuration: configuration, completionHandler: completion)
             } else {
                 NSWorkspace.shared.openApplication(at: url, configuration: configuration, completionHandler: completion)
             }
@@ -130,10 +158,10 @@ struct SimulatorPanelServices {
 
 /// Xcode 27 moved simulator windows into DeviceHub. Resolve only inside the selected Xcode.
 enum SimulatorWindowTarget {
-    static func application(developer: String, exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) throws -> URL {
+    static func application(developer: String, physical: Bool = false, exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) throws -> URL {
         let root = URL(fileURLWithPath: developer)
-        let candidates = [root.appendingPathComponent("Applications/Simulator.app"),
-                          root.deletingLastPathComponent().appendingPathComponent("Applications/DeviceHub.app")]
+        let hub = root.deletingLastPathComponent().appendingPathComponent("Applications/DeviceHub.app")
+        let candidates = physical ? [hub] : [root.appendingPathComponent("Applications/Simulator.app"), hub]
         guard let target = candidates.first(where: { exists($0.path) }) else { throw MimicError.invalidSimulator }
         return target
     }

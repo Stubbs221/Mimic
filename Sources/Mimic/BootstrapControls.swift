@@ -8,7 +8,10 @@ struct BootstrapControlStyle: PrimitiveButtonStyle {
     var selected = false
     var fillsWidth = false
     func makeBody(configuration: Configuration) -> some View {
-        if theme.tiled {
+        if theme.retro {
+            Button(role: configuration.role, action: configuration.trigger) { configuration.label.frame(maxWidth: fillsWidth ? .infinity : nil) }
+                .buttonStyle(NativeRetroPrimitiveButtonStyle(selected: selected))
+        } else if theme.tiled {
             Button(role: configuration.role, action: configuration.trigger) { configuration.label.frame(maxWidth: fillsWidth ? .infinity : nil) }
                 .buttonStyle(TileGridButtonStyle(primary: primary || fillsWidth, selected: selected, height: fillsWidth ? 28 : 32))
         } else if self.fillsWidth {

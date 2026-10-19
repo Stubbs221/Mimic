@@ -87,10 +87,10 @@ struct MimicMotionTests {
     func policyCoversKeyboardReducedMotionAndDebugSpeed(_ source: MimicMotionSource) {
         for reduced in [false, true] {
             let policy = MimicMotionPolicy(source: source, reduceMotion: reduced)
-            let kinds: [MimicMotionPolicy.Kind] = [.disclosure, .status, .enter, .exit, .geometry, .progress, .feedback]
+            let kinds: [MimicMotionPolicy.Kind] = [.disclosure, .status, .enter, .exit, .geometry, .dragGeometry, .progress, .feedback]
             for kind in kinds {
                 if source == .keyboard { #expect(policy.duration(kind) == 0); #expect(policy.animation(kind) == nil) }
-                else if reduced { #expect(policy.duration(kind) == (kind == .geometry || kind == .progress ? 0 : 0.125)) }
+                else if reduced { #expect(policy.duration(kind) == (kind == .geometry || kind == .dragGeometry || kind == .progress ? 0 : 0.125)) }
                 else { #expect(policy.duration(kind) <= 0.2 && policy.duration(kind) >= 0.125) }
                 var slow = policy; slow.multiplier = 5
                 #expect(slow.duration(kind) == policy.duration(kind) * 5)

@@ -3,6 +3,7 @@
 //  MimicCore
 //
 //  Created by Василий Маслов on 05.10.2026.
+import Darwin
 import Foundation
 
 /// Inference activity uses event timestamps, never file modification dates or chat titles.
@@ -70,23 +71,19 @@ public actor AIUsageActivityScanner {
                 if UInt64(size) < cursor.offset || (UInt64(size) == cursor.offset && cursor.modified != info.contentModificationDate) { cursor = Cursor() }
                 do {
                     try handle.seek(toOffset: cursor.offset)
+                    let modified = info.contentModificationDate
                     repeat {
                         if Task.isCancelled { return self.latest }
-                        let chunk = try handle.read(upToCount: 1024 * 1024) ?? Data()
-                        if chunk.isEmpty { break }
-                        cursor.offset += UInt64(chunk.count); cursor.modified = info.contentModificationDate
-                        // A record over 1 MiB is discarded through its newline, even across chunks.
-                        for fragment in chunk.split(separator: 10, omittingEmptySubsequences: false).enumerated() {
-                            if fragment.offset > 0 {
-                                if !cursor.skippingOversized { self.parse(cursor.pending, provider: provider, cursor: &cursor, since: since, now: now) }
-                                cursor.pending.removeAll(keepingCapacity: true); cursor.skippingOversized = false
-                            }
-                            if !cursor.skippingOversized {
-                                if cursor.pending.count + fragment.element.count > 1024 * 1024 {
-                                    cursor.pending.removeAll(keepingCapacity: true); cursor.skippingOversized = true
-                                } else { cursor.pending.append(contentsOf: fragment.element) }
-                            }
+                        // FileHandle reads and Foundation parsing autorelease temporary objects.
+                        // Drain them per chunk rather than after the entire synchronous index pass.
+                        let consumed = try autoreleasepool {
+                            let chunk = try handle.read(upToCount: 1024 * 1024) ?? Data()
+                            if chunk.isEmpty { return false }
+                            cursor.offset += UInt64(chunk.count); cursor.modified = modified
+                            self.consume(chunk, provider: provider, cursor: &cursor, since: since, now: now)
+                            return true
                         }
+                        if !consumed { break }
                     } while cursor.offset < UInt64(size)
                     self.cursors[file] = cursor
                 } catch { continue }
@@ -96,10 +93,34 @@ public actor AIUsageActivityScanner {
         return self.latest
     }
 
+    /// Search contiguous chunk storage with libc rather than Foundation's per-byte collection access.
+    /// Partial lines remain owned by the cursor; oversized records are skipped through their newline.
+    private func consume(_ chunk: Data, provider: AIProvider, cursor: inout Cursor, since: Date, now: Date) {
+        chunk.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            guard let base = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                let newline = memchr(base.advanced(by: offset), 10, bytes.count - offset)
+                let end = newline.map { base.distance(to: UnsafeRawPointer($0)) } ?? bytes.count
+                if !cursor.skippingOversized {
+                    if cursor.pending.count + end - offset > 1024 * 1024 {
+                        cursor.pending.removeAll(keepingCapacity: true); cursor.skippingOversized = true
+                    } else {
+                        cursor.pending.append(base.advanced(by: offset).assumingMemoryBound(to: UInt8.self), count: end - offset)
+                    }
+                }
+                guard newline != nil else { break }
+                if !cursor.skippingOversized { self.parse(cursor.pending, provider: provider, cursor: &cursor, since: since, now: now) }
+                cursor.pending.removeAll(keepingCapacity: true); cursor.skippingOversized = false
+                offset = end + 1
+            }
+        }
+    }
+
     private func parse(_ line: Data, provider: AIProvider, cursor: inout Cursor, since: Date, now: Date) {
         guard !line.isEmpty else { return }
         if provider == .codex {
-            let events = cursor.codex.parse(line)
+            let events = cursor.codex.parseLine(line)
             cursor.codexEvents.append(contentsOf: events.filter { $0.timestamp >= since && $0.timestamp <= now })
             if let date = events.last(where: { $0.timestamp <= now })?.timestamp {
                 self.record(.codex, at: date); return

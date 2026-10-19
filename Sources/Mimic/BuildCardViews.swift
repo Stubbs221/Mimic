@@ -24,7 +24,7 @@ struct BuildCardView: View {
                     Text(text("build.tab.build")).tag("build")
                     Text(text("build.tab.run")).tag("run")
                     Text(text("build.tab.tests")).tag("tests")
-                }.pickerStyle(.segmented).accessibilityIdentifier("build.tabs")
+                }.pickerStyle(.segmented).mimicSegments(selection: $action, options: [.init(text("build.tab.build"), "build"), .init(text("build.tab.run"), "run"), .init(text("build.tab.tests"), "tests")]).accessibilityIdentifier("build.tabs")
                 Text(text("build.purpose")).mimicFont(.caption).foregroundStyle(.secondary)
                 settings
                 if action == "tests" { testPicker }
@@ -39,11 +39,11 @@ struct BuildCardView: View {
                     Button(text("build.chooseProduct")) { popup = "products" }.buttonStyle(MimicAuxiliaryButtonStyle())
                 }
                 if extended, !record.status.isPending { Button(text("build.output")) { builds.showResult(record.id) }.buttonStyle(MimicAuxiliaryButtonStyle()) }
-            } else if !extended { Text(text(model.project == nil ? "build.project.required" : "build.purpose.compact")).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(1).help(text("build.purpose")) }
-            if !builds.message.isEmpty { Text(builds.message).mimicFont(.caption).foregroundStyle(.orange).lineLimit(extended ? nil : 1).help(builds.message) }
+            } else if !extended { Text(text(model.project == nil ? "build.project.required" : "build.purpose.compact")).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(1).mimicHelp(text("build.purpose")) }
+            if !builds.message.isEmpty { Text(builds.message).mimicFont(.caption).foregroundStyle(.orange).lineLimit(extended ? nil : 1).mimicHelp(builds.message) }
         }.frame(maxWidth: .infinity, maxHeight: extended ? nil : .infinity, alignment: .topLeading)
             .background(PanelControlRegion())
-            .popover(isPresented: presented, arrowEdge: .bottom) {
+            .mimicPopover(isPresented: presented) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack { Text(text(popup == "tests" ? "build.tab.tests" : popup == "products" ? "build.chooseProduct" : "build.parameters.title")).mimicFont(.heading); Spacer(); Button(text("close")) { popup = "" }.buttonStyle(.plain) }
                     if popup == "tests" { settings; testPicker }
@@ -78,7 +78,7 @@ struct BuildCardView: View {
         } else {
             Button { popup = "settings" } label: {
                 Text(parametersSummary).mimicFont(.caption).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
-            }.buttonStyle(.plain).help(parametersSummary).accessibilityIdentifier("build.parameters")
+            }.buttonStyle(.plain).mimicHelp(parametersSummary).accessibilityIdentifier("build.parameters")
             compactActions
         }
     }
@@ -103,8 +103,10 @@ struct BuildCardView: View {
     private var selections: some View {
         VStack(alignment: .leading, spacing: extended || !full ? 8 : 4) {
             Picker(text("build.scheme"), selection: parameter(\.scheme)) { Text(text("build.chooseScheme")).tag(""); ForEach(builds.catalogue.schemes, id: \.self) { Text($0).tag($0) } }
+                .mimicSelection(text("build.scheme"), selection: parameter(\.scheme), options: [.init(text("build.chooseScheme"), "")] + builds.catalogue.schemes.map { .init($0, $0) })
                 .accessibilityIdentifier("build.scheme")
             Picker(text("build.destination"), selection: parameter(\.destinationID)) { Text(text("build.chooseDevice")).tag(""); ForEach(builds.catalogue.destinations) { Text($0.name).tag($0.id) } }
+                .mimicSelection(text("build.destination"), selection: parameter(\.destinationID), options: [.init(text("build.chooseDevice"), "")] + builds.catalogue.destinations.map { .init($0.name, $0.id) })
                 .accessibilityIdentifier("build.destination")
         }.disabled(builds.panelBusy || builds.loading)
     }
@@ -116,9 +118,12 @@ struct BuildCardView: View {
             Button(text("build.refreshSettings")) { Task { if let project = model.project { await builds.refreshCatalogue(project: project) } } }.disabled(builds.loading || builds.panelBusy)
             DisclosureGroup(text("build.moreSettings")) {
                 Picker(text("build.backend"), selection: $builds.draft.backend) { ForEach(BuildBackend.allCases, id: \.self) { Text(text("build.backend." + $0.rawValue)).tag($0) } }
+                    .mimicSelection(text("build.backend"), selection: $builds.draft.backend, options: BuildBackend.allCases.map { .init(text("build.backend." + $0.rawValue), $0) })
                 Picker(text("build.configuration"), selection: parameter(\.configuration)) { ForEach(builds.catalogue.configurations, id: \.self) { Text($0).tag($0) } }
+                    .mimicSelection(text("build.configuration"), selection: parameter(\.configuration), options: builds.catalogue.configurations.map { .init($0, $0) })
                 if builds.draft.backend == .xcodeMCP { XcodeBuildConfiguration(builds: builds, project: model.project); Text(text("build.run.cliRequired")).mimicFont(.caption) }
-                if !builds.catalogue.testPlans.isEmpty { Picker(text("build.testPlan"), selection: parameter(\.testPlan)) { Text(text("build.choose")).tag(""); ForEach(builds.catalogue.testPlans, id: \.self) { Text($0).tag($0) } } }
+                if !builds.catalogue.testPlans.isEmpty { Picker(text("build.testPlan"), selection: parameter(\.testPlan)) { Text(text("build.choose")).tag(""); ForEach(builds.catalogue.testPlans, id: \.self) { Text($0).tag($0) } }
+                    .mimicSelection(text("build.testPlan"), selection: parameter(\.testPlan), options: [.init(text("build.choose"), "")] + builds.catalogue.testPlans.map { .init($0, $0) }) }
             }.disabled(builds.panelBusy)
         }
     }
@@ -128,7 +133,7 @@ struct BuildCardView: View {
             Button(text("build.catalogue.load")) { builds.perform(intent: .catalogue) }.disabled(builds.panelBusy || !builds.testsCompatible || builds.draft.backend != .cli).accessibilityIdentifier("build.catalogue.load")
             if builds.catalogue.testPlans.count > 1, builds.draft.testPlan.isEmpty { Text(text("build.tests.choosePlan")).mimicFont(.caption).foregroundStyle(.secondary) }
             if builds.draft.backend != .cli { Text(text("build.run.cliRequired")).mimicFont(.caption).foregroundStyle(.secondary) }
-            TextField(text("build.tests.search"), text: $search).textFieldStyle(.roundedBorder).accessibilityIdentifier("build.tests.search")
+            TextField(text("build.tests.search"), text: $search).textFieldStyle(.roundedBorder).mimicInput().accessibilityIdentifier("build.tests.search")
             if let catalogue = builds.availableTests {
                 let filtered = catalogue.tests.filter { search.isEmpty || $0.id.localizedCaseInsensitiveContains(search) }
                 ScrollView {
@@ -139,7 +144,7 @@ struct BuildCardView: View {
                                 Toggle(test.name, isOn: Binding(get: { builds.draft.testIdentifiers.contains(test.id) }, set: { selected in
                                     if selected { if builds.draft.testIdentifiers.count < 100 { builds.draft.testIdentifiers.append(test.id) } }
                                     else { builds.draft.testIdentifiers.removeAll { $0 == test.id } }
-                                })).toggleStyle(.checkbox).help(test.id).disabled(builds.panelBusy)
+                                })).toggleStyle(MimicCheckboxStyle()).mimicHelp(test.id).disabled(builds.panelBusy)
                             }
                         }
                         if filtered.isEmpty { Text(text(catalogue.tests.isEmpty ? "build.tests.empty" : "build.tests.noMatches")).foregroundStyle(.secondary) }
@@ -148,7 +153,7 @@ struct BuildCardView: View {
             } else { Text(text("build.tests.notLoaded")).mimicFont(.caption).foregroundStyle(.secondary) }
             Text(text("build.tests.selected") + ": \(builds.draft.testIdentifiers.count) / 100").mimicFont(.caption)
             DisclosureGroup(text("build.tests.manual")) {
-                TextEditor(text: Binding(get: { builds.draft.testIdentifiers.joined(separator: "\n") }, set: { builds.draft.testIdentifiers = Array(Set($0.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })).sorted() })).frame(height: 70)
+                TextEditor(text: Binding(get: { builds.draft.testIdentifiers.joined(separator: "\n") }, set: { builds.draft.testIdentifiers = Array(Set($0.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })).sorted() })).frame(height: 70).mimicInput()
             }.disabled(builds.panelBusy)
             Button(text("build.action.testsSelected")) { builds.perform(.test); popup = "" }
                 .buttonStyle(MimicAuxiliaryButtonStyle(primary: true)).disabled(builds.panelBusy || !builds.testsCompatible || (try? builds.draftFor(.test).validate()) == nil)
@@ -160,7 +165,7 @@ struct BuildCardView: View {
             Text(text("build.product.explanation")).mimicFont(.caption)
             if let record = builds.panelActivity {
                 ForEach(record.products ?? []) { product in
-                    Button(product.name) { try? builds.chooseProduct(product.id, activityID: record.id); popup = "" }.help(product.bundleIdentifier)
+                    Button(product.name) { try? builds.chooseProduct(product.id, activityID: record.id); popup = "" }.mimicHelp(product.bundleIdentifier)
                 }
                 Button(text("build.stop")) { builds.cancel(record.id); popup = "" }
             }
@@ -182,9 +187,9 @@ struct BuildInlineStatus: View {
     private var identity: String { text(record.actionKey) + " · " + record.parameters.scheme + " · " + buildInitiator(record) }
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 4 : 6) {
-            if record.status.isPending { Text(identity).mimicFont(.caption).lineLimit(compact ? 2 : nil).truncationMode(.middle).help(identity) }
+            if record.status.isPending { Text(identity).mimicFont(.caption).lineLimit(compact ? 2 : nil).truncationMode(.middle).mimicHelp(identity) }
             HStack(alignment: .firstTextBaseline) {
-                Text(text(record.phase)).foregroundStyle(buildColor(record)).lineLimit(compact ? 1 : nil).help(record.errorCode.map { text("build.error." + $0) } ?? text(record.phase))
+                Text(text(record.phase)).foregroundStyle(buildColor(record)).lineLimit(compact ? 1 : nil).mimicHelp(record.errorCode.map { text("build.error." + $0) } ?? text(record.phase))
                 Spacer(minLength: 8)
                 MimicActivityClock(running: record.status.isPending) { _ in Text(buildDuration(record)).monospacedDigit() }
             }.mimicFont(.caption)
@@ -205,10 +210,12 @@ struct BuildInlineStatus: View {
 }
 
 struct BuildProgressView: View {
+    private var theme = MimicTheme()
     let record: BuildActivity
     var body: some View {
         Group {
             if let value = record.progressFraction { MimicProgressBar(value: value, color: buildColor(record), label: text("build.progress")) }
+            else if record.status.isPending && theme.retro { MimicProgressBar(value: nil, color: buildColor(record), label: text("build.progress.active")) }
             else if record.status.isPending { ProgressView().progressViewStyle(.linear).tint(.accentColor).frame(height: 6).accessibilityLabel(text("build.progress.active")) }
             else { MimicProgressBar(value: 0, color: buildColor(record), label: text("build.progress")) }
         }.accessibilityIdentifier("build.progress")

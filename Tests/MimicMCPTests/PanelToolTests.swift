@@ -33,7 +33,7 @@ struct PanelToolTests {
 
     @Test func appearanceIsOptionalPrivateMetadataAndSetupSchemaIsAligned() throws {
         let negotiated = MimicMCPMain.bridgeRequest(method: "get_state", arguments: [:], threadID: "fixture")
-        #expect(negotiated.presentationMetadataVersion == 1 && negotiated.parameters.isEmpty)
+        #expect(negotiated.presentationMetadataVersion == 2 && negotiated.parameters.isEmpty)
         #expect(MimicMCPMain.bridgeRequest(method: "cancel_local_task", arguments: [:], threadID: "fixture").presentationMetadataVersion == nil)
         let old = try JSONDecoder().decode(MimicBridgeRequest.self, from: JSONEncoder().encode(MimicBridgeRequest(method: "get_state")))
         #expect(old.presentationMetadataVersion == nil)
@@ -48,6 +48,21 @@ struct PanelToolTests {
         let setup = try #require(MimicMCPMain.tools().first { $0.name == "panel_setup" })
         let operations = try #require(setup.inputSchema.objectValue?["properties"]?.objectValue?["operation"]?.objectValue?["enum"]?.arrayValue)
         #expect(operations.contains(.string("appearance")))
+    }
+    @Test func codexAppearanceAndItsErrorsRemainPrivate() throws {
+        let snapshot: BridgeValue = .object(["version": .number(1), "selection": .string("windows95"), "revision": .number(2)])
+        for name in ["open_panel", "get_state", "bind_project"] {
+            let result = try MimicMCPMain.toolReply(.init(id: UUID(), result: .object(["appearance": .string("legacy"), "codexAppearance": snapshot, "tasks": .array([])])), name: name)
+            #expect(result._meta?["mimic/workspace"]?.objectValue?["codexAppearance"] != nil)
+            #expect(result.structuredContent?.objectValue?["codexAppearance"] == nil)
+            for case let .text(text, _, _) in result.content { #expect(!text.contains("windows95") && !text.contains("codexAppearance")) }
+        }
+        let tool = try #require(MimicMCPMain.tools().first { $0.name == "panel_set_appearance" })
+        #expect(tool._meta?["ui"]?.objectValue?["visibility"] == .array([.string("app")]))
+        let error = try MimicMCPMain.toolReply(.init(id: UUID(), error: "appearanceSave", message: "fixture-error"), name: tool.name)
+        #expect(error.content.isEmpty && error.structuredContent == nil && error.isError == true)
+        #expect(error._meta?["mimic/private"]?.objectValue?["code"] == .string("appearanceSave"))
+        #expect(!MimicMCPMain.requiresProjectRefresh(method: tool.name, arguments: [:]))
     }
     @Test func repeatedPanelOpensShareOnlyTheHostChatPresentationID() throws {
         let reply = MimicBridgeReply(id: UUID(), result: .object(["tasks": .array([])]))

@@ -40,7 +40,7 @@ struct ToolsCompactView: View {
                     .onKeyPress(.space) { self.model.openProjectTool(tool, source: .keyboard); return .handled }
                     .onKeyPress(.return) { self.model.openProjectTool(tool, source: .keyboard); return .handled }
                     .background(PanelControlRegion())
-                    .help(self.toolHelp(tool)).accessibilityIdentifier("tools.favorite." + tool.rawValue)
+                    .mimicHelp(self.toolHelp(tool)).accessibilityIdentifier("tools.favorite." + tool.rawValue)
                     .accessibilityLabel(text(tool.titleKey)).accessibilityValue(self.toolHelp(tool))
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -83,7 +83,7 @@ private struct ToolCompactIcon: View {
     // Preserve the approved Figma vectors; other tools retain their existing system symbols.
     private static let images: [ProjectTool: NSImage] = Dictionary(uniqueKeysWithValues:
         [ProjectTool.generation, .localization, .format].map { tool in
-            (tool, NSImage(contentsOf: Bundle.module.url(forResource: "tool-" + tool.rawValue, withExtension: "svg")!)!)
+            (tool, NSImage(contentsOf: MimicResources.bundle.url(forResource: "tool-" + tool.rawValue, withExtension: "svg")!)!)
         })
     var body: some View {
         Group {
@@ -97,7 +97,16 @@ private struct ToolCompactIcon: View {
 }
 
 /// Hover, press and keyboard focus respond immediately without changing row geometry.
-private struct ToolsFavoriteButtonStyle: ButtonStyle {
+private struct ToolsFavoriteButtonStyle: PrimitiveButtonStyle {
+    let focused: Bool
+    private var theme = MimicTheme()
+    @ViewBuilder func makeBody(configuration: Configuration) -> some View {
+        if theme.retro { Button(configuration).buttonStyle(NativeRetroPrimitiveButtonStyle(height: 23, selected: focused)) }
+        else { Button(configuration).buttonStyle(ToolsFavoriteArtworkStyle(focused: focused)) }
+    }
+}
+
+private struct ToolsFavoriteArtworkStyle: ButtonStyle {
     private var theme = MimicTheme()
     private var accessibility = MimicAccessibility()
     @Environment(\.isEnabled) private var enabled
@@ -161,7 +170,7 @@ struct ToolsCatalogView: View {
     }
     private func control(_ symbol: String, _ label: String, disabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).frame(width: 22, height: 26) }
-            .buttonStyle(.plain).help(label).accessibilityLabel(label).disabled(disabled)
+            .buttonStyle(.plain).mimicHelp(label).accessibilityLabel(label).disabled(disabled)
     }
 }
 
@@ -173,7 +182,7 @@ struct ToolStatusIcon: View {
     private var theme = MimicTheme()
     var body: some View {
         Image(systemName: symbol).font(.system(size: 11)).foregroundStyle(color)
-            .help(text("status." + status.rawValue)).accessibilityLabel(text("status." + status.rawValue))
+            .mimicHelp(text("status." + status.rawValue)).accessibilityLabel(text("status." + status.rawValue))
     }
     private var symbol: String {
         switch status {

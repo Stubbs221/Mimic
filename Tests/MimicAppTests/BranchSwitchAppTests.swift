@@ -90,6 +90,9 @@ private struct BranchSnapshotFixture: GitBranchService {
         #expect(model.branchError == BranchSwitchBlocker.update.message)
         model.releaseUpdate(owner: owner)
         #expect(model.canSwitchBranch)
+        #expect(model.branchSelectionError == nil)
+        model.branchError = "fixture Git failure"
+        #expect(model.branchSelectionError == "fixture Git failure")
     }
 
     @Test func buildPreflightPublishesAndBlocksSelectionBeforeQueueRecordExists() async throws {
@@ -132,6 +135,77 @@ private struct BranchSnapshotFixture: GitBranchService {
         #expect(model.branchError == "fixture inspection failed")
         model.loadBranches(); try await self.waitUntil { !model.loadingBranches }
         #expect(!model.canSwitchBranch && !model.checking)
+    }
+
+    @Test func freshPickerSnapshotDoesNotWaitForEnvironmentDiagnostics() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BranchDiagnostics-" + UUID().uuidString)
+        let suite = "BranchDiagnostics-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let project = ProjectContext(path: root.path, branch: "source", commit: "fixture")
+        let model = TaskCoordinator(directory: root, simulatorServices: self.services(), branchService: BranchSnapshotFixture(), defaults: defaults)
+        model.projects = [project]; model.selectedProjectPath = project.path; model.checking = true
+        #expect(model.branchSwitchBlocker == .checking)
+        model.loadBranches(); try await self.waitUntil { !model.loadingBranches }
+        #expect(model.checking && model.gitSummary != nil)
+        #expect(model.canSwitchBranch && model.branchSwitchBlocker == nil)
+    }
+
+    @Test(arguments: [BuildStatus.succeeded, .failed, .cancelled, .interrupted, .unknown])
+    func historicalBuildsOnlyBlockUntilUncertainWorkIsAcknowledged(status: BuildStatus) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BranchBuildHistory-" + UUID().uuidString)
+        let suite = "BranchBuildHistory-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let project = ProjectContext(path: root.path, branch: "source", commit: "fixture")
+        var record = BuildActivity(id: UUID(), project: project, parameters: .init(), source: "fixture")
+        record.status = status
+        try BuildHistoryStore(directory: root).save([record])
+        let builds = BuildCoordinator(directory: root, helper: root.appendingPathComponent("unused"), defaults: defaults)
+        let model = TaskCoordinator(directory: root, simulatorServices: self.services(), buildCoordinator: builds, defaults: defaults)
+        model.projects = [project]; model.selectedProjectPath = project.path; model.gitSummary = GitSummary(porcelain: "")
+        if status == .unknown {
+            #expect(model.branchSwitchBlocker == .builds)
+            builds.acknowledgeUnknown(record.id)
+        }
+        #expect(model.canSwitchBranch)
+        let restarted = BuildCoordinator(directory: root, helper: root.appendingPathComponent("unused"), defaults: defaults)
+        #expect(!restarted.hasPending)
+        let integration = MimicIntegration(model: model, defaults: defaults)
+        let state = try await integration.handle(.init(method: "get_agent_state"))
+        #expect(state["queue"]["builds"] == .number(0))
+        #expect(state["active"].array?.isEmpty == true)
+        #expect(state["blockers"].array?.contains { $0["code"].string == "unknownOperation" } == false)
+    }
+
+    @Test func pendingBranchFromAnotherCheckoutKeepsRecoveryControlsVisible() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BranchGlobalOwner-" + UUID().uuidString)
+        let suite = "BranchGlobalOwner-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let selected = ProjectContext(path: root.path, branch: "source", commit: "fixture")
+        let other = ProjectContext(path: root.appendingPathComponent("other").path, branch: "source", commit: "fixture")
+        var completed = BranchSwitchOperation(id: UUID(), source: selected, target: "develop", rebase: false)
+        completed.phase = .succeeded
+        var pending = BranchSwitchOperation(id: UUID(), source: other, target: "develop", rebase: false)
+        pending.phase = .needsReview
+        defaults.set(try JSONEncoder().encode([completed, pending]), forKey: "branchSwitchOperations")
+        let model = TaskCoordinator(directory: root, simulatorServices: self.services(), defaults: defaults)
+        model.projects = [selected, other]; model.selectedProjectPath = selected.path; model.gitSummary = GitSummary(porcelain: "")
+        #expect(model.branchSwitchBlocker == .git)
+        #expect(model.branchStatusOperation?.id == pending.id)
+        #expect(model.branchStatusOperation?.source.path == other.path)
+    }
+
+    @Test(arguments: [TaskStatus.succeeded, .failed, .cancelled, .interrupted, .queued, .running])
+    func restoredTaskHistoryDoesNotOwnCheckout(status: TaskStatus) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("BranchTaskHistory-" + UUID().uuidString)
+        let suite = "BranchTaskHistory-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let project = ProjectContext(path: root.path, branch: "source", commit: "fixture")
+        var record = TaskRecord(action: .format, project: project); record.status = status
+        try HistoryStore(directory: root).save([record])
+        let model = TaskCoordinator(directory: root, simulatorServices: self.services(), defaults: defaults)
+        model.projects = [project]; model.selectedProjectPath = project.path; model.gitSummary = GitSummary(porcelain: "")
+        #expect(model.canSwitchBranch && !model.preparing)
+        #expect(model.records.first?.status == (status == .queued || status == .running ? .interrupted : status))
     }
 
     @Test func staleInspectionCannotKeepWaitingOrOverwritePolledCheckout() async throws {

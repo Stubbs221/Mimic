@@ -3,6 +3,9 @@
 # Created by Василий Маслов on 05.10.2026.
 """Development lifecycle checks; subprocesses and the user's bridge are never invoked."""
 import importlib.util
+import contextlib
+import fcntl
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -76,16 +79,52 @@ class DevelopmentDeployTests(unittest.TestCase):
             with (destination / 'Contents/Info.plist').open('wb') as file:
                 deploy.plistlib.dump({}, file)
             events = []
+            @contextlib.contextmanager
+            def handoff(seconds):
+                events.append('locked'); yield; events.append('unlocked')
             with patch.object(deploy, 'SUPPORT', root), \
                  patch.object(deploy.subprocess, 'run', side_effect=lambda command, **kwargs: events.append(command)), \
-                 patch.object(deploy, 'wait_for_exit', side_effect=lambda seconds: events.append('idle')), \
+                 patch.object(deploy, 'native_handoff', side_effect=handoff), \
                  patch.object(deploy, 'verify_launch', side_effect=lambda path: events.append('launched')):
                 deploy.deploy(app, destination, 30)
             self.assertEqual(events[0][-1], '--check-only')
-            self.assertEqual(events[1], 'idle')
-            self.assertEqual(events[2][-2:], ['--yes', '--background'])
-            self.assertEqual(events[3], 'launched')
-            self.assertEqual(events[4], [str(destination / 'Contents/MacOS/Mimic'), '--refresh-codex-plugin'])
+            self.assertEqual(events[1], 'locked')
+            self.assertEqual(events[2][-2:], ['--yes', '--defer-launch'])
+            self.assertEqual(events[3], 'unlocked')
+            self.assertEqual(events[4], ['/usr/bin/open', '-a', str(destination), '--args', '--mcp-background'])
+            self.assertEqual(events[5], 'launched')
+            self.assertEqual(events[6], [str(destination / 'Contents/MacOS/Mimic'), '--refresh-codex-plugin'])
+
+    def test_handoff_excludes_another_owner_and_releases_on_failure(self):
+        with tempfile.TemporaryDirectory(prefix='MimicHandoffFixture-') as directory:
+            root = pathlib.Path(directory)
+            with patch.object(deploy, 'SUPPORT', root), patch.object(deploy, 'wait_for_exit') as wait, \
+                 patch.object(deploy, 'process_ids', return_value=[]):
+                path = root / 'Bridge/native-instance.lock'
+                with self.assertRaisesRegex(RuntimeError, 'fixture'):
+                    with deploy.native_handoff(10):
+                        descriptor = os.open(path, os.O_RDWR)
+                        try:
+                            with self.assertRaises(BlockingIOError):
+                                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        finally:
+                            os.close(descriptor)
+                        raise RuntimeError('fixture')
+                wait.assert_called_once()
+                descriptor = os.open(path, os.O_RDWR)
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                finally:
+                    os.close(descriptor)
+
+    def test_handoff_rejects_symlink_without_touching_target(self):
+        with tempfile.TemporaryDirectory(prefix='MimicHandoffLink-') as directory:
+            root = pathlib.Path(directory); (root / 'Bridge').mkdir()
+            target = root / 'target'; target.write_text('fixture')
+            (root / 'Bridge/native-instance.lock').symlink_to(target)
+            with patch.object(deploy, 'SUPPORT', root), self.assertRaises(OSError):
+                with deploy.native_handoff(0): pass
+            self.assertEqual(target.read_text(), 'fixture')
 
 
 if __name__ == '__main__':

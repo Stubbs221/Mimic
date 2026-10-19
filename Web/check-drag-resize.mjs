@@ -22,28 +22,28 @@ try{
  async function pointerAnchored(kind,point,anchor){const box=await card(kind).boundingBox();assert(Math.abs(box.x+box.width*anchor.x-point.x)<2,'horizontal anchor follows pointer through morph');assert(Math.abs(box.y+box.height*anchor.y-point.y)<2,'vertical anchor follows pointer through morph');}
  await load();await card('bootstrap').evaluate(n=>window.resizeCardIdentity=n);
  const grabbed=await hold('bootstrap'),right=await moveInGrid(.95,28);
- await page.waitForTimeout(400);assert(!await mini('bootstrap'),'does not shrink before half a second');
- await page.waitForTimeout(180);assert(await mini('bootstrap'),'stationary edge shrinks');await pointerAnchored('bootstrap',right,grabbed.anchor);
+ await page.waitForTimeout(190);assert(!await mini('bootstrap'),'does not shrink before a quarter second');
+ await page.waitForTimeout(110);assert(await mini('bootstrap'),'stationary edge shrinks');await pointerAnchored('bootstrap',right,grabbed.anchor);
  await page.waitForTimeout(200);assert(await card('bootstrap').evaluate(n=>n===window.resizeCardIdentity));assert(Math.abs((await card('bootstrap').boundingBox()).width-238*1.04)<1);
- const center=await moveInGrid(.6,28);await page.waitForTimeout(400);assert(await mini('bootstrap'),'reverse also waits');await page.waitForTimeout(180);assert(!await mini('bootstrap'));await pointerAnchored('bootstrap',center,grabbed.anchor);await page.waitForTimeout(200);
+ const center=await moveInGrid(.5,28);await page.waitForTimeout(190);assert(await mini('bootstrap'),'reverse also waits');await page.waitForTimeout(110);assert(!await mini('bootstrap'));await pointerAnchored('bootstrap',center,grabbed.anchor);await page.waitForTimeout(200);
  await page.mouse.move(0,300);await page.waitForTimeout(200);assert(!await mini('bootstrap'),'leaving the valid region retains the confirmed full size');
  await cancel();assert.equal(await revision(),'0');assert(!await mini('bootstrap'));
  // Fast crossings and continuous travel do not resize an existing mini card.
- await hold('builds');await moveInGrid(.9,176);await moveInGrid(.6,176);await page.waitForTimeout(200);await moveInGrid(.1,176);assert(await mini('builds'));await cancel();assert.equal(await revision(),'0');
- await hold('builds');for(let step=0;step<9;step++){await moveInGrid(.32+step*.04,176);await page.waitForTimeout(80);}assert(await mini('builds'),'travel beyond 50pt repeatedly resets dwell');await cancel();
- // A stationary lift starts dwell; early drop and cancellation never complete a pending resize later.
- await hold('builds');await page.waitForTimeout(550);assert(!await mini('builds'));await cancel();assert.equal(await revision(),'0');
- await hold('builds');await moveInGrid(.6,176);await page.waitForTimeout(180);await page.mouse.up();await page.waitForTimeout(600);assert(await mini('builds'));assert.equal(await revision(),'0');
- await hold('builds');await moveInGrid(.6,176);await page.waitForTimeout(180);await cancel();await page.waitForTimeout(550);assert(await mini('builds'));assert.equal(await revision(),'0');
+ await hold('builds');await moveInGrid(.9,176);await moveInGrid(.5,176);await page.waitForTimeout(200);await moveInGrid(.1,176);assert(await mini('builds'));await cancel();assert.equal(await revision(),'0');
+ await hold('builds');for(let step=0;step<9;step++){await moveInGrid(.32+step*.04,176);await page.waitForTimeout(80);}assert(await mini('builds'),'travel beyond 8pt repeatedly resets dwell');await cancel();
+ // A stationary lift never starts dwell; early drop and cancellation never complete a pending resize later.
+ await hold('builds');await page.waitForTimeout(550);assert(await mini('builds'));await cancel();assert.equal(await revision(),'0');
+ await hold('builds');await moveInGrid(.5,176);await page.waitForTimeout(180);await page.mouse.up();await page.waitForTimeout(600);assert(await mini('builds'));assert.equal(await revision(),'0');
+ await hold('builds');await moveInGrid(.5,176);await page.waitForTimeout(180);await cancel();await page.waitForTimeout(550);assert(await mini('builds'));assert.equal(await revision(),'0');
  // Size-only changes save once and survive polling; editing remains a cancellable draft.
  await load();await hold('bootstrap');await moveInGrid(.95,28);await page.waitForTimeout(750);await page.mouse.up();await page.waitForTimeout(280);assert(await mini('bootstrap'));assert.equal(await revision(),'1');assert.equal(await card('bootstrap').evaluate(n=>n.style.gridColumn),'2');
  await panelCommand(page,'Обновить');await page.waitForTimeout(100);assert(await mini('bootstrap'));assert.equal(await revision(),'1');
  await load();await panelCommand(page,'Настроить панель');await hold('bootstrap');await moveInGrid(.05,28);await page.waitForTimeout(750);await page.mouse.up();await page.waitForTimeout(250);assert(await mini('bootstrap'));assert.equal(await revision(),'0');await page.getByRole('button',{name:'Отмена',exact:true}).click();assert(!await mini('bootstrap'));
  for(const failure of ['failed','conflict']){await load('&dragSaveFailure='+failure);await hold('bootstrap');await moveInGrid(.95,28);await page.waitForTimeout(750);await page.mouse.up();await page.waitForTimeout(280);assert(!await mini('bootstrap'));assert.equal(await revision(),failure==='conflict'?'1':'0');}
- // Single-column Codex keeps logical mini size; Reduce Motion retains the half-second delay.
+ // Single-column Codex keeps logical mini size; Reduce Motion retains the quarter-second delay.
  for(const width of [360,440,480,520]){
-  await page.setViewportSize({width,height:1050});await page.emulateMedia({reducedMotion:'reduce',colorScheme:width===440?'dark':'light'});await load();const box=await grid.boundingBox();await hold('bootstrap');await moveInGrid(.95,28);await page.waitForTimeout(400);assert(!await mini('bootstrap'));await page.waitForTimeout(180);assert(await mini('bootstrap'));assert.equal(await card('bootstrap').evaluate(n=>getComputedStyle(n).scale),'1');const shrunk=await card('bootstrap').boundingBox();assert(Math.abs(shrunk.width-(width<480?box.width:(box.width-12)/2))<1);await cancel();
+  await page.setViewportSize({width,height:1050});await page.emulateMedia({reducedMotion:'reduce',colorScheme:width===440?'dark':'light'});await load();const box=await grid.boundingBox();await hold('bootstrap');await moveInGrid(.95,28);await page.waitForTimeout(190);assert(!await mini('bootstrap'));await page.waitForTimeout(110);assert(await mini('bootstrap'));assert.equal(await card('bootstrap').evaluate(n=>getComputedStyle(n).scale),'1');const shrunk=await card('bootstrap').boundingBox();assert(Math.abs(shrunk.width-(width<480?box.width:(box.width-12)/2))<1);await cancel();
  }
  await page.setViewportSize({width:520,height:1050});await page.emulateMedia({reducedMotion:'no-preference'});await load();await hold('bootstrap');await moveInGrid(.95,28);await page.waitForTimeout(750);assert(await mini('bootstrap'));await page.screenshot({path:'/private/tmp/Mimic-drag-resize-mini.png'});await cancel();
- assert.deepEqual(errors,[]);console.log('PASS: 500ms radius resize/reverse, pointer anchor during morph, node identity, fast crossing/continuous motion, no-motion/early-drop/cancel, size-only save/poll/draft/failure/conflict, 360/440/480/520, Reduce Motion');
+ assert.deepEqual(errors,[]);console.log('PASS: 250ms radius resize/reverse, pointer anchor during morph, node identity, fast crossing/continuous motion, no-motion/early-drop/cancel, size-only save/poll/draft/failure/conflict, 360/440/480/520, Reduce Motion');
 }finally{await browser.close();server.close();}

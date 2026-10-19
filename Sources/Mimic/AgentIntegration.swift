@@ -148,13 +148,13 @@ extension MimicIntegration {
     }
     func agentState(thread: String?, includeActions: Bool, helper: AgentHelperIdentity?) async -> BridgeValue {
         let current = project(thread)
-        let builds = model.builds.records.filter { $0.project.path == current?.path && ($0.status.isPending || $0.status == .unknown) }.map(BuildBridge.summary)
+        let builds = model.builds.records.filter { $0.project.path == current?.path && ($0.status.isPending || $0.status == .unknown && $0.queueReleased != true) }.map(BuildBridge.summary)
         let tasks = model.records.filter { $0.project.path == current?.path && [.queued, .running].contains($0.status) }.map(task)
         let simulators = model.simulatorScreen.records.filter { $0.project.path == current?.path && ($0.status.isPending || $0.holdsQueue) }.map(\.metadata)
         var blockers: [BridgeValue] = []
         if current == nil { blockers.append(.object(["code": .string("needsBinding")])) }
         if model.admissionsClosed { blockers.append(.object(["code": .string("admissionsClosed")])) }
-        if model.builds.records.contains(where: { $0.status == .unknown }) || model.simulatorScreen.records.contains(where: { $0.status == .unknown && $0.holdsQueue }) { blockers.append(.object(["code": .string("unknownOperation")])) }
+        if model.builds.records.contains(where: { $0.status == .unknown && $0.queueReleased != true }) || model.simulatorScreen.records.contains(where: { $0.status == .unknown && $0.holdsQueue }) { blockers.append(.object(["code": .string("unknownOperation")])) }
         if model.switchingBranch { blockers.append(.object(["code": .string("branchSwitch")])) }
         if let helper, helper.toolSchemaRevision != AgentWorkflow.schemaRevision { blockers.append(.object(["code": .string("reconnectPlugin")])) }
         let preparation = current == nil ? BridgeValue.null : await model.preparationState(project: current!, platform: .ios)
@@ -162,8 +162,12 @@ extension MimicIntegration {
         let all = builds + tasks + simulators
         var fields: [String: BridgeValue] = ["version": .number(2), "context": current.map { Self.context($0, profile: model.activeProfile) } ?? .null,
             "needsBinding": .bool(current == nil), "capabilities": AgentWorkflow.capabilities, "delivery": AgentWorkflow.delivery(helper), "blockers": .array(blockers),
-            "active": .array(all), "queue": .object(["tasks": .number(Double(model.records.filter { [.running, .queued].contains($0.status) }.count)), "builds": .number(Double(model.builds.records.filter { $0.status.isPending || $0.status == .unknown }.count)), "simulator": .number(Double(model.simulatorScreen.records.filter { $0.status.isPending || $0.holdsQueue }.count))]), "preparation": preparation,
+            "active": .array(all), "queue": .object(["tasks": .number(Double(model.records.filter { [.running, .queued].contains($0.status) }.count)), "builds": .number(Double(model.builds.records.filter { $0.status.isPending || $0.status == .unknown && $0.queueReleased != true }.count)), "simulator": .number(Double(model.simulatorScreen.records.filter { $0.status.isPending || $0.holdsQueue }.count))]), "preparation": preparation,
             "simulator": .object(["activeOperations": .number(Double(simulators.count)), "sessions": (try? .encode(simulatorBindings.values.filter { $0.project.path == current?.path })) ?? .array([])])]
+        model.work.bind(owner: thread ?? "desktop", project: current, profile: model.activeProfile)
+        let work = model.work.contexts.snapshot(thread ?? "desktop")
+        fields["work"] = .object(["phase": .string(work.phase), "issueKey": work.issue.map { .string($0.key) } ?? .null, "stale": .bool(work.stale)])
+        fields["serviceToolCatalog"] = .array((model.activeProfile?.profile.serviceTools ?? []).filter { tool in tool.mcpAllowed && (current.map { tool.matches($0.path) } ?? false) }.map { .object(["id": .string($0.id), "title": .string($0.title)]) })
         if includeActions { fields["actions"] = .array((model.activeProfile?.profile.actions.filter(\.allowsMCP) ?? []).map { .object(["id": .string($0.id), "title": .string($0.title), "parameters": (try? .encode($0.parameters)) ?? .null]) }) }
         return .object(fields)
     }

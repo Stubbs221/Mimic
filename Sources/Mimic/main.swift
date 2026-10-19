@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.panel.isOpaque = false; self.panel.backgroundColor = .clear; self.panel.hasShadow = true
         self.panel.titleVisibility = .hidden; self.panel.titlebarAppearsTransparent = true; self.panel.isMovable = false
         self.panel.standardWindowButton(.closeButton)?.isHidden = true; self.panel.standardWindowButton(.miniaturizeButton)?.isHidden = true; self.panel.standardWindowButton(.zoomButton)?.isHidden = true
-        self.panelMotion = MimicWindowMotion(window: self.panel, settings: self.model.motionSettings)
+        self.panelMotion = MimicWindowMotion(window: self.panel, settings: self.model.motionSettings, appearance: self.model.appearance)
         #if DEBUG
         if (Bundle.main.bundleIdentifier == "local.vmaslov.MimicGlassPreview" || Bundle.main.bundleIdentifier == "local.vmaslov.MimicRedesignPreview" || Bundle.main.bundleIdentifier == "local.vmaslov.MimicMotionPreview") {
             self.panel.contentView = NSHostingView(rootView: MimicWindowRoot(presentation: self.panelMotion.presentation, settings: self.model.motionSettings, appearance: self.model.appearance) { LiquidGlassPreviewPanel(model: self.model) })
@@ -178,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if NSApp.currentEvent?.type == .rightMouseUp {
             self.hidePanels()
             guard let button = self.status.button else { return }
-            if model.appearance.selection == .tileGrid, let window = button.window {
+            if model.appearance.selection.usesTileGrid, let window = button.window {
                 let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
                 expressMenu.show(menu: quickMenu(), model: model, anchor: anchor, screen: window.screen?.visibleFrame ?? NSScreen.main!.visibleFrame)
             } else { self.quickMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button) }
@@ -266,7 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func hidePanels(source: MimicMotionSource = .current) {
         self.model.panelLayout.cancelPresentation()
-        if self.model.appearance.selection == .tileGrid, self.model.expandedSection == .branches { self.model.expandedSection = nil }
+        if self.model.appearance.selection.usesTileGrid, self.model.expandedSection == .branches { self.model.expandedSection = nil }
         AIUsageTrendPopoverController.dismissAll()
         self.model.aiUsage.panelDidClose()
         self.panelMotion.setVisible(false, source: source)
@@ -278,9 +278,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self, self.panelMotion.desiredVisible || self.panelMotion.isTransitioning,
                   event.window === self.panel || NSApp.keyWindow === self.panel || AIUsageTrendPopoverController.owns(event.window) || event.window == nil else { return event }
             if AIUsageTrendPopoverController.handleKey(event) { return nil }
+            if NativeRetroPopupRegistry.owns(event.window) { return event }
             guard event.keyCode == 53 else { return event }
             if self.model.panelLayout.cancelPresentation() { return nil }
-            if self.model.appearance.selection == .tileGrid, self.model.expandedSection == .branches {
+            if self.model.appearance.selection.usesTileGrid, self.model.expandedSection == .branches {
                 self.model.expandedSection = nil
                 return nil
             }
@@ -293,7 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         self.localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self else { return event }
-            if event.window !== self.panel, event.window !== self.activityPanel.window, event.window !== self.status.button?.window, !AIUsageTrendPopoverController.owns(event.window) { self.hidePanels() }
+            if event.window !== self.panel, event.window !== self.activityPanel.window, event.window !== self.status.button?.window, !AIUsageTrendPopoverController.owns(event.window), !NativeRetroPopupRegistry.owns(event.window) { self.hidePanels() }
             return event
         }
     }
@@ -304,7 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if self.interfaceMapWindow == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 700), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             window.title = text("interface.map.title")
-            window.contentView = NSHostingView(rootView: InterfaceMapView().modifier(MimicAppearanceRoot(store: model.appearance)))
+            window.contentView = NSHostingView(rootView: InterfaceMapView().mimicWindowChrome().modifier(MimicAppearanceRoot(store: model.appearance)))
             window.isReleasedWhenClosed = false
             window.setContentSize(NSSize(width: 560, height: 700))
             window.contentMinSize = NSSize(width: 440, height: 420)
@@ -352,7 +353,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let alert = NSAlert(); alert.messageText = text("quit.active"); alert.informativeText = text("quit.effects")
         alert.addButton(withTitle: text("stay")); alert.addButton(withTitle: text("stop.quit"))
-        if alert.runModal() != .alertSecondButtonReturn { return .terminateCancel }
+        if NativeRetroDialog.run(alert, store: model.appearance, cancel: 0) != .alertSecondButtonReturn { return .terminateCancel }
         // Schedule after returning terminateLater so the reply cannot race the delegate response.
         DispatchQueue.main.async { self.model.stopAndExit() }
         return .terminateLater
@@ -386,13 +387,26 @@ if CommandLine.arguments.contains("--check-resources") {
     let checks: [String: Bool] = [
         "app": MimicResources.bundle.url(forResource: "Localizable", withExtension: "strings", subdirectory: nil, localization: "ru") != nil,
         "core": MimicCoreResources.bundle.url(forResource: "pricing_supplement", withExtension: "json") != nil,
-        "identity": Bundle.main.bundleIdentifier == "local.vmaslov.Mimic"
+        "identity": Bundle.main.bundleIdentifier == "local.vmaslov.Mimic",
+        "packagedApp": MimicResources.bundle.bundleURL.deletingLastPathComponent().standardizedFileURL == Bundle.main.bundleURL.appendingPathComponent("Contents/Resources").standardizedFileURL,
+        "packagedCore": MimicCoreResources.bundle.bundleURL.deletingLastPathComponent().standardizedFileURL == Bundle.main.bundleURL.appendingPathComponent("Contents/Resources").standardizedFileURL,
+        "panelTokens": MimicCoreResources.bundle.url(forResource: "panel-design-tokens", withExtension: "json") != nil,
+        "r1Artwork": NativeRetro.image("close-normal", appearance: .windowsXP) != nil && NativeRetro.image("close-normal", appearance: .windows95) != nil,
+        "toolArtwork": MimicResources.bundle.url(forResource: "tool-generation", withExtension: "svg") != nil
     ]
     if let data = try? JSONSerialization.data(withJSONObject: checks, options: .sortedKeys) { FileHandle.standardOutput.write(data + Data([10])) }
     exit(checks.values.allSatisfy { $0 } ? 0 : 1)
 }
 
 #if DEBUG
+if CommandLine.arguments.contains("--branch-picker-fixture") {
+    _ = NSApplication.shared
+    BranchPickerAcceptance.run(); exit(0)
+}
+if Bundle.main.bundleIdentifier == "local.vmaslov.MimicR1SurfaceFixture" {
+    _ = NSApplication.shared
+    NativeR1DesktopAcceptance.run(); exit(0)
+}
 if Bundle.main.bundleIdentifier == "local.vmaslov.MimicUpdateFixture" {
     MimicUpdateAcceptance.run(); exit(0)
 }

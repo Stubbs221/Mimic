@@ -27,104 +27,111 @@ struct CodexLogFileParser: Sendable {
         var events: [CodexLogUsageScanner.Event] = []
 
         for line in data.split(separator: UInt8(ascii: "\n")) {
-            let isTurnContext = line.range(of: Self.turnContextMarker) != nil
-            let isSessionMeta = !sawSessionMeta && line.range(of: Self.sessionMetaMarker) != nil
-            let isTaskStarted = replayGate != nil && line.range(of: Self.taskStartedMarker) != nil
-            let isThreadSettings = line.range(of: Self.threadSettingsMarker) != nil
-            guard isTurnContext || isSessionMeta || isTaskStarted || isThreadSettings
-                || line.range(of: Self.tokenCountMarker) != nil
-            else { continue }
-            guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { continue }
-
-            let type = object["type"] as? String
-            let payload = object["payload"] as? [String: Any]
-
-            if type == "turn_context" {
-                if let model = payload.flatMap(Self.modelName(in:)) {
-                    currentModel = model
-                }
-                continue
-            }
-            // A child rollout also replays its parent's metadata; only its first metadata is its own.
-            if type == "session_meta", !sawSessionMeta {
-                sawSessionMeta = true
-                if let payload, CodexLogUsageScanner.isChildSessionMeta(payload) {
-                    if let timestampRaw = (object["timestamp"] as? String)?.trimmingCharacters(in: .whitespaces),
-                       let created = AIUsageDecoder.date(timestampRaw) {
-                        replayGate = .untilStartedAt(created.timeIntervalSince1970.rounded(.down))
-                    } else {
-                        replayGate = .untilSelfTimedTaskStarted
-                    }
-                }
-                continue
-            }
-            if isThreadSettings, type == "event_msg",
-               payload?["type"] as? String == "thread_settings_applied" {
-                if let tier = Self.serviceTier(in: payload) {
-                    currentTierIsUltrafast = tier == "ultrafast"
-                    currentTierIsFast = tier == "fast" || tier == "priority"
-                }
-                continue
-            }
-            guard type == "event_msg", let payload else { continue }
-
-            // Replayed task starts retain the parent's older start time; the first live turn opens the gate.
-            if payload["type"] as? String == "task_started" {
-                if let gate = replayGate,
-                   let startedAt = payload["started_at"] as? NSNumber,
-                   gate.isCleared(byStartedAt: startedAt.doubleValue, lineTimestamp: object["timestamp"] as? String) {
-                    replayGate = nil
-                }
-                continue
-            }
-            guard payload["type"] as? String == "token_count",
-                  let timestampRaw = (object["timestamp"] as? String)?.trimmingCharacters(in: .whitespaces),
-                  let timestamp = AIUsageDecoder.date(timestampRaw)
-            else { continue }
-
-            let info = payload["info"] as? [String: Any]
-            let totals = (info?["total_token_usage"] as? [String: Any]).map(CodexLogUsageScanner.RawUsage.init(json:))
-
-            // Parent history still seeds cumulative totals, but must never become chargeable child usage.
-            if replayGate != nil {
-                if let totals { previousTotals = totals }
-                continue
-            }
-
-            // Codex can repeat a cumulative snapshot without recording another completed turn.
-            if let totals, let previous = previousTotals, totals.equalCounts(previous) {
-                continue
-            }
-
-            let usage: CodexLogUsageScanner.RawUsage
-            if let last = (info?["last_token_usage"] as? [String: Any]).map(CodexLogUsageScanner.RawUsage.init(json:)) {
-                usage = last
-            } else if let totals {
-                usage = totals.subtracting(previousTotals)
-            } else {
-                continue
-            }
-            if let totals { previousTotals = totals }
-            guard usage.input > 0 || usage.cached > 0 || usage.output > 0 || usage.reasoning > 0 else { continue }
-
-            let parsedModel = Self.modelName(in: payload) ?? info.flatMap(Self.modelName(in:))
-            let model = CodexLogUsageScanner.resolveModel(parsed: parsedModel, currentModel: &currentModel)
-
-            events.append(CodexLogUsageScanner.Event(
-                timestamp: timestamp,
-                model: model,
-                pricingModel: model == "codex-auto-review"
-                    ? CodexLogUsageScanner.autoReviewFallback(at: timestampRaw)
-                    : model == "gpt-reserve" ? CodexLogUsageScanner.reservePricingModel : nil,
-                input: usage.input,
-                cached: min(usage.cached, usage.input),
-                output: usage.output,
-                reasoning: usage.reasoning,
-                total: usage.total,
-                isFast: currentTierIsFast,
-                isUltrafast: currentTierIsUltrafast
-            ))
+            events.append(contentsOf: self.parseLine(Data(line)))
         }
+        return events
+    }
+
+    /// The incremental index already owns one complete line; avoid scanning every byte again.
+    mutating func parseLine(_ line: Data) -> [CodexLogUsageScanner.Event] {
+        var events: [CodexLogUsageScanner.Event] = []
+        let isTurnContext = line.range(of: Self.turnContextMarker) != nil
+        let isSessionMeta = !sawSessionMeta && line.range(of: Self.sessionMetaMarker) != nil
+        let isTaskStarted = replayGate != nil && line.range(of: Self.taskStartedMarker) != nil
+        let isThreadSettings = line.range(of: Self.threadSettingsMarker) != nil
+        guard isTurnContext || isSessionMeta || isTaskStarted || isThreadSettings
+            || line.range(of: Self.tokenCountMarker) != nil
+        else { return events }
+        guard let object = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] else { return events }
+
+        let type = object["type"] as? String
+        let payload = object["payload"] as? [String: Any]
+
+        if type == "turn_context" {
+            if let model = payload.flatMap(Self.modelName(in:)) {
+                currentModel = model
+            }
+            return events
+        }
+        // A child rollout also replays its parent's metadata; only its first metadata is its own.
+        if type == "session_meta", !sawSessionMeta {
+            sawSessionMeta = true
+            if let payload, CodexLogUsageScanner.isChildSessionMeta(payload) {
+                if let timestampRaw = (object["timestamp"] as? String)?.trimmingCharacters(in: .whitespaces),
+                   let created = AIUsageDecoder.date(timestampRaw) {
+                    replayGate = .untilStartedAt(created.timeIntervalSince1970.rounded(.down))
+                } else {
+                    replayGate = .untilSelfTimedTaskStarted
+                }
+            }
+            return events
+        }
+        if isThreadSettings, type == "event_msg",
+           payload?["type"] as? String == "thread_settings_applied" {
+            if let tier = Self.serviceTier(in: payload) {
+                currentTierIsUltrafast = tier == "ultrafast"
+                currentTierIsFast = tier == "fast" || tier == "priority"
+            }
+            return events
+        }
+        guard type == "event_msg", let payload else { return events }
+
+        // Replayed task starts retain the parent's older start time; the first live turn opens the gate.
+        if payload["type"] as? String == "task_started" {
+            if let gate = replayGate,
+               let startedAt = payload["started_at"] as? NSNumber,
+               gate.isCleared(byStartedAt: startedAt.doubleValue, lineTimestamp: object["timestamp"] as? String) {
+                replayGate = nil
+            }
+            return events
+        }
+        guard payload["type"] as? String == "token_count",
+              let timestampRaw = (object["timestamp"] as? String)?.trimmingCharacters(in: .whitespaces),
+              let timestamp = AIUsageDecoder.date(timestampRaw)
+        else { return events }
+
+        let info = payload["info"] as? [String: Any]
+        let totals = (info?["total_token_usage"] as? [String: Any]).map(CodexLogUsageScanner.RawUsage.init(json:))
+
+        // Parent history still seeds cumulative totals, but must never become chargeable child usage.
+        if replayGate != nil {
+            if let totals { previousTotals = totals }
+            return events
+        }
+
+        // Codex can repeat a cumulative snapshot without recording another completed turn.
+        if let totals, let previous = previousTotals, totals.equalCounts(previous) {
+            return events
+        }
+
+        let usage: CodexLogUsageScanner.RawUsage
+        if let last = (info?["last_token_usage"] as? [String: Any]).map(CodexLogUsageScanner.RawUsage.init(json:)) {
+            usage = last
+        } else if let totals {
+            usage = totals.subtracting(previousTotals)
+        } else {
+            return events
+        }
+        if let totals { previousTotals = totals }
+        guard usage.input > 0 || usage.cached > 0 || usage.output > 0 || usage.reasoning > 0 else { return events }
+
+        let parsedModel = Self.modelName(in: payload) ?? info.flatMap(Self.modelName(in:))
+        let model = CodexLogUsageScanner.resolveModel(parsed: parsedModel, currentModel: &currentModel)
+
+        events.append(CodexLogUsageScanner.Event(
+            timestamp: timestamp,
+            model: model,
+            pricingModel: model == "codex-auto-review"
+                ? CodexLogUsageScanner.autoReviewFallback(at: timestampRaw)
+                : model == "gpt-reserve" ? CodexLogUsageScanner.reservePricingModel : nil,
+            input: usage.input,
+            cached: min(usage.cached, usage.input),
+            output: usage.output,
+            reasoning: usage.reasoning,
+            total: usage.total,
+            isFast: currentTierIsFast,
+            isUltrafast: currentTierIsUltrafast
+        ))
         return events
     }
 

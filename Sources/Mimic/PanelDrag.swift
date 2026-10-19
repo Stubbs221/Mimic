@@ -12,17 +12,22 @@ import os
 /// Publishes at most one changed geometry snapshot per layout pass, never one Task per card per tick.
 @MainActor final class PanelFrameStore: ObservableObject {
     @Published private(set) var snapshot: [String: CGRect] = [:]
-    struct Change: Sendable { let old: [String: CGRect]; let next: [String: CGRect] }
+    struct Change: Sendable { let old: [String: CGRect]; let next: [String: CGRect]; let rows: [PanelLayoutRow] }
     /// Input reactions receive committed geometry without subscribing the entire grid to every layout.
     let changes = PassthroughSubject<Change, Never>()
-    private struct Pending: Sendable { var frames: [String: CGRect] = [:]; var scheduled = false }
+    private struct Pending: Sendable { var frames: [String: CGRect] = [:]; var rows: [PanelLayoutRow] = []; var scheduled = false }
+    private var committedRows: [PanelLayoutRow] = []
     private nonisolated let buffer = OSAllocatedUnfairLock(initialState: Pending())
     nonisolated var logical: [String: CGRect] { buffer.withLock { $0.frames } }
+    /// Frames may only be paired with the layout pass that measured them.
+    nonisolated var geometry: (frames: [String: CGRect], rows: [PanelLayoutRow]) {
+        buffer.withLock { ($0.frames, $0.rows) }
+    }
     // SwiftUI may measure off the main actor. Only the eventual observation belongs to the UI actor.
-    nonisolated func record(_ frames: [String: CGRect]) {
+    nonisolated func record(_ frames: [String: CGRect], rows: [PanelLayoutRow] = []) {
         let publish = buffer.withLock { pending in
-            guard pending.frames != frames else { return false }
-            pending.frames = frames
+            guard pending.frames != frames || pending.rows != rows else { return false }
+            pending.frames = frames; pending.rows = rows
             guard !pending.scheduled else { return false }
             pending.scheduled = true
             return true
@@ -30,11 +35,12 @@ import os
         guard publish else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let next = buffer.withLock { pending in pending.scheduled = false; return pending.frames }
-            if snapshot != next {
+            let value = buffer.withLock { pending in pending.scheduled = false; return (pending.frames, pending.rows) }
+            let next = value.0
+            if snapshot != next || committedRows != value.1 {
                 let old = snapshot
-                snapshot = next
-                changes.send(Change(old: old, next: next))
+                snapshot = next; committedRows = value.1
+                changes.send(Change(old: old, next: next, rows: value.1))
             }
         }
     }
@@ -102,7 +108,7 @@ struct PanelDragGesture {
 
 // MARK: - Deliberate size changes
 
-/// A size change requires half a second in one zone within 50 points of its dwell anchor.
+/// A size change requires 250 ms in one zone within 8 points of its dwell anchor.
 /// Pointer coordinates belong to the window, so document autoscroll cannot reset the dwell.
 struct PanelDragResize {
     enum Zone: Equatable {
@@ -111,7 +117,8 @@ struct PanelDragResize {
         var slot: Int { self == .right ? 1 : 0 }
         static func resolve(x: CGFloat, width: CGFloat) -> Self? {
             guard width > 0, x >= 0, x <= width else { return nil }
-            return x <= width * 0.3 ? .left : x >= width * 0.7 ? .right : .center
+            let edge = width * PanelDesignTokens.shared.metrics["dragMiniZonePercent"]! / 100
+            return x <= edge ? .left : x >= width - edge ? .right : .center
         }
     }
     private(set) var size: PanelBlockSize
@@ -119,13 +126,16 @@ struct PanelDragResize {
     private(set) var progress: Double = 0
     private var anchor = CGPoint.zero
     private var started: TimeInterval = 0
-    init(size: PanelBlockSize, pointer: CGPoint) { self.size = size; anchor = pointer }
+    private let liftPointer: CGPoint
+    private var hasMoved = false
+    init(size: PanelBlockSize, pointer: CGPoint) { self.size = size; anchor = pointer; liftPointer = pointer }
     @discardableResult mutating func update(zone: Zone?, pointer: CGPoint, time: TimeInterval) -> Bool {
-        guard let zone, zone.size != size else { pending = nil; progress = 0; return false }
-        if pending != zone || hypot(pointer.x - anchor.x, pointer.y - anchor.y) > 50 {
+        if pointer != liftPointer { hasMoved = true }
+        guard hasMoved, let zone, zone.size != size else { pending = nil; progress = 0; return false }
+        if pending != zone || hypot(pointer.x - anchor.x, pointer.y - anchor.y) > 8 {
             pending = zone; anchor = pointer; started = time; progress = 0; return false
         }
-        progress = min(1, max(0, (time - started) / 0.5))
+        progress = min(1, max(0, (time - started) / (PanelDesignTokens.shared.metrics["dragResizeMS"]! / 1000)))
         guard progress >= 1 else { return false }
         size = zone.size; pending = nil; progress = 0; return true
     }
@@ -162,10 +172,12 @@ struct PanelDragGeometry {
         return cells
     }
     static func target(point: CGPoint, block: PanelBlockKind, layout: PanelLayout, cells: [Cell], size: PanelBlockSize? = nil) -> PanelInsertionTarget? {
-        guard let last = cells.last, point.x >= 0, point.x <= cells.map(\.frame.maxX).max() ?? 0,
-              point.y >= 0, point.y <= last.frame.maxY + 32 else { return nil }
-        if point.y > last.frame.maxY { return .boundary(before: nil) }
-        guard let cell = cells.first(where: { $0.frame.insetBy(dx: -6, dy: -6).contains(point) }) else { return nil }
+        guard let bottom = cells.map(\.frame.maxY).max(), point.x >= 0, point.x <= cells.map(\.frame.maxX).max() ?? 0,
+              point.y >= 0, point.y <= bottom + 32 else { return nil }
+        if point.y > bottom { return .boundary(before: nil) }
+        guard let cell = cells.filter({ $0.frame.insetBy(dx: -6, dy: -6).contains(point) }).min(by: {
+            distance(point, to: $0.frame) < distance(point, to: $1.frame)
+        }) else { return nil }
         if (size ?? layout.size(of: block)) == .mini && (!cell.full || layout.rows.first(where: { $0.id == cell.row })?.blocks == [block]) {
             return .slot(row: cell.row, slot: cell.full ? (point.x < cell.frame.midX ? 0 : 1) : cell.slot)
         }
@@ -180,15 +192,13 @@ struct PanelDragGeometry {
            let slot = row.slots.firstIndex(of: block),
            let cell = cells.first(where: { $0.row == row.id && $0.slot == slot }),
            cell.frame.insetBy(dx: -12, dy: -12).contains(point) {
-            if !resized, let current {
-                switch current {
-                case .slot(let id, _): if layout.rows.contains(where: { $0.id == id }) { return current }
-                case .boundary(let id): if id == nil || layout.rows.contains(where: { $0.id == id }) { return current }
-                }
-            }
+            if !resized, let current { return current }
             return size == .mini ? .slot(row: row.id, slot: resized ? (point.x < (cells.map(\.frame.maxX).max() ?? 0) / 2 ? 0 : 1) : slot) : .boundary(before: row.id)
         }
         return target(point: point, block: block, layout: layout, cells: cells, size: size)
+    }
+    private static func distance(_ point: CGPoint, to frame: CGRect) -> CGFloat {
+        hypot(max(frame.minX - point.x, 0, point.x - frame.maxX), max(frame.minY - point.y, 0, point.y - frame.maxY))
     }
     static func scrollSpeed(y: CGFloat, height: CGFloat) -> CGFloat {
         if y < 48 { return -400 * min(1, max(0, (48 - y) / 48)) }
@@ -369,8 +379,11 @@ struct PanelCardBackground: ViewModifier {
     }
     func body(content: Content) -> some View {
         let fill = theme.tiled ? MimicTheme.native("surface", dark: scheme == .dark) : resolvedFill
-        content.background(Color(nsColor: fill), in: RoundedRectangle(cornerRadius: theme.cardRadius))
-            .shadow(color: .black.opacity(theme.tiled ? 0.035 : 0), radius: 10, y: 5)
+        content.background {
+            if theme.retro { NativeRetroArtwork(appearance: theme.appearance) }
+            else { RoundedRectangle(cornerRadius: theme.cardRadius).fill(Color(nsColor: fill)) }
+        }
+            .shadow(color: .black.opacity(theme.tiled && !theme.retro ? 0.035 : 0), radius: 10, y: 5)
             .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).strokeBorder(.primary.opacity(accessibility.increasedContrast ? 0.45 : theme.tiled ? 0 : 0.12), lineWidth: 1))
     }
 }

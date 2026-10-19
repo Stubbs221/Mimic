@@ -1,0 +1,15 @@
+<!-- Created by Василий Маслов on 12.10.2026. Exported from approved R1 Figma component. -->
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Editable build">
+<path id="Vector" d="M8 5L10 6L6.5 14.5L4.5 13.5L8 5Z" fill="#885333" stroke="#553927" stroke-width="0.6"/>
+<path id="Vector_2" d="M6.7 4.4L8.2 1.6L11.3 1.2L14.9 4L13.4 6.2L11 4.4L9.7 7.2L7.2 6L6.7 4.4Z" fill="url(#paint0_linear_0_8)" stroke="#65798A" stroke-width="0.7"/>
+<path id="Vector_3" d="M8.4 2.3L11 2L13.5 4" stroke="white" stroke-width="0.6"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_8" x1="6.7" y1="1.2" x2="12.4187" y2="9.01558" gradientUnits="userSpaceOnUse">
+<stop stop-color="white"/>
+<stop offset="0.45" stop-color="#D1E5F5"/>
+<stop offset="1" stop-color="#7692B6"/>
+</linearGradient>
+</defs>
+</svg>

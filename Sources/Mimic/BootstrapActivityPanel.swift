@@ -30,7 +30,7 @@ final class BootstrapActivityPanel: NSObject, NSWindowDelegate {
         self.window.level = .floating; self.window.hidesOnDeactivate = false
         self.window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         self.window.delegate = self
-        self.motion = MimicWindowMotion(window: self.window, settings: self.model.motionSettings)
+        self.motion = MimicWindowMotion(window: self.window, settings: self.model.motionSettings, appearance: self.model.appearance)
         self.window.beginDrag = { [weak self] in self?.motion.beginDrag() }
         self.observer = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.screenChanged() } }
     }
@@ -155,7 +155,8 @@ private struct ActivityViewport: View {
         }.scrollIndicators(.hidden).frame(width: MimicMetrics.cardWidth).frame(maxHeight: .infinity, alignment: .top)
             // The viewport keeps all four corners when content exceeds screen height.
             .modifier(MimicCardBackground())
-            .clipShape(RoundedRectangle(cornerRadius: theme.tiled ? 18 : MimicMetrics.surfaceRadius))
+            .clipShape(RoundedRectangle(cornerRadius: theme.retro ? 0 : theme.tiled ? 18 : MimicMetrics.surfaceRadius))
+            .modifier(NativeRetroSurface()).mimicRetroScrollbars()
             .onPreferenceChange(BootstrapHeightKey.self) { value in self.measured(value.height, value.stamp) }
     }
 }

@@ -179,34 +179,48 @@ import MimicCore
             }
         }
     }
-    @Test func stationaryLiftStartsHalfSecondDwellAndAllowsFiftyPoints() {
+    @Test func stationaryLiftNeverResizesAndQuarterSecondDwellRequiresEightPointStop() {
         var resize = PanelDragResize(size: .mini, pointer: .zero)
-        let changed1 = resize.update(zone: .center, pointer: .zero, time: 10); #expect(!changed1)
-        #expect(resize.pending == .center)
-        let changed2 = resize.update(zone: .center, pointer: CGPoint(x: 30, y: 40), time: 10.499); #expect(!changed2)
-        #expect(resize.progress > 0.99)
-        let changed3 = resize.update(zone: .center, pointer: CGPoint(x: 30, y: 40), time: 10.5); #expect(changed3)
-        #expect(resize.size == .full && resize.pending == nil)
-        let changed4 = resize.update(zone: .right, pointer: .zero, time: 11); #expect(!changed4)
-        let changed5 = resize.update(zone: .right, pointer: CGPoint(x: 50.1, y: 0), time: 11.49); #expect(!changed5)
+        let reaction1 = resize.update(zone: .center, pointer: .zero, time: 10); #expect(!reaction1)
+        let reaction2 = resize.update(zone: .center, pointer: .zero, time: 12); #expect(!reaction2)
+        #expect(resize.pending == nil && resize.size == .mini)
+        let anchor = CGPoint(x: 1, y: 0)
+        let reaction3 = resize.update(zone: .center, pointer: anchor, time: 13); #expect(!reaction3)
+        let reaction4 = resize.update(zone: .center, pointer: CGPoint(x: 9, y: 0), time: 13.249); #expect(!reaction4)
+        let reaction5 = resize.update(zone: .center, pointer: CGPoint(x: 9, y: 0), time: 13.25); #expect(reaction5)
+        #expect(resize.size == .full)
+        let reaction6 = resize.update(zone: .right, pointer: anchor, time: 14); #expect(!reaction6)
+        let reaction7 = resize.update(zone: .right, pointer: CGPoint(x: 9.1, y: 0), time: 14.24); #expect(!reaction7)
         #expect(resize.progress == 0)
-        let changed6 = resize.update(zone: .right, pointer: CGPoint(x: 50.1, y: 0), time: 11.989); #expect(!changed6)
-        let changed7 = resize.update(zone: .right, pointer: CGPoint(x: 50.1, y: 0), time: 11.99); #expect(changed7)
+        let reaction8 = resize.update(zone: .right, pointer: CGPoint(x: 9.1, y: 0), time: 14.489); #expect(!reaction8)
+        let reaction9 = resize.update(zone: .right, pointer: CGPoint(x: 9.1, y: 0), time: 14.49); #expect(reaction9)
         #expect(resize.size == .mini)
     }
     @Test func changingZonesOrLeavingNeverAccumulatesDwell() {
         var resize = PanelDragResize(size: .full, pointer: .zero)
-        let changed8 = resize.update(zone: .left, pointer: .zero, time: 0); #expect(!changed8)
-        let changed9 = resize.update(zone: .right, pointer: .zero, time: 0.4); #expect(!changed9)
-        let changed10 = resize.update(zone: nil, pointer: .zero, time: 0.8); #expect(!changed10)
+        let point = CGPoint(x: 1, y: 0)
+        let reaction10 = resize.update(zone: .left, pointer: point, time: 0); #expect(!reaction10)
+        let reaction11 = resize.update(zone: .right, pointer: point, time: 0.2); #expect(!reaction11)
+        let reaction12 = resize.update(zone: nil, pointer: point, time: 0.4); #expect(!reaction12)
         #expect(resize.pending == nil && resize.progress == 0)
-        let changed11 = resize.update(zone: .right, pointer: .zero, time: 1); #expect(!changed11)
-        let changed12 = resize.update(zone: .right, pointer: .zero, time: 1.499); #expect(!changed12)
-        let changed13 = resize.update(zone: .right, pointer: .zero, time: 1.5); #expect(changed13)
-        #expect(PanelDragResize.Zone.resolve(x: 30, width: 100) == .left)
-        #expect(PanelDragResize.Zone.resolve(x: 70, width: 100) == .right)
-        #expect(PanelDragResize.Zone.resolve(x: 30.1, width: 100) == .center)
+        let reaction13 = resize.update(zone: .right, pointer: point, time: 1); #expect(!reaction13)
+        let reaction14 = resize.update(zone: .right, pointer: point, time: 1.249); #expect(!reaction14)
+        let reaction15 = resize.update(zone: .right, pointer: point, time: 1.25); #expect(reaction15)
+        #expect(PanelDragResize.Zone.resolve(x: 40, width: 100) == .left)
+        #expect(PanelDragResize.Zone.resolve(x: 60, width: 100) == .right)
+        #expect(PanelDragResize.Zone.resolve(x: 40.1, width: 100) == .center)
+        #expect(PanelDragResize.Zone.resolve(x: 59.9, width: 100) == .center)
+        #expect(PanelDragResize.Zone.resolve(x: 101, width: 100) == nil)
+        #expect(PanelDragResize.Zone.resolve(x: 0, width: 0) == nil)
         #expect(PanelDragResize.Zone.resolve(x: -1, width: 100) == nil)
+    }
+    @Test func bottomOfTallLeftCellIsStillAValidSlot() {
+        let row = PanelLayoutRow(slots: [.utils, .ci]), layout = PanelLayout(rows: [row])
+        let cells = [PanelDragGeometry.Cell(row: row.id, slot: 0, frame: CGRect(x: 0, y: 0, width: 238, height: 300), full: false),
+                     PanelDragGeometry.Cell(row: row.id, slot: 1, frame: CGRect(x: 250, y: 0, width: 238, height: 160), full: false)]
+        for y in [170.0, 195, 250, 299] {
+            #expect(PanelDragGeometry.target(point: CGPoint(x: 20, y: y), block: .ci, layout: layout, cells: cells) == .slot(row: row.id, slot: 0))
+        }
     }
     @Test func continuousTravelResetsDwellAndMorphRetargetsPresentedSize() {
         var resize = PanelDragResize(size: .mini, pointer: .zero)
@@ -225,7 +239,7 @@ import MimicCore
     @Test func holdThresholdPressureAndReleaseHaveOneActivationOwner() {
         var gesture = PanelDragGesture()
         gesture.press(at: .zero, time: 10, eligible: true)
-        let early = gesture.activate(time: 10.349), heldActivation = gesture.activate(time: 10.350)
+        let early = gesture.activate(time: 10.179), heldActivation = gesture.activate(time: 10.180)
         #expect(!early); #expect(heldActivation)
         let repeated = gesture.activate(time: 11, pressureStage: 2); #expect(!repeated)
         let held = gesture.release(); #expect(held.drop && !held.click)

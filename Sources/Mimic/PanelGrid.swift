@@ -16,17 +16,30 @@ import MimicCore
     @Published private(set) var removing = false
     @Published private(set) var dragging: PanelBlockKind?
     @Published private(set) var dragPreview: PanelLayout?
-    private var dragOrigin: PanelLayout?
-    private var dragTarget: PanelInsertionTarget?
-    private var dragSize: PanelBlockSize?
-    private var dragMiniSlot: Int?
+    private var dragTransaction: PanelDragTransaction?
+    var acceptedDragTarget: PanelInsertionTarget? { dragTransaction?.target }
+    var dragAccepted: Bool { dragTransaction?.valid == true }
     @Published private(set) var dragCancellationID = 0
     @Published var message = ""
     let store: PanelLayoutStore
     var editing: Bool { draft != nil }
     var layout: PanelLayout { dragPreview ?? draft ?? saved }
-    var availableBlocks: [PanelBlockKind] { PanelBlockKind.catalog(for: .desktop).filter { !saved.blocks.contains($0) } }
-    init(defaults: UserDefaults) { store = PanelLayoutStore(defaults: defaults); saved = store.load(.desktop) }
+    @Published var customPanels: [PanelBlockKind: ProfilePanel] = [:]
+    @Published var servicePanels: [PanelBlockKind: ServiceTool] = [:]
+    func title(_ block: PanelBlockKind) -> String { customPanels[block]?.title ?? servicePanels[block]?.title ?? text(block.titleKey) }
+    func configure(profile: ProfileSnapshot?, checkout: String?) {
+        guard !editing, dragging == nil else { return }
+        let panels = profile?.profile.panels(checkout: checkout) ?? []
+        customPanels = Dictionary(uniqueKeysWithValues: panels.map { ($0.block(profileID: profile!.id), $0) })
+        if let profile, let checkout { saved = store.introduce(panels, profileID: profile.id, checkout: checkout, surface: .desktop) }
+        else { saved = store.load(.desktop) }
+        let services = profile?.profile.serviceTools?.filter { tool in checkout.map { tool.matches($0) } ?? false } ?? []
+        servicePanels = Dictionary(uniqueKeysWithValues: services.map { ($0.block(profileID: profile!.id), $0) })
+        if let profile, let checkout { saved = store.introduceServiceTools(services, profileID: profile.id, checkout: checkout, surface: .desktop) }
+    }
+    var catalog: [PanelBlockKind] { PanelBlockKind.catalog(for: .desktop) + servicePanels.keys.sorted { $0.rawValue < $1.rawValue } + customPanels.keys.sorted { $0.rawValue < $1.rawValue } }
+    var availableBlocks: [PanelBlockKind] { catalog.filter { !saved.blocks.contains($0) } }
+    init(defaults: UserDefaults) { store = PanelLayoutStore(defaults: defaults); saved = store.prepareForPresentation(.desktop) }
     func begin() { cancelPresentation(); saved = store.load(.desktop); draft = saved; expanded = nil; message = "" }
     func cancel() { cancelDrag(); draft = nil; message = "" }
     func finish() {
@@ -34,9 +47,9 @@ import MimicCore
         do { saved = try store.save(draft, for: .desktop, expectedRevision: saved.revision); cancel() }
         catch { message = text("panel.layout.conflict") }
     }
-    func edit(_ mutation: (inout PanelLayout) throws -> Void) {
+    func edit(preserving block: PanelBlockKind? = nil, _ mutation: (inout PanelLayout) throws -> Void) {
         guard var next = draft else { return }
-        do { try mutation(&next); try next.validate(for: .desktop); draft = next; message = "" }
+        do { try mutation(&next); next.compact(preserving: block); try next.validate(for: .desktop); draft = next; message = "" }
         catch { message = text("panel.layout.invalid") }
     }
 
@@ -74,6 +87,7 @@ import MimicCore
         var next = saved
         do {
             try mutation(&next)
+            next.compact()
             saved = try store.save(next, for: .desktop, expectedRevision: saved.revision)
             message = ""
             return true
@@ -88,26 +102,22 @@ import MimicCore
 
     func beginDrag(_ block: PanelBlockKind) {
         guard !removing, !catalogVisible, dragging == nil, layout.blocks.contains(block) else { return }
-        dragOrigin = layout; dragPreview = layout; dragging = block; dragTarget = nil; dragSize = nil; dragMiniSlot = nil; message = ""
+        dragTransaction = PanelDragTransaction(origin: layout, block: block)
+        dragPreview = layout; dragging = block; message = ""
     }
-    func previewDrag(at target: PanelInsertionTarget?, size: PanelBlockSize? = nil, miniSlot: Int? = nil) {
-        guard dragOrigin != nil, let block = dragging, var next = dragPreview else { return }
-        guard target != dragTarget || size != dragSize || miniSlot != dragMiniSlot else { return }
-        dragTarget = target; dragSize = size; dragMiniSlot = miniSlot
-        // Leaving the valid region keeps the confirmed preview; release there rolls back the transaction.
-        guard let target else { return }
-        do {
-            try next.insert(block, at: target, size: size, miniSlot: miniSlot)
-            try next.validate(for: .desktop)
-            if let origin = dragOrigin, next.rows.map(\.slots) == origin.rows.map(\.slots) { next = origin }
-            if next != dragPreview { dragPreview = next }
-        } catch { dragTarget = nil }
+    @discardableResult func previewDrag(at target: PanelInsertionTarget?, size: PanelBlockSize? = nil, miniSlot: Int? = nil) -> Bool {
+        guard var transaction = dragTransaction else { return false }
+        let accepted = transaction.propose(target, size: size, miniSlot: miniSlot, surface: .desktop)
+        dragTransaction = transaction
+        if accepted && dragPreview != transaction.preview { dragPreview = transaction.preview }
+        return accepted
     }
     /// A direct drop is one compare-and-save; editing drops remain inside the existing draft.
     func finishDrag() {
-        guard let origin = dragOrigin, let next = dragPreview else { return }
+        guard let transaction = dragTransaction else { return }
+        let origin = transaction.origin, next = transaction.preview
         defer { cancelDrag() }
-        guard dragTarget != nil, next.rows.map(\.slots) != origin.rows.map(\.slots) else { return }
+        guard transaction.valid, next.rows.map(\.slots) != origin.rows.map(\.slots) else { return }
         if editing { draft = next; return }
         do { saved = try store.save(next, for: .desktop, expectedRevision: origin.revision) }
         catch { saved = store.load(.desktop); message = text("panel.layout.drag.conflict") }
@@ -115,7 +125,7 @@ import MimicCore
     @discardableResult func cancelDrag() -> Bool {
         let active = dragging != nil
         if active { dragCancellationID += 1 }
-        dragging = nil; dragOrigin = nil; dragPreview = nil; dragTarget = nil; dragSize = nil; dragMiniSlot = nil
+        dragging = nil; dragTransaction = nil; dragPreview = nil
         return active
     }
     func open(_ block: PanelBlockKind) { expanded = expanded == block ? nil : block; catalogVisible = false }
@@ -148,7 +158,7 @@ struct PanelGridLayout: Layout {
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let result = placements(width: bounds.width, subviews: subviews)
-        frameStore?.record(Dictionary(uniqueKeysWithValues: cells.indices.map { (cells[$0].id, result.frames[$0]) }))
+        frameStore?.record(Dictionary(uniqueKeysWithValues: cells.indices.map { (cells[$0].id, result.frames[$0]) }), rows: rows)
         for index in subviews.indices {
             let frame = result.frames[index]
             let lifted = cells[index].block == dragging && dragging != nil
@@ -187,10 +197,9 @@ struct PanelGrid: View {
     // Geometry is an input cache. Observing its publisher here would feed layout back into body updates.
     @State private var frameStore: PanelFrameStore
     private var frames: [String: CGRect] { frameStore.logical }
-    @State private var dragTarget: PanelInsertionTarget?
+    @State private var dragPlaceholder: CGRect?
     @State private var lastHitPoint: CGPoint?
     @State private var dragValid = false
-    @State private var activeZone: PanelDragResize.Zone?
     @State private var dragPosition: CGPoint = .zero
     @State private var grabOffset: CGPoint = .zero
     @State private var grabAnchor: UnitPoint = .topLeading
@@ -204,10 +213,12 @@ struct PanelGrid: View {
         self.model = model; self.layout = layout; _frameStore = State(initialValue: frameStore)
     }
     private var visibleExpansion: PanelBlockKind? { layout.editing || layout.removing || layout.dragging != nil ? nil : layout.expanded }
-    private var policy: MimicMotionPolicy { MimicMotionPolicy(source: .pointer, reduceMotion: model.motionSettings.nativeReduceMotion, multiplier: model.motionSettings.multiplier) }
+    private var policy: MimicMotionPolicy { MimicMotionPolicy(source: .pointer, reduceMotion: model.motionSettings.nativeReduceMotion, multiplier: model.motionSettings.multiplier, retro: theme.retro) }
     private var accessibility = MimicAccessibility()
     private var rows: [PanelLayoutRow] {
-        var rows = layout.layout.rows
+        var rows = layout.layout.rows.map { row in
+            var row = row; row.slots = row.slots.map { block in block.flatMap { $0.isCustom && layout.customPanels[$0] == nil && layout.servicePanels[$0] == nil ? nil : $0 } }; return row
+        }.filter { !$0.blocks.isEmpty }
         if let block = layout.expanded, !layout.layout.blocks.contains(block) { rows.insert(PanelLayoutRow(id: transientID, slots: [block]), at: 0) }
         return rows
     }
@@ -226,7 +237,7 @@ struct PanelGrid: View {
                     Text(text("panel.tiles.remove.hint")).mimicFont(.body)
                     Spacer(minLength: 0)
                     Button { layout.cancelPresentation() } label: { Text("Esc").mimicFont(.caption) }
-                        .buttonStyle(.plain).help(text("panel.layout.cancel")).accessibilityLabel(text("panel.layout.cancel"))
+                        .buttonStyle(.plain).mimicHelp(text("panel.layout.cancel")).accessibilityLabel(text("panel.layout.cancel"))
                 }.padding(12).background(theme.color("accentSoft"), in: RoundedRectangle(cornerRadius: 10))
                     .accessibilityIdentifier("panel.tiles.removing")
             }
@@ -255,8 +266,8 @@ struct PanelGrid: View {
                 cancellationID: layout.dragCancellationID, enabled: model.panelPage == .home && !layout.removing, candidate: dragCandidate, click: { block in open(block) },
                 lift: lift, move: { point, pointer, time, visible in dragMoved(point, pointer, time, visible) }, end: { point, pointer, time in
                     dragMoved(point, pointer, time, true, advanceDwell: false)
-                    withAnimation(policy.animation(.geometry)) { layout.finishDrag() }
-                }, cancel: { withAnimation(policy.animation(.geometry)) { _ = layout.cancelDrag() } }
+                    withAnimation(policy.animation(.dragGeometry)) { layout.finishDrag() }
+                }, cancel: { withAnimation(policy.animation(.dragGeometry)) { _ = layout.cancelDrag() } }
             ))
             .padding(.bottom, layout.editing || layout.dragging != nil ? 32 : 0)
             if model.expandedSection == .tasks {
@@ -277,12 +288,17 @@ struct PanelGrid: View {
             }
             .onExitCommand { if !layout.cancelPresentation() { if layout.editing { layout.cancel() } else { layout.expanded = nil } } }
             .onDisappear { layout.cancelPresentation() }
+            .task(id: (model.project?.path ?? "") + (model.activeProfile?.revision ?? "")) { layout.configure(profile: model.activeProfile, checkout: model.project?.path) }
+            .onChange(of: layout.editing) { _, editing in if !editing { layout.configure(profile: model.activeProfile, checkout: model.project?.path) } }
             .onChange(of: theme.appearance) { _, _ in layout.cancelPresentation() }
             .onChange(of: textScale) { _, _ in layout.cancelDrag() }
             .onChange(of: layout.dragging) { _, block in
-                if block == nil { dragTarget = nil; lastHitPoint = nil; dragValid = false; activeZone = nil; initialGrabOffset = nil; dragResize = nil; dragMorph = nil; dragMorphPending = false; dragMorphScale = CGSize(width: 1, height: 1) }
+                if block == nil { dragPlaceholder = nil; lastHitPoint = nil; dragValid = false; initialGrabOffset = nil; dragResize = nil; dragMorph = nil; dragMorphPending = false; dragMorphScale = CGSize(width: 1, height: 1) }
             }
             .onReceive(frameStore.changes) { change in
+                if let block = layout.dragging, change.rows == rows, layout.dragAccepted {
+                    dragPlaceholder = change.next[block.rawValue]
+                }
                 let old = change.old, next = change.next
                 if let block = layout.dragging, let offset = initialGrabOffset, let frame = next[block.rawValue] {
                     grabAnchor = UnitPoint(x: min(1, max(0, offset.x / max(1, frame.width))), y: min(1, max(0, offset.y / max(1, frame.height))))
@@ -292,7 +308,7 @@ struct PanelGrid: View {
                 dragMorphPending = false
                 let now = ProcessInfo.processInfo.systemUptime
                 let correction = dragMorph?.scale(at: now) ?? CGSize(width: 1, height: 1)
-                dragMorph = PanelDragMorph(from: CGSize(width: from.width * correction.width, height: from.height * correction.height), to: to.size, started: now, duration: policy.duration(.geometry))
+                dragMorph = PanelDragMorph(from: CGSize(width: from.width * correction.width, height: from.height * correction.height), to: to.size, started: now, duration: policy.duration(.dragGeometry))
                 dragMorphScale = dragMorph!.scale(at: now)
             }
             .onChange(of: model.expandedSection) { _, section in
@@ -313,25 +329,25 @@ struct PanelGrid: View {
         HStack(spacing: 8) {
             if layout.editing {
                 Menu(text("panel.layout.add")) {
-                    ForEach(PanelBlockKind.catalog(for: .desktop).filter { !layout.layout.blocks.contains($0) }, id: \.self) { block in
-                        Button(text(block.titleKey)) { layout.edit { try $0.add(block) } }
+                    ForEach(layout.catalog.filter { !layout.layout.blocks.contains($0) }, id: \.self) { block in
+                        Button(layout.title(block)) { layout.edit { try $0.add(block) } }
                     }
-                }
+                }.mimicMenu(text("panel.layout.add"), items: availableBlocks.map { block in .init(layout.title(block), id: block.rawValue, enabled: { layout.editing && !layout.layout.blocks.contains(block) }) { layout.edit { try $0.add(block) } } })
                 Button(text("panel.layout.done")) { layout.finish() }.keyboardShortcut(.return, modifiers: .command)
                 Button(text("panel.layout.cancel")) { layout.cancel() }
                 Button(text("panel.layout.reset")) { layout.reset() }
             } else {
                 Button(text("panel.new.action")) { layout.catalogVisible.toggle() }
                 Spacer(minLength: 0)
-                Button { model.toggleHistory() } label: { Label { Text(text("tasks")).frame(width: theme.tiled ? nil : 0).clipped() } icon: { Image(systemName: "clock.arrow.circlepath") } }.help(text("tasks"))
-                Button { layout.begin() } label: { Label { Text(text("panel.layout.short")).frame(width: theme.tiled ? nil : 0).clipped() } icon: { Image(systemName: "slider.horizontal.3") } }.help(text("panel.layout.edit"))
+                Button { model.toggleHistory() } label: { Label { Text(text("tasks")).frame(width: theme.tiled ? nil : 0).clipped() } icon: { Image(systemName: "clock.arrow.circlepath") } }.mimicHelp(text("tasks"))
+                Button { layout.begin() } label: { Label { Text(text("panel.layout.short")).frame(width: theme.tiled ? nil : 0).clipped() } icon: { Image(systemName: "slider.horizontal.3") } }.mimicHelp(text("panel.layout.edit"))
             }
         }.mimicFont(.caption)
     }
     private var catalog: some View {
         Surface {
             ForEach(PanelBlockKind.catalog(for: .desktop), id: \.self) { block in
-                Button { open(block) } label: { Label(text(block.titleKey), systemImage: block.symbol).frame(maxWidth: .infinity, alignment: .leading) }
+                Button { open(block) } label: { Label(layout.title(block), systemImage: block.symbol).frame(maxWidth: .infinity, alignment: .leading) }
                     .buttonStyle(RowButtonStyle()).accessibilityIdentifier("panel.catalog." + block.rawValue)
             }
         }
@@ -344,13 +360,24 @@ struct PanelGrid: View {
         return VStack(alignment: .leading, spacing: 0) {
             // The retained zero-height catalog must not reserve a trailing gap below favorites.
             VStack(alignment: .leading, spacing: compactTools ? 0 : compactSimulators ? 8 : 6) {
-                if block == .bootstrap, !layout.editing {
+                if let tool = layout.servicePanels[block], let project = model.project, let snapshot = model.activeProfile, !layout.editing {
+                    if !theme.retro { blockHeader(block, expanded: expanded) }
+                    ServiceToolView(model: model, tool: tool, project: project, snapshot: snapshot)
+                        .id(project.path + project.branch + project.commit + snapshot.revision + block.rawValue)
+                } else if let panel = layout.customPanels[block], let project = model.project, let snapshot = model.activeProfile, !layout.editing {
+                    if !theme.retro { blockHeader(block, expanded: expanded) }
+                    ProfilePanelView(model: model, panel: panel, project: project, snapshot: snapshot, full: layout.layout.size(of: block) == .full)
+                        .id(project.path + snapshot.revision + block.rawValue)
+                } else if block == .workItem, !layout.editing {
+                    WorkCardView(model: model, full: expanded || layout.layout.size(of: block) == .full)
+                } else if block == .bootstrap, !layout.editing {
                     BootstrapCard(model: model, mode: expanded ? .expanded : layout.layout.size(of: block) == .full ? .full : .mini,
-                                  header: AnyView(blockHeader(block, expanded: expanded)))
+                                  header: theme.retro ? nil : AnyView(blockHeader(block, expanded: expanded)), hidesDefaultHeader: theme.retro)
                 } else {
                     if layout.editing { editHeader(block) }
                     else {
-                        blockHeader(block, expanded: expanded).padding(.bottom, compactTools ? 6 : 0)
+                        blockHeader(block, expanded: expanded).frame(height: theme.retro ? 0 : nil).opacity(theme.retro ? 0 : 1)
+                            .allowsHitTesting(!theme.retro).accessibilityHidden(theme.retro).padding(.bottom, compactTools && !theme.retro ? 6 : 0)
                         if !expanded, block == .builds {
                             BuildCardView(model: model, builds: model.builds, full: layout.layout.size(of: block) == .full)
                         } else if !expanded, block == .ci {
@@ -361,11 +388,11 @@ struct PanelGrid: View {
                             ToolsCompactView(model: model, preferences: model.toolsPreferences, full: layout.layout.size(of: block) == .full)
                         } else if !expanded, block == .simulators {
                             SimulatorCompactDevices(model: model, full: layout.layout.size(of: block) == .full, open: { open(.simulators) })
-                        } else if !expanded { Text(summary(block)).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(2).help(summary(block)) }
+                        } else if !expanded { Text(summary(block)).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(2).mimicHelp(summary(block)) }
                     }
                 }
                 // Bootstrap owns its retained subtree; another hidden card would reserve spacing and reparent its screen.
-                if block != .bootstrap {
+                if block != .bootstrap && block != .workItem && !block.isCustom {
                     // A single container prevents retained ForEach children from reserving collapsed row gaps.
                     MimicCollapse(expanded: expanded, source: layout.dragging == nil ? model.navigationSource : .keyboard, retainsContent: true) {
                         VStack(alignment: .leading, spacing: 8) { content(block) }
@@ -379,10 +406,17 @@ struct PanelGrid: View {
                 // Bootstrap marks only its controls and terminal so its text and free surface can disclose.
                 // Other hosted forms retain their whole-surface control exclusion.
                 .background { if block != .bootstrap || layout.editing { PanelControlRegion() } }
-        }.padding(block == .bootstrap ? EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12) : compactSimulators ? SimulatorCompactLayout.tileInsets : MimicMetrics.cardInsets).frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
+        }.padding(block == .bootstrap ? EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12) : block == .workItem && !expanded ? EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16) : compactSimulators ? SimulatorCompactLayout.tileInsets : MimicMetrics.cardInsets)
+            .padding(.top, theme.retro ? NativeRetro.titleHeight(theme.appearance) * textScale + (theme.appearance == .windows95 ? 3 : 0) : 0).frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
             // Content changes never give one collapsed tile a different height from its neighbours.
             .frame(height: expanded ? nil : MimicMetrics.collapsedCardHeight * (theme.tiled ? max(1, textScale) : 1), alignment: .topLeading)
             .modifier(PanelCardBackground(block: block))
+            .overlay(alignment: .top) {
+                if theme.retro {
+                    NativeRetroTitle(block: block, expanded: expanded) { open(block) }
+                        .padding(theme.appearance == .windows95 ? EdgeInsets(top: 3, leading: 3, bottom: 0, trailing: 3) : EdgeInsets())
+                }
+            }
             .clipShape(RoundedRectangle(cornerRadius: theme.cardRadius))
             .disabled(layout.removing).accessibilityHidden(layout.removing)
             .overlay {
@@ -394,21 +428,21 @@ struct PanelGrid: View {
                             .fill(theme.color("accent").opacity(0.001))
                             .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).strokeBorder(theme.color("accent"), lineWidth: 1.5))
                             .contentShape(RoundedRectangle(cornerRadius: theme.cardRadius))
-                    }.buttonStyle(.plain).accessibilityLabel(text("panel.layout.remove") + ": " + text(block.titleKey))
+                    }.buttonStyle(.plain).accessibilityLabel(text("panel.layout.remove") + ": " + layout.title(block))
                         .accessibilityIdentifier("panel.remove." + block.rawValue)
                 }
             }
             .environment(\.mimicInsideSurface, true)
-            .modifier(PanelCardTooltip(message: text(layout.removing ? "panel.layout.remove" : "panel.layout.drag.hint"), preservesChildHelp: (block == .bootstrap || block == .builds) && !layout.removing))
+            .modifier(PanelCardTooltip(message: text(layout.removing ? "panel.layout.remove" : "panel.layout.drag.hint"), preservesChildHelp: (block == .bootstrap || block == .builds || block == .workItem) && !layout.removing))
             .id(block.scrollID).accessibilityIdentifier("panel.block." + block.rawValue)
     }
     private func blockHeader(_ block: PanelBlockKind, expanded: Bool) -> some View {
         Button { open(block) } label: {
             HStack(alignment: .top, spacing: 6) {
                 Image(systemName: block.symbol).foregroundStyle(theme.tiled || accessibility.increasedContrast ? Color.primary : PanelCardPalette.color(block))
-                Text(text(block.titleKey))
+                Text(layout.title(block))
                     .font(.system(size: (block == .simulators && !expanded && theme.tiled ? 14 : MimicTheme.metric("heading")) * (theme.tiled ? textScale : 1), weight: .semibold))
-                    .lineLimit(2).help(text(block.titleKey))
+                    .lineLimit(2).mimicHelp(layout.title(block))
                 if block == .ci, let checkout = expanded ? model.ciPresentedState.context?.checkout : model.project?.path { CIProjectName(checkout: checkout) }
                 Spacer(minLength: 0)
 
@@ -419,30 +453,31 @@ struct PanelGrid: View {
     private func editHeader(_ block: PanelBlockKind) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Image(systemName: "line.3.horizontal").help(text("panel.layout.drag.hint"))
+                Image(systemName: "line.3.horizontal").mimicHelp(text("panel.layout.drag.hint"))
                     .background(PanelDragHeaderRegion())
-                Text(text(block.titleKey)).mimicFont(.heading).lineLimit(2).help(text(block.titleKey))
+                Text(layout.title(block)).mimicFont(.heading).lineLimit(2).mimicHelp(layout.title(block))
                     .background(PanelDragHeaderRegion())
                 Spacer(minLength: 0)
                 Menu {
-                    Button(text("panel.layout.full")) { layout.edit { try $0.resize(block, to: .full) } }
-                    Button(text("panel.layout.mini")) { layout.edit { try $0.resize(block, to: .mini) } }
+                    Button(text("panel.layout.full")) { layout.edit(preserving: block) { try $0.resize(block, to: .full) } }
+                    Button(text("panel.layout.mini")) { layout.edit(preserving: block) { try $0.resize(block, to: .mini) } }
                     Button(text("panel.layout.up")) { move(block, direction: -1) }
                     Button(text("panel.layout.down")) { move(block, direction: 1) }
                     Menu(text("panel.layout.replace")) {
-                        ForEach(PanelBlockKind.catalog(for: .desktop).filter { !layout.layout.blocks.contains($0) }, id: \.self) { replacement in
-                            Button(text(replacement.titleKey)) { layout.edit { try $0.replace(block, with: replacement) } }
+                        ForEach(layout.catalog.filter { !layout.layout.blocks.contains($0) }, id: \.self) { replacement in
+                            Button(layout.title(replacement)) { layout.edit { try $0.replace(block, with: replacement) } }
                         }
                     }
                     Menu(text("panel.layout.join")) {
                         ForEach(layout.layout.rows.filter { $0.slots.count == 2 && $0.slots.contains(nil) }) { row in
-                            Button(row.blocks.map { text($0.titleKey) }.joined(separator: " · ")) {
-                                layout.edit { try $0.resize(block, to: .mini); try $0.move(block, to: row.id, slot: row.slots.firstIndex(of: nil) ?? 1) }
+                            Button(row.blocks.map { layout.title($0) }.joined(separator: " · ")) {
+                                layout.edit(preserving: block) { try $0.resize(block, to: .mini); try $0.move(block, to: row.id, slot: row.slots.firstIndex(of: nil) ?? 1) }
                             }.disabled(row.blocks.contains(block))
                         }
                     }
                     Button(text("panel.layout.remove")) { layout.edit { $0.remove(block) } }
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).fixedSize()
+                    .mimicMenu("…", items: retroLayoutMenu(block))
                     .background(PanelControlRegion())
             }
         }
@@ -452,14 +487,35 @@ struct PanelGrid: View {
             if layout.editing {
                 RoundedRectangle(cornerRadius: 10).strokeBorder(Color.secondary.opacity(0.2), style: StrokeStyle(lineWidth: 1, dash: [4]))
                 Menu {
-                    ForEach(PanelBlockKind.catalog(for: .desktop).filter { !layout.layout.blocks.contains($0) }, id: \.self) { block in
-                        Button(text(block.titleKey)) { layout.edit { try $0.add(block, size: .mini); try $0.move(block, to: cell.row, slot: cell.slot) } }
+                    ForEach(layout.catalog.filter { !layout.layout.blocks.contains($0) }, id: \.self) { block in
+                        Button(layout.title(block)) { layout.edit(preserving: block) { try $0.add(block, size: .mini); try $0.move(block, to: cell.row, slot: cell.slot) } }
                     }
-                } label: { Image(systemName: "plus") }.menuStyle(.borderlessButton).fixedSize().help(text("panel.layout.add"))
+                } label: { Image(systemName: "plus") }.menuStyle(.borderlessButton).fixedSize().mimicHelp(text("panel.layout.add"))
+                    .mimicMenu("+", items: availableBlocks.map { block in .init(layout.title(block), id: block.rawValue, enabled: { layout.editing && !layout.layout.blocks.contains(block) }) { layout.edit(preserving: block) { try $0.add(block, size: .mini); try $0.move(block, to: cell.row, slot: cell.slot) } } })
             }
         }
     }
     // MARK: - Gesture geometry
+
+    private var availableBlocks: [PanelBlockKind] { layout.catalog.filter { !layout.layout.blocks.contains($0) } }
+    private func retroLayoutMenu(_ block: PanelBlockKind) -> [NativeRetroMenuEntry] {
+        let enabled = { layout.editing && layout.layout.blocks.contains(block) }
+        let replacements = availableBlocks.map { replacement in NativeRetroMenuEntry(layout.title(replacement), id: replacement.rawValue, enabled: { layout.editing && !layout.layout.blocks.contains(replacement) }) { layout.edit { try $0.replace(block, with: replacement) } } }
+        let joins = layout.layout.rows.filter { $0.slots.count == 2 && $0.slots.contains(nil) }.map { row in
+            NativeRetroMenuEntry(row.blocks.map { layout.title($0) }.joined(separator: " · "), id: row.id.uuidString, enabled: { layout.editing && !row.blocks.contains(block) && layout.layout.rows.contains { $0.id == row.id && $0.slots.contains(nil) } }) {
+                layout.edit(preserving: block) { try $0.resize(block, to: .mini); try $0.move(block, to: row.id, slot: row.slots.firstIndex(of: nil) ?? 1) }
+            }
+        }
+        return [
+            .init(text("panel.layout.full"), enabled: enabled) { layout.edit(preserving: block) { try $0.resize(block, to: .full) } },
+            .init(text("panel.layout.mini"), enabled: enabled) { layout.edit(preserving: block) { try $0.resize(block, to: .mini) } },
+            .init(text("panel.layout.up"), enabled: enabled) { move(block, direction: -1) },
+            .init(text("panel.layout.down"), enabled: enabled) { move(block, direction: 1) },
+            .init(text("panel.layout.replace"), enabled: { enabled() && !replacements.isEmpty }, children: replacements),
+            .init(text("panel.layout.join"), enabled: { enabled() && !joins.isEmpty }, children: joins),
+            .init(text("panel.layout.remove"), enabled: enabled) { layout.edit { $0.remove(block) } }
+        ]
+    }
 
     private func dragCandidate(_ point: CGPoint) -> PanelDragBridge.Candidate? {
         guard model.panelPage == .home, let cell = cells.first(where: { cell in
@@ -484,7 +540,7 @@ struct PanelGrid: View {
         initialGrabOffset = grabOffset
         dragResize = PanelDragResize(size: layout.layout.size(of: block) ?? .full, pointer: pointer)
         dragMorph = nil; dragMorphPending = false; dragMorphScale = CGSize(width: 1, height: 1)
-        dragTarget = nil; lastHitPoint = nil
+        dragPlaceholder = frame; lastHitPoint = nil
         layout.beginDrag(block)
         dragMoved(point, pointer, time, true)
     }
@@ -492,56 +548,47 @@ struct PanelGrid: View {
         guard let block = layout.dragging else { return }
         if dragPosition != point { dragPosition = point }
         let current = layout.layout
+        if !advanceDwell, visible, layout.dragAccepted,
+           let placeholder = dragPlaceholder, placeholder.insetBy(dx: -12, dy: -12).contains(point) { return }
+        let measured = frameStore.geometry
+        guard measured.rows == rows else {
+            if !advanceDwell { dragValid = false; layout.previewDrag(at: nil) }
+            return
+        }
         let geometry = cells.compactMap { cell -> PanelDragGeometry.Cell? in
-            guard cell.row != transientID, let frame = frames[cell.id], frame.width > 0 else { return nil }
+            guard cell.row != transientID, let frame = measured.frames[cell.id], frame.width > 0 else { return nil }
             return .init(row: cell.row, slot: cell.slot, frame: frame, full: current.rows.first(where: { $0.id == cell.row })?.size == .full)
         }
         let width = geometry.map(\.frame.maxX).max() ?? 0
         let bottom = geometry.map(\.frame.maxY).max() ?? 0
         let valid = visible && point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= bottom + 32
         let zone = valid ? PanelDragResize.Zone.resolve(x: point.x, width: width) : nil
-        activeZone = zone
         let resized = advanceDwell && dragResize?.update(zone: zone, pointer: pointer, time: time) == true
         if resized { dragMorphPending = true }
         if let dragMorph { dragMorphScale = dragMorph.scale(at: time) }
         if !valid {
             dragValid = false
             layout.previewDrag(at: nil, size: dragResize?.size)
+        } else if !resized, layout.dragAccepted, let placeholder = dragPlaceholder,
+                  placeholder.insetBy(dx: -12, dy: -12).contains(point) {
+            dragValid = true
         } else if lastHitPoint != point || resized || !dragValid {
             let target = PanelDragGeometry.retainedTarget(point: point, block: block, layout: current, cells: geometry,
-                                                         current: dragTarget, size: dragResize?.size ?? .full, resized: resized)
-            dragTarget = target; dragValid = target != nil
-            withAnimation(policy.animation(.geometry)) { layout.previewDrag(at: target, size: dragResize?.size, miniSlot: zone?.slot) }
+                                                         current: layout.acceptedDragTarget, size: dragResize?.size ?? .full, resized: resized)
+            withAnimation(policy.animation(.dragGeometry)) {
+                dragValid = layout.previewDrag(at: target, size: dragResize?.size, miniSlot: zone?.slot)
+            }
         }
         lastHitPoint = point
     }
 
-    /// Indicators occupy an overlay, so progress and destination borders cannot change grid measurements.
+    /// The accepted placeholder is the only drag indicator and never participates in measurement.
     @ViewBuilder private var dragFeedback: some View {
-        if let block = layout.dragging, let source = frames[block.rawValue] {
-            let width = frames.values.map(\.maxX).max() ?? source.width
-            ZStack(alignment: .topLeading) {
-                HStack(spacing: 0) {
-                    ForEach(0..<3) { index in
-                        let zone: PanelDragResize.Zone = index == 0 ? .left : index == 1 ? .center : .right
-                        Rectangle().fill(Color.accentColor.opacity(activeZone == zone ? 0.05 : 0))
-                            .overlay(Rectangle().stroke(Color.accentColor.opacity(activeZone == zone ? 0.25 : 0)))
-                            .frame(width: width * (index == 1 ? 0.4 : 0.3))
-                    }
-                }
-                if dragValid {
-                    RoundedRectangle(cornerRadius: theme.cardRadius).fill(Color.accentColor.opacity(0.07))
-                        .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [5])))
-                        .frame(width: source.width, height: source.height).offset(x: source.minX, y: source.minY)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(text((dragResize?.pending?.size ?? dragResize?.size) == .mini ? "panel.layout.drag.mini" : "panel.layout.drag.full"))
-                            .mimicFont(.caption)
-                        Rectangle().fill(Color.accentColor).frame(width: 100, height: 2)
-                            .scaleEffect(x: dragResize?.progress ?? 0, anchor: .leading)
-                    }.padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .offset(x: min(max(0, dragPosition.x + 16), max(0, width - 120)), y: max(0, dragPosition.y + 20))
-                }
-            }.allowsHitTesting(false).accessibilityHidden(true).zIndex(50)
+        if layout.dragging != nil, dragValid, layout.dragAccepted, let source = dragPlaceholder {
+            RoundedRectangle(cornerRadius: theme.cardRadius).fill(Color.accentColor.opacity(0.07))
+                .overlay(RoundedRectangle(cornerRadius: theme.cardRadius).stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [5])))
+                .frame(width: source.width, height: source.height).offset(x: source.minX, y: source.minY)
+                .allowsHitTesting(false).accessibilityHidden(true).zIndex(50)
         }
     }
     private func move(_ block: PanelBlockKind, direction: Int) {
@@ -549,11 +596,11 @@ struct PanelGrid: View {
         let target = direction < 0 ? index - 1 : index + 2
         guard target >= 0 else { return }
         let row = layout.layout.rows.indices.contains(target) ? layout.layout.rows[target].id : nil
-        layout.edit { try $0.move(block, before: row) }
+        layout.edit(preserving: block) { try $0.move(block, before: row) }
     }
     private func open(_ block: PanelBlockKind) {
         guard !layout.editing, layout.dragging == nil else { return }
-        let policy = MimicMotionPolicy(source: .current, reduceMotion: model.motionSettings.nativeReduceMotion, multiplier: model.motionSettings.multiplier)
+        let policy = MimicMotionPolicy(source: .current, reduceMotion: model.motionSettings.nativeReduceMotion, multiplier: model.motionSettings.multiplier, retro: theme.retro)
         withAnimation(policy.moves ? policy.animation(.disclosure) : nil) { layout.open(block) }
         if block == .ci { model.clearCIInspection() }
         if block == .utils { model.selectedProjectTool = nil }
@@ -579,7 +626,7 @@ struct PanelGrid: View {
         case .ci, .uiTests, .qualityGates, .beta:
             if let inspection = model.ciInspection, inspection.checkout != model.project?.path {
                 HStack {
-                    Text(URL(fileURLWithPath: inspection.checkout).lastPathComponent).mimicFont(.caption).help(inspection.checkout)
+                    Text(URL(fileURLWithPath: inspection.checkout).lastPathComponent).mimicFont(.caption).mimicHelp(inspection.checkout)
                     Spacer(minLength: 4)
                     Button(text("ci.compact.currentProject")) { model.clearCIInspection() }
                 }
@@ -605,14 +652,14 @@ private struct PanelCardFeedback: ViewModifier {
     let policy: MimicMotionPolicy
     @State private var hovered = false
     func body(content: Content) -> some View {
-        let hovering = enabled && hovered
+        let hovering = enabled && hovered && !policy.retro
         content.background {
             ZStack {
                 RoundedRectangle(cornerRadius: radius).fill(.black).shadow(color: .black.opacity(0.10), radius: 5, y: 3).opacity(hovering && !lifted ? 1 : 0)
-                RoundedRectangle(cornerRadius: radius).fill(.black).shadow(color: .black.opacity(0.18), radius: 12, y: 10).opacity(lifted ? 1 : 0)
+                RoundedRectangle(cornerRadius: radius).fill(.black).shadow(color: .black.opacity(0.18), radius: 12, y: 10).opacity(lifted && !policy.retro ? 1 : 0)
             }
         }
-        .scaleEffect(x: lifted ? morphScale.width : 1, y: lifted ? morphScale.height : 1, anchor: grabAnchor)
+        .scaleEffect(x: lifted && !policy.retro ? morphScale.width : 1, y: lifted && !policy.retro ? morphScale.height : 1, anchor: grabAnchor)
         .scaleEffect(policy.moves ? lifted ? 1.04 : hovering ? 1.02 : 1 : 1, anchor: lifted ? grabAnchor : .center)
         .animation(policy.animation(.feedback), value: hovering)
         .animation(policy.animation(.feedback), value: lifted)
@@ -631,7 +678,7 @@ private struct PanelCardTooltip: ViewModifier {
     let preservesChildHelp: Bool
     @ViewBuilder func body(content: Content) -> some View {
         if self.preservesChildHelp { content }
-        else { content.help(self.message) }
+        else { content.mimicHelp(self.message) }
     }
 }
 

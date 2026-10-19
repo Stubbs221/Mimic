@@ -28,10 +28,11 @@ struct MimicWindowRoot<Content: View>: View {
             .environment(\.mimicPresentationVisible, self.presentation.interactive)
             .modifier(MimicTextSizingRoot())
             .environment(\.mimicPanelAppearance, self.appearance?.selection ?? .legacy)
-            .foregroundStyle(Color(nsColor: self.appearance?.selection == .tileGrid ? MimicTheme.adaptive("ink") : .labelColor))
-            .tint(Color(nsColor: self.appearance?.selection == .tileGrid ? MimicTheme.adaptive("accent") : .systemIndigo))
+            .foregroundStyle(Color(nsColor: self.appearance?.selection.isRetro == true ? NativeRetro.color("ink", appearance: self.appearance!.selection) : self.appearance?.selection == .tileGrid ? MimicTheme.adaptive("ink") : .labelColor))
+            .tint(Color(nsColor: self.appearance?.selection.isRetro == true ? NativeRetro.color("accent", appearance: self.appearance!.selection) : self.appearance?.selection == .tileGrid ? MimicTheme.adaptive("accent") : .systemIndigo))
+            .progressViewStyle(MimicActivityProgressStyle())
             .offset(y: self.presentation.offset).allowsHitTesting(self.presentation.interactive)
-            .accessibilityHidden(!self.presentation.interactive).preferredColorScheme(self.settings.previewColorScheme)
+            .accessibilityHidden(!self.presentation.interactive).preferredColorScheme(self.appearance?.selection.isRetro == true ? .light : self.settings.previewColorScheme)
     }
 }
 
@@ -41,6 +42,7 @@ struct MimicWindowRoot<Content: View>: View {
 final class MimicWindowMotion {
     let window: NSWindow
     let settings: MimicMotionSettings
+    let appearance: PanelAppearanceStore?
     let presentation = MimicWindowPresentation()
     private(set) var desiredVisible = false
     private(set) var revision: UInt64 = 0
@@ -68,8 +70,8 @@ final class MimicWindowMotion {
     var isAnimatingFrame: Bool { self.geometry != nil }
     var isTransitioning: Bool { self.visibility != nil }
 
-    init(window: NSWindow, settings: MimicMotionSettings, automaticallyTicks: Bool = true, clock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) {
-        self.window = window; self.settings = settings; self.automaticallyTicks = automaticallyTicks; self.clock = clock
+    init(window: NSWindow, settings: MimicMotionSettings, appearance: PanelAppearanceStore? = nil, automaticallyTicks: Bool = true, clock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) {
+        self.window = window; self.settings = settings; self.appearance = appearance; self.automaticallyTicks = automaticallyTicks; self.clock = clock
         self.window.alphaValue = 0
     }
 
@@ -84,7 +86,7 @@ final class MimicWindowMotion {
         self.presentation.interactive = visible; self.window.ignoresMouseEvents = !visible
         if !visible { self.window.makeFirstResponder(nil); self.window.resignKey() }
         self.visibilityChanged(visible)
-        let policy = MimicMotionPolicy(source: source, reduceMotion: self.settings.nativeReduceMotion, multiplier: self.settings.multiplier)
+        let policy = MimicMotionPolicy(source: source, reduceMotion: self.settings.nativeReduceMotion, multiplier: self.settings.multiplier, retro: appearance?.selection.isRetro == true)
         if visible && !self.window.isVisible {
             self.window.alphaValue = 0; self.presentation.offset = policy.moves ? -8 : 0
             if key { self.window.makeKeyAndOrderFront(nil) } else { self.window.orderFrontRegardless() }
@@ -98,7 +100,7 @@ final class MimicWindowMotion {
 
     func setFrame(_ frame: NSRect, source: MimicMotionSource = .automatic, immediate: Bool = false) {
         self.advance(to: self.clock())
-        let policy = MimicMotionPolicy(source: source, reduceMotion: self.settings.nativeReduceMotion, multiplier: self.settings.multiplier)
+        let policy = MimicMotionPolicy(source: source, reduceMotion: self.settings.nativeReduceMotion, multiplier: self.settings.multiplier, retro: appearance?.selection.isRetro == true)
         let duration = immediate || !self.window.isVisible ? 0 : policy.duration(.geometry)
         func matches(_ other: NSRect) -> Bool {
             abs(frame.minX - other.minX) < 0.5 && abs(frame.minY - other.minY) < 0.5 && abs(frame.width - other.width) < 0.5 && abs(frame.height - other.height) < 0.5
@@ -115,6 +117,11 @@ final class MimicWindowMotion {
 
     /// Exposed internally for deterministic fixture checks of first, middle and final frames.
     func advance(to now: Double) {
+        if appearance?.selection.isRetro == true {
+            if let track = geometry { window.setFrame(track.target, display: true); geometry = nil }
+            finishVisibility()
+            return
+        }
         if self.settings.nativeReduceMotion {
             if let track = self.visibility, track.offset != 0 || track.targetOffset != 0 {
                 self.presentation.offset = 0

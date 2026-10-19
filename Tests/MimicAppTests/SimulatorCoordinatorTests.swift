@@ -16,6 +16,7 @@ import MimicCore
     var descriptor: AppleSimulatorDescriptor?
     var revision: UInt64 = 0
     var failAction = false
+    var failStart = false
     var failClose = false
     var captureFailure: AppleSimulatorError?
     var authorizedWorkspaces: [URL] = []
@@ -27,6 +28,7 @@ import MimicCore
     func authorize(workspace: URL) async throws { calls.append("authorize"); authorizedWorkspaces.append(workspace); onAuthorize?() }
     func startSession(deviceID: UUID, workspace: URL?) async throws -> AppleSimulatorDescriptor {
         calls.append("start")
+        if failStart { throw AppleSimulatorError.connectionLost }
         let device = deviceID
         let session = AppleSimulatorSession { _, _ in .object(["deviceUUID": .string(device.uuidString), "deviceIsSimulator": .bool(true), "interactionSessionKey": .string("fixture-secret")]) }
         let descriptor = try await session.start(deviceID: deviceID, workspace: workspace); self.descriptor = descriptor; return descriptor
@@ -137,6 +139,95 @@ import MimicCore
         let restarted = SimulatorCoordinator(directory: path)
         #expect(restarted.busy); #expect(restarted.records.last?.status == .unknown)
         try await owner.releaseUnknown(recordID); #expect(!owner.busy); #expect(owner.descriptor == nil)
+    }
+
+    @Test(arguments: [false, true]) func lostSessionStartReleasesQueueWithoutReplay(failStart: Bool) async throws {
+        let (owner, driver, project, path) = fixture()
+        defer { owner.stop(); try? FileManager.default.removeItem(at: path) }
+        driver.failStart = failStart
+        if !failStart { driver.captureFailure = .connectionLost }
+        let id = UUID(), record = try await owner.submit(id: id, kind: .start, project: project, device: driver.device)
+        #expect(owner.hasPendingOperations)
+        owner.start(record); try await completed(owner, id)
+        #expect(owner.activity(id)?.status == .unknown)
+        #expect(owner.activity(id)?.queueReleased == true)
+        #expect(!owner.busy && !owner.hasPendingOperations && owner.descriptor == nil)
+        #expect(driver.calls.last == "disconnect")
+        let replay = try await owner.submit(id: id, kind: .start, project: project, device: driver.device)
+        #expect(replay.status == .unknown && replay.queueReleased)
+        #expect(driver.calls.filter { $0 == "start" }.count == 1)
+        let restarted = SimulatorCoordinator(directory: path)
+        #expect(!restarted.hasPendingOperations && restarted.activity(id)?.status == .unknown)
+        driver.failStart = false; driver.captureFailure = nil
+        let next = try await owner.submit(id: UUID(), kind: .start, project: project, device: driver.device)
+        owner.start(next); try await completed(owner, next.id)
+        #expect(owner.activity(next.id)?.status == .succeeded)
+    }
+
+    @Test func failedExplicitFrameRefreshDisconnectsAndReleasesQueue() async throws {
+        let (owner, driver, project, path) = fixture()
+        defer { owner.stop(); try? FileManager.default.removeItem(at: path) }
+        let start = try await owner.submit(id: UUID(), kind: .start, project: project, device: driver.device)
+        owner.start(start); try await completed(owner, start.id)
+        let session = try #require(owner.descriptor?.id)
+        driver.captureFailure = .connectionLost
+        let refresh = try await owner.submit(id: UUID(), kind: .refresh, project: project, device: driver.device, sessionID: session)
+        owner.start(refresh); try await completed(owner, refresh.id)
+        #expect(owner.activity(refresh.id)?.status == .unknown && owner.activity(refresh.id)?.queueReleased == true)
+        #expect(!owner.hasPendingOperations && owner.descriptor == nil && driver.calls.last == "disconnect")
+        let replay = try await owner.submit(id: refresh.id, kind: .refresh, project: project, device: driver.device, sessionID: session)
+        #expect(replay.status == .unknown && driver.calls.filter { $0 == "capture" }.count == 2)
+    }
+
+    @Test(arguments: [SimulatorActivity.Kind.start, .refresh, .close, .install, .action, .launch, .deeplink],
+          [BuildStatus.queued, .preparing, .running, .unknown, .succeeded, .failed, .cancelled, .interrupted])
+    func recoveredSimulatorHistoryOnlyRetainsUncertainMutations(kind: SimulatorActivity.Kind, status: BuildStatus) throws {
+        let path = URL(fileURLWithPath: "/private/tmp/MimicSimulatorRecovery-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: path) }
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+        let project = ProjectContext(path: path.path)
+        var record = SimulatorActivity(id: UUID(), project: project, developer: "/fixture/Developer", deviceID: UUID(), sessionID: nil, kind: kind)
+        record.status = status
+        try JSONEncoder().encode([record]).write(to: path.appendingPathComponent("SimulatorActivities.json"))
+        let owner = SimulatorCoordinator(directory: path)
+        let uncertain = [.preparing, .running, .unknown].contains(status)
+        let mutating = ![SimulatorActivity.Kind.start, .refresh, .close].contains(kind)
+        #expect(owner.hasPendingOperations == (uncertain && mutating))
+        #expect(owner.activity(record.id)?.status == (status == .queued ? .cancelled : uncertain ? .unknown : status))
+    }
+
+    @Test(arguments: [BuildStatus.unknown, .running, .preparing]) func recoveredViewerStartAllowsBranchSwitch(status: BuildStatus) async throws {
+        let (initial, driver, fixtureProject, path) = fixture()
+        defer { initial.stop(); try? FileManager.default.removeItem(at: path) }
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+        for args in [["init", "-b", "fixture"], ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture"], ["branch", "target"]] {
+            try #require(EnvironmentInspector.capture("/usr/bin/git", args, directory: path.path).0 == 0)
+        }
+        let project = try EnvironmentInspector.project(path: path.path, developerDirectory: fixtureProject.developerDirectory)
+        let childPath = path.appendingPathComponent("Devices/" + String(repeating: "a", count: 64))
+        try FileManager.default.createDirectory(at: childPath, withIntermediateDirectories: true)
+        var record = SimulatorActivity(id: UUID(), project: project, developer: project.developerDirectory!, deviceID: driver.device, sessionID: nil, kind: .start)
+        record.status = status; record.deviceOnly = true; record.errorCode = "connectionLost"
+        let ledger = childPath.appendingPathComponent("SimulatorActivities.json")
+        try JSONEncoder().encode([record]).write(to: ledger)
+        let owner = SimulatorCoordinator(directory: path)
+        defer { owner.stop() }
+        #expect(!owner.busy && !owner.hasPendingOperations)
+        #expect(owner.activity(record.id)?.status == .unknown && owner.activity(record.id)?.queueReleased == true)
+        let persisted = try JSONDecoder().decode([SimulatorActivity].self, from: Data(contentsOf: ledger))
+        #expect(persisted.first?.queueReleased == true && persisted.first?.status == .unknown)
+        let duplicate = try await owner.submit(id: record.id, kind: .start, project: project, device: driver.device)
+        #expect(duplicate.queueReleased && duplicate.status == .unknown && driver.calls.isEmpty)
+        let suite = "RecoveredViewer-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = TaskCoordinator(directory: path.appendingPathComponent("model"), simulatorCoordinator: owner, defaults: defaults)
+        model.projects = [project]; model.selectedProjectPath = project.path; model.gitSummary = GitSummary(porcelain: "")
+        #expect(model.canSwitchBranch && model.branchSwitchBlocker == nil)
+        #expect(model.switchBranch("target"))
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.branchSwitch.isExecuting && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(model.branchSwitch.operations.last?.phase == .succeeded)
+        #expect(EnvironmentInspector.capture("/usr/bin/git", ["branch", "--show-current"], directory: path.path).1 == "target")
     }
     @Test func tenThousandCompletedRequestsKeepAdmissionReplayAndRecovery() async throws {
         let (initial, driver, project, path) = fixture(); defer { initial.stop(); try? FileManager.default.removeItem(at: path) }
@@ -324,15 +415,22 @@ import MimicCore
         #expect(!driver.calls.contains("disconnect"))
     }
 
-    @Test func concurrentViewersShareCaptureAndDetachedViewerRejectsLateFrame() async throws {
-        let (owner, driver, project, path) = fixture()
+    @Test(arguments: [false, true]) func concurrentViewersShareCaptureAndDetachedViewerRejectsLateFrame(panel: Bool) async throws {
+        let (owner, driver, fixtureProject, path) = fixture()
         defer { driver.captureContinuation?.resume(); owner.stop(); try? FileManager.default.removeItem(at: path) }
+        try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+        for args in [["init", "-b", "fixture"], ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture"], ["branch", "target"]] {
+            try #require(EnvironmentInspector.capture("/usr/bin/git", args, directory: path.path).0 == 0)
+        }
+        let project = try EnvironmentInspector.project(path: path.path, developerDirectory: fixtureProject.developerDirectory, appleTarget: fixtureProject.appleTarget)
+        owner.currentProject = { project }
         let workspace = path.appendingPathComponent("Access.xcworkspace")
         try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
         try owner.rememberAccess(workspace: workspace, developer: project.developerDirectory!)
         let first = UUID(), second = UUID()
         let attached = try await owner.attachViewer(first, thread: "first", project: project, device: driver.device, request: UUID())
         let activityID = try #require(attached["activity"]["id"].string.flatMap(UUID.init(uuidString:)))
+        #expect(owner.hasPendingOperations, "Queued simulator operations still reserve the checkout")
         owner.start(try #require(owner.activity(activityID))); try await completed(owner, activityID)
         _ = try await owner.attachViewer(second, thread: "second", project: project, device: driver.device, request: UUID())
         let revision = owner.viewerMetadata(thread: "second", project: project)["session"]["revision"]
@@ -348,11 +446,18 @@ import MimicCore
         driver.pauseCapture = true
         let firstFrame = Task { try await owner.viewerObservation(first, thread: "first", refresh: true) }
         while driver.captureContinuation == nil { await Task.yield() }
-        #expect(changes > 0 && model.branchSwitchBlocker == .simulator)
-        #expect(!model.canSwitchBranch && !model.switchBranch("target"))
-        #expect(model.expandedSection == .branches && model.branchSearch == "target")
-        #expect(model.branchError == BranchSwitchBlocker.simulator.message)
-        #expect(model.branchSwitch.operations.isEmpty)
+        #expect(changes > 0 && owner.hasPending && !owner.hasPendingOperations)
+        #expect(model.canSwitchBranch && model.branchSwitchBlocker == nil)
+        if panel {
+            _ = try model.startBranchSwitch("target", project: project, requestID: UUID(), threadID: "second")
+        } else {
+            #expect(model.switchBranch("target"))
+        }
+        let deadline = ContinuousClock.now + .seconds(10)
+        while model.branchSwitch.isExecuting && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(model.branchSwitch.operations.last?.phase == .succeeded)
+        #expect(EnvironmentInspector.capture("/usr/bin/git", ["branch", "--show-current"], directory: path.path).1 == "target")
+        #expect(owner.busy && driver.captureContinuation != nil, "Git finishes without waiting for the frame")
         let beforeCaptureFinished = changes
         var secondStarted = false
         let secondFrame = Task { secondStarted = true; return try await owner.viewerObservation(second, thread: "second", refresh: true) }

@@ -1,0 +1,18 @@
+/* Created by Василий Маслов on 12.10.2026. */
+:root[data-appearance=windows95]{font-family:'Mimic Win95';font-size:11px;--retro-surface:#c0c0c0;--retro-line:#808080;--retro-input-line:#808080;--retro-title:#000080;--retro-progress:#000080;--retro-button:#c0c0c0;--retro-button-radius:0px;--retro-raised:inset -2px -2px #808080,inset 2px 2px #dfdfdf,inset -1px -1px #000,inset 1px 1px #fff;--retro-sunken:inset -2px -2px #dfdfdf,inset 2px 2px #000,inset -1px -1px #fff,inset 1px 1px #808080}
+:root[data-appearance=windows95] button{background:#c0c0c0;color:#000;border:0;border-radius:0;box-shadow:var(--retro-raised)}
+:root[data-appearance=windows95] button[data-pressed]{box-shadow:var(--retro-sunken);padding:4px 8px 2px 10px;transform:none}
+:root[data-appearance=windows95] :is(input,select,textarea){border:0;box-shadow:var(--retro-sunken)}
+:root[data-appearance=windows95] .panel-block{padding:3px;box-shadow:var(--retro-raised);border:0}
+:root[data-appearance=windows95] .panel-block .block-title{margin:0;height:18px;padding:1px 24px 1px 5px;font-size:11px;background:#000080;color:#fff;box-shadow:none}
+:root[data-appearance=windows95] .retro-caption{top:5px;right:6px;width:16px;height:14px;box-shadow:var(--retro-raised);background-color:#c0c0c0}
+:root[data-appearance=windows95] .retro-caption[data-pressed]{box-shadow:var(--retro-sunken);background-position:calc(50% + 1px) calc(50% + 1px);padding:0}
+:root[data-appearance=windows95] .retro-scroll-track{background:repeating-conic-gradient(#fff 0 25%,#c0c0c0 0 50%) 0 0/2px 2px}
+:root[data-appearance=windows95] .retro-scroll-thumb{background:#c0c0c0;box-shadow:var(--retro-raised)}
+
+:root[data-appearance=windows95] :is(.retro-caption,.retro-close-control){background-position:3px 2px}
+:root[data-appearance=windows95] :is(.retro-caption,.retro-close-control)[data-pressed]{background-position:4px 3px}
+:root[data-appearance=windows95] .retro-close-control{width:16px;height:14px}
+:root[data-appearance=windows95] .block-icon{background-position:5px 1px}
+:root[data-appearance=windows95] [data-block=bootstrap] .block-icon,:root[data-appearance=windows95] .chrome-brand::before{background-position:1px 3px}
+:root[data-appearance=windows95] :is([data-block=simulators],[data-block=ci]) .block-icon{background-position:1px 1px}

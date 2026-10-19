@@ -105,7 +105,7 @@ export class SimulatorVideoPlayer {
    const tick=()=>{
     if(generation!==this.generation)return;
     if(performance.now()-this.lastFrame>8000){this.fail('videoStalled');return;}
-    this.timer=setTimeout(tick,1000/30);
+    this.timer=setTimeout(tick,1000/90);
     if(this.outstanding.size>=6||this.packetQueue.size)return;
     const request=Symbol(),start=performance.now();this.outstanding.add(request);this.requests++;this.maxInFlight=Math.max(this.maxInFlight,this.outstanding.size);
     void (async()=>{
@@ -198,9 +198,8 @@ export class SimulatorVideoPlayer {
     const generation=this.generation;this.decoder=new VideoDecoder({output:frame=>{
      if(generation!==this.generation){frame.close();return;}
      this.pendingFrames--;this.decoded++;this.lastFrame=performance.now();if(this.frozen){frame.close();return;}
-     // MCP can deliver several consecutive frames together. Present them on separate
-     // refreshes instead of replacing every frame before RAF. Bound retained surfaces
-     // and discard the oldest only for an unpaced source such as WebSocket.
+     // Keep decoding every dependency, but never make interaction wait for
+     // historical images to be presented on successive refreshes.
      if(this.paintFrames.length>=6){this.paintFrames.shift()!.close();this.displayDrops++;}this.paintFrames.push(frame);
      if(this.paintRequest===null)this.paintRequest=requestAnimationFrame(()=>this.paint(generation));
     },error:()=>{if(generation===this.generation)this.fail('videoDecoderUnavailable');}});
@@ -220,7 +219,8 @@ export class SimulatorVideoPlayer {
   try{this.decoder.decode(new EncodedVideoChunk({type:keyframe?'key':'delta',timestamp,data:packet.slice(27+length)}));}catch{this.pendingFrames--;this.needsKeyframe=true;}
  }
  private paint(generation:number){
-  this.paintRequest=null;const frame=this.paintFrames.shift();if(!frame)return;
+  this.paintRequest=null;const frame=this.paintFrames.pop();if(!frame)return;
+  for(const stale of this.paintFrames){stale.close();this.displayDrops++;}this.paintFrames=[];
   try{
    if(generation!==this.generation||this.frozen)return;
    this.output.drawImage(frame,0,0,this.canvas.width,this.canvas.height);this.count++;this.firstPaint??=performance.now();

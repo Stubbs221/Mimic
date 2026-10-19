@@ -23,10 +23,15 @@ struct MimicDocumentVisibility: NSViewRepresentable {
     let page: PanelPage
     let visible: Bool
     func makeNSView(context: Context) -> Marker { Marker(page: self.page, visible: self.visible) }
-    func updateNSView(_ view: Marker, context: Context) { view.visible = self.visible; view.updateVisibility() }
+    func updateNSView(_ view: Marker, context: Context) {
+        view.visible = self.visible; view.appearanceChoice = context.environment.mimicPanelAppearance
+        view.updateVisibility()
+    }
     final class Marker: NSView {
         let page: PanelPage
         var visible: Bool
+        var appearanceChoice = PanelAppearance.legacy
+        private var retroScroller: NativeRetroScrollbar?
         private var retainedOffset: NSPoint?
         init(page: PanelPage, visible: Bool) { self.page = page; self.visible = visible; super.init(frame: .zero) }
         required init?(coder: NSCoder) { nil }
@@ -35,6 +40,12 @@ struct MimicDocumentVisibility: NSViewRepresentable {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
         func updateVisibility() {
             guard let scroll = self.enclosingScrollView else { return }
+            if appearanceChoice.isRetro {
+                if retroScroller == nil {
+                    let scroller = NativeRetroScrollbar(scroll: scroll); scroll.addSubview(scroller); retroScroller = scroller
+                }
+                retroScroller?.appearanceChoice = appearanceChoice; retroScroller?.refresh()
+            } else { retroScroller?.removeFromSuperview(); retroScroller = nil }
             scroll.identifier = NSUserInterfaceItemIdentifier(self.page == .home ? "page.home" : "page.settings")
             if !self.visible, !scroll.isHidden {
                 // Freeze a reveal already in flight before retaining the hidden document.
@@ -46,7 +57,7 @@ struct MimicDocumentVisibility: NSViewRepresentable {
                 retainedOffset = current
             }
             let restoring = self.visible && scroll.isHidden
-            scroll.isHidden = !self.visible
+            if scroll.isHidden == self.visible { scroll.isHidden = !self.visible }
             if restoring, let retainedOffset {
                 // SwiftUI resets a newly unhidden clip view on its next layout pass.
                 // Restore once after that pass; later explicit navigation can seek its own target.
@@ -57,6 +68,7 @@ struct MimicDocumentVisibility: NSViewRepresentable {
                 }
             }
         }
+        override func layout() { super.layout(); retroScroller?.refresh() }
     }
 }
 
@@ -113,6 +125,7 @@ struct SettingsContent: View {
                 serviceAction(text("interface.map.title"), identifier: "interface.map.open") { model.showInterfaceMap?() }
                 serviceAction(text("quit"), identifier: "settings.quit") { NSApp.terminate(nil) }
             }
+            SettingsCard { MimicAboutSettings() }
         case .appearance:
             AppearanceSettingsContent(model: model)
         case .environment:
@@ -175,6 +188,20 @@ struct SettingsContent: View {
     }
 }
 
+/// Product identity stays at the end of application settings, independent of the updater.
+struct MimicAboutSettings: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(text("settings.about.title")).mimicFont(.heading).accessibilityAddTraits(.isHeader)
+            Text(String(format: text("settings.about.version"), MimicVersion.version, MimicVersion.build))
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("settings.about.version")
+            Text(text("settings.about.author")).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("settings.about.author")
+        }.mimicFont(.caption).accessibilityIdentifier("settings.about")
+    }
+}
+
 /// Project choice belongs to environment settings; full paths distinguish identically named checkouts.
 struct ProjectSelectionSettingsView: View {
     @ObservedObject var model: TaskCoordinator
@@ -191,7 +218,9 @@ struct ProjectSelectionSettingsView: View {
             } label: {
                 Text(self.model.project.map { URL(fileURLWithPath: $0.path).lastPathComponent } ?? text("checkout.choose"))
                     .lineLimit(1).truncationMode(.middle)
-            }.disabled(!self.model.canSelectProject || self.model.projects.isEmpty)
+            }.mimicMenu(self.model.project.map { URL(fileURLWithPath: $0.path).lastPathComponent } ?? text("checkout.choose"), items: model.projects.map { project in
+                .init(project.path, id: project.path, enabled: { model.canSelectProject }, checked: model.selectedProjectPath == project.path) { model.selectProject(project) }
+            }).disabled(!self.model.canSelectProject || self.model.projects.isEmpty)
                 .accessibilityLabel(text("project.choose"))
                 .accessibilityValue(self.model.project?.path ?? text("project.no.branch"))
                 .accessibilityIdentifier("settings.project.select")

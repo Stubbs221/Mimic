@@ -10,17 +10,20 @@ import {transform} from 'esbuild';
 
 // Exercise the production response adapter with the native MCP private envelope.
 // Preview fixtures return activities directly and cannot catch lost _meta replies.
-const panelSource=await readFile(new URL('./panel.ts',import.meta.url),'utf8');
-const adapter=panelSource.slice(panelSource.indexOf('class ToolFailure'),panelSource.indexOf('function releaseRejectedRequest'));
+const adapter=(await transform(await readFile(new URL('./mcp-panel-transport.ts',import.meta.url),'utf8'),{loader:'ts',format:'cjs',target:'es2022'})).code;
 const activity={id:'accepted-command',kind:'action',status:'queued'};
-const context=vm.createContext({preview:false,Error,app:{callServerTool:async()=>({content:[],_meta:{'mimic/simulator':activity}})},t:value=>value});
-vm.runInContext((await transform(adapter,{loader:'ts',target:'es2022'})).code,context);
+class ToolFailure extends Error {constructor(message,code){super(message);this.code=code;}}
+const context=vm.createContext({module:{exports:{}},require:()=>({ToolFailure}),Error,JSON});
+vm.runInContext(adapter,context);
+const app={callServerTool:async()=>({content:[],_meta:{'mimic/simulator':activity}})};
+const transport=new context.module.exports.MCPPanelTransport(app,{},'unavailable');
+context.tool=(name,args)=>transport.call(name,args);context.app=app;
 for(const name of ['simulator_ui_action','simulator_ui_observe','simulator_ui_viewer_action']){
- const result=await vm.runInContext(`tool(${JSON.stringify(name)},{})`,context);
+ const result=await context.tool(name,{});
  assert.equal(result?.id,activity.id,`${name} must preserve the accepted native activity ID`);
 }
 context.app.callServerTool=async()=>({isError:true,content:[],structuredContent:{code:'occupied',message:'busy'}});
-await assert.rejects(vm.runInContext("tool('simulator_ui_action',{})",context),error=>error.code==='occupied');
+await assert.rejects(context.tool('simulator_ui_action',{}),error=>error.code==='occupied');
 console.log('PASS: private simulator command activities and native error codes survive the MCP response adapter');
 
 const simulatorSource=await readFile(new URL('./simulator.ts',import.meta.url),'utf8');

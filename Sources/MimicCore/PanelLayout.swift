@@ -9,13 +9,42 @@ import Foundation
 public enum PanelSurface: String, Codable, Sendable { case desktop, codex }
 
 /// Stable presentation identities; profile action identifiers remain independent of the layout.
-public enum PanelBlockKind: String, Codable, CaseIterable, Sendable {
-    case bootstrap, utils, builds, ci, simulators, ai
-    case generateUI, generateSicilia, generateGalera, localization, protocols, format
-    case fullCleanup, derivedDataCleanup, uiTests, qualityGates, beta
-
+public struct PanelBlockKind: RawRepresentable, Codable, CaseIterable, Hashable, Sendable {
+    public let rawValue: String
+    public init?(rawValue: String) {
+        guard Self.builtinNames.contains(rawValue) || rawValue.range(of: #"^profile:[a-zA-Z0-9._-]{1,100}:[a-zA-Z0-9._-]{1,100}$"#, options: .regularExpression) != nil else { return nil }
+        self.rawValue = rawValue
+    }
+    private init(_ value: String) { rawValue = value }
+    public static let bootstrap = Self("bootstrap")
+    public static let utils = Self("utils")
+    public static let builds = Self("builds")
+    public static let ci = Self("ci")
+    public static let simulators = Self("simulators")
+    public static let ai = Self("ai")
+    public static let workItem = Self("workItem")
+    public static let generateUI = Self("generateUI")
+    public static let generateSicilia = Self("generateSicilia")
+    public static let generateGalera = Self("generateGalera")
+    public static let localization = Self("localization")
+    public static let protocols = Self("protocols")
+    public static let format = Self("format")
+    public static let fullCleanup = Self("fullCleanup")
+    public static let derivedDataCleanup = Self("derivedDataCleanup")
+    public static let uiTests = Self("uiTests")
+    public static let qualityGates = Self("qualityGates")
+    public static let beta = Self("beta")
+    private static let builtinNames = ["bootstrap", "utils", "builds", "ci", "simulators", "ai", "workItem", "generateUI", "generateSicilia", "generateGalera", "localization", "protocols", "format", "fullCleanup", "derivedDataCleanup", "uiTests", "qualityGates", "beta"]
+    public static let allCases = builtinNames.map(Self.init)
+    public var isCustom: Bool { rawValue.hasPrefix("profile:") }
     public var titleKey: String { "panel.block." + rawValue }
     public var role: ProfileToolRole? { ProfileToolRole(rawValue: rawValue) }
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        guard let value = Self(rawValue: try container.decode(String.self)) else { throw PanelLayoutError.invalid }
+        self = value
+    }
+    public func encode(to encoder: any Encoder) throws { var container = encoder.singleValueContainer(); try container.encode(rawValue) }
     public var symbol: String {
         switch self {
         case .bootstrap: "shippingbox"
@@ -24,11 +53,13 @@ public enum PanelBlockKind: String, Codable, CaseIterable, Sendable {
         case .ci, .uiTests, .qualityGates, .beta: "checkmark.seal"
         case .simulators: "iphone"
         case .ai: "sparkles"
+        case .workItem: "doc.text"
         case .generateUI, .generateSicilia, .generateGalera: "square.stack.3d.up"
         case .localization: "character.bubble"
         case .protocols: "arrow.triangle.branch"
         case .format: "text.alignleft"
         case .fullCleanup, .derivedDataCleanup: "trash"
+        default: "slider.horizontal.3"
         }
     }
     public static func catalog(for surface: PanelSurface) -> [Self] { allCases.filter { surface == .desktop || $0 != .ai } }
@@ -43,7 +74,7 @@ public enum PanelInsertionTarget: Equatable, Sendable {
     case boundary(before: UUID?)
 }
 
-/// One slot is full width; two slots are independent halves. A lone mini block keeps its empty neighbour.
+/// One slot is full width; two slots are independent halves. A deliberate drop may pin either half.
 public struct PanelLayoutRow: Codable, Equatable, Identifiable, Sendable {
     public let id: UUID
     public var slots: [PanelBlockKind?]
@@ -71,14 +102,31 @@ public struct PanelLayout: Codable, Equatable, Sendable {
     }
 
     public func validate(for surface: PanelSurface) throws {
-        guard version == 1, revision >= 0, rows.count <= PanelBlockKind.allCases.count,
+        guard version == 1, revision >= 0, rows.count <= PanelBlockKind.allCases.count + 32,
               Set(rows.map(\.id)).count == rows.count,
               rows.allSatisfy({ (1...2).contains($0.slots.count) && !$0.blocks.isEmpty }),
-              Set(blocks).isSubset(of: Set(PanelBlockKind.catalog(for: surface))) else { throw PanelLayoutError.invalid }
+              blocks.allSatisfy({ $0.isCustom || PanelBlockKind.catalog(for: surface).contains($0) }) else { throw PanelLayoutError.invalid }
         guard Set(blocks).count == blocks.count else { throw PanelLayoutError.duplicate }
     }
 
     // MARK: - Editing
+
+    /// Fills vacancies with later mini blocks across full rows, without moving the pinned block.
+    /// Apply after a complete edit: internal remove/resize steps must retain their destination rows.
+    public mutating func compact(preserving block: PanelBlockKind? = nil) {
+        let positions = rows.indices.filter { rows[$0].size == .mini }.flatMap { row in
+            (0...1).map { (row: row, slot: $0) }
+        }
+        for (index, position) in positions.enumerated() where rows[position.row].slots[position.slot] == nil {
+            guard let next = positions.dropFirst(index + 1).first(where: {
+                let value = rows[$0.row].slots[$0.slot]
+                return value != nil && value != block
+            }) else { continue }
+            rows[position.row].slots[position.slot] = rows[next.row].slots[next.slot]
+            rows[next.row].slots[next.slot] = nil
+        }
+        rows.removeAll { $0.blocks.isEmpty }
+    }
 
     /// Inserts without overwriting a block. Within a mini run only the traversed slots rotate;
     /// across full-row boundaries displacement ends at the next vacancy or a new mini row.
@@ -198,17 +246,87 @@ public struct PanelLayout: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - Drag transaction
+
+/// A drag owns its original value, generated row identities and the last accepted preview.
+/// Destinations from reflowed rows resolve through stable neighbours; persistence sees only the layout.
+public struct PanelDragTransaction: Sendable {
+    public let origin: PanelLayout
+    public let block: PanelBlockKind
+    public private(set) var preview: PanelLayout
+    public private(set) var target: PanelInsertionTarget?
+    public private(set) var valid = false
+    private var size: PanelBlockSize?
+    private var side: Int?
+    private let rowIDs = PanelBlockKind.allCases.map { _ in UUID() }
+
+    public init(origin: PanelLayout, block: PanelBlockKind) {
+        self.origin = origin; self.block = block; preview = origin
+    }
+
+    /// Failed proposals invalidate feedback without discarding the last confirmed layout.
+    @discardableResult public mutating func propose(_ destination: PanelInsertionTarget?, size: PanelBlockSize? = nil,
+                                                   miniSlot: Int? = nil, surface: PanelSurface) -> Bool {
+        guard let destination else { valid = false; return false }
+        do {
+            let resolved = try resolve(destination)
+            let side = miniSlot ?? 0
+            if resolved == target && self.size == size && self.side == side { valid = true; return true }
+            var next = origin
+            try next.insert(block, at: resolved, size: size, miniSlot: miniSlot, generatedRowIDs: rowIDs)
+            next.compact(preserving: block)
+            try next.validate(for: surface)
+            if next.rows.map(\.slots) == origin.rows.map(\.slots) { next = origin }
+            preview = next; target = resolved; self.size = size; self.side = side; valid = true
+            return true
+        } catch { valid = false; return false }
+    }
+
+    private func resolve(_ destination: PanelInsertionTarget) throws -> PanelInsertionTarget {
+        let id: UUID?
+        switch destination { case .slot(let row, _): id = row; case .boundary(let before): id = before }
+        guard let id else { return destination }
+        if origin.rows.contains(where: { $0.id == id }) { return destination }
+        guard let row = preview.rows.first(where: { $0.id == id }) else { throw PanelLayoutError.missing }
+        // A generated placeholder still refers to the insertion that created it, including a reverse resize.
+        if row.blocks.contains(block), let target { return target }
+        guard let neighbour = row.blocks.first(where: { $0 != block }),
+              let original = origin.rows.first(where: { $0.blocks.contains(neighbour) }) else { throw PanelLayoutError.missing }
+        switch destination {
+        case .slot(_, let slot): return .slot(row: original.id, slot: slot)
+        case .boundary: return .boundary(before: original.id)
+        }
+    }
+}
+
 // MARK: - Persistence
 
 /// Compare-and-save prevents another chat's completed edit from being overwritten by an older draft.
 @MainActor public final class PanelLayoutStore {
-    private let defaults: UserDefaults
+    let defaults: UserDefaults
     public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
     private func key(_ surface: PanelSurface) -> String { "panelLayout." + surface.rawValue }
     public func load(_ surface: PanelSurface) -> PanelLayout {
         guard let data = defaults.data(forKey: key(surface)), let layout = try? JSONDecoder().decode(PanelLayout.self, from: data),
               (try? layout.validate(for: surface)) != nil else { return .standard(for: surface) }
         return layout
+    }
+    /// Normalizes legacy vacancies once per surface. Later loads preserve deliberate right-half drops.
+    /// The original value remains recoverable outside the wire layout; unchanged layouts do not gain a revision.
+    public func prepareForPresentation(_ surface: PanelSurface) -> PanelLayout {
+        let marker = key(surface) + ".compactionVersion"
+        let original = load(surface)
+        guard defaults.integer(forKey: marker) < 1 else { return original }
+        var next = original; next.compact()
+        do {
+            if next != original {
+                let backup = key(surface) + ".beforeCompaction"
+                if defaults.data(forKey: backup) == nil { defaults.set(try JSONEncoder().encode(original), forKey: backup) }
+                next = try save(next, for: surface, expectedRevision: original.revision)
+            }
+            defaults.set(1, forKey: marker)
+            return next
+        } catch { return load(surface) }
     }
     @discardableResult public func save(_ draft: PanelLayout, for surface: PanelSurface, expectedRevision: Int) throws -> PanelLayout {
         try draft.validate(for: surface)

@@ -157,23 +157,23 @@ struct MimicFooter: View {
     @Environment(\.mimicPanelAppearance) private var appearance
     private var theme = MimicTheme()
     private var chromeRowHeight: CGFloat { max(32, 24 * textScale) }
-    private var activityRowHeight: CGFloat { appearance == .tileGrid ? chromeRowHeight : MimicMetrics.footerRow }
+    private var activityRowHeight: CGFloat { appearance.usesTileGrid ? chromeRowHeight : MimicMetrics.footerRow }
     var hasActivity: Bool { displayedBuild != nil || model.footerActivity != nil }
     var body: some View {
         MimicChrome {
-            VStack(spacing: appearance == .tileGrid ? 8 : MimicMetrics.small) {
-                if appearance != .tileGrid || hasActivity {
+            VStack(spacing: appearance.usesTileGrid ? 8 : MimicMetrics.small) {
+                if !appearance.usesTileGrid || hasActivity {
                     self.activityRow.frame(minHeight: activityRowHeight)
-                        .background(appearance == .tileGrid ? theme.color("accentSoft") : .clear, in: RoundedRectangle(cornerRadius: 10))
+                        .background(appearance.usesTileGrid ? theme.color("accentSoft") : .clear, in: RoundedRectangle(cornerRadius: 10))
                 }
-                if appearance == .tileGrid {
+                if appearance.usesTileGrid {
                     theme.color("line").frame(height: 1).accessibilityHidden(true)
                     tiledBottomRow
                 }
                 else if model.frameDiagnostics.enabled { diagnosticsRow }
                 else { standardRow }
             }.padding(.horizontal, MimicMetrics.documentInset).padding(.vertical, MimicMetrics.medium)
-        }.frame(height: appearance == .tileGrid ? nil : MimicMetrics.footerHeight).accessibilityIdentifier("mimic.footer")
+        }.frame(height: appearance.usesTileGrid ? nil : MimicMetrics.footerHeight).accessibilityIdentifier("mimic.footer")
     }
 
     /// History remains reachable while the independent activity row presents a running or queued operation.
@@ -184,7 +184,7 @@ struct MimicFooter: View {
                 Text(text("footer.history")).mimicFont(.body).fixedSize()
             }
         }.buttonStyle(MimicChromeButtonStyle())
-            .help(text("footer.history") + " · ⌘1").accessibilityLabel(text("footer.history"))
+            .mimicHelp(text("footer.history") + " · ⌘1").accessibilityLabel(text("footer.history"))
             .accessibilityValue(disclosureValue(model.panelPage == .home && model.expandedSection == .tasks))
             .accessibilityIdentifier("tasks.toggle")
     }
@@ -220,18 +220,18 @@ struct MimicFooter: View {
                 if let project = self.model.project { NSWorkspace.shared.open(URL(fileURLWithPath: project.workspace)) }
             } label: { Label("Xcode", systemImage: "hammer").padding(.horizontal, MimicMetrics.medium).frame(height: MimicMetrics.footerRow).fixedSize(horizontal: true, vertical: false) }
                 .buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).disabled(self.model.project == nil || !self.model.canOpenXcode || self.model.switchingBranch)
-                .help(text("open.xcode")).accessibilityLabel(text("open.xcode")).accessibilityIdentifier("footer.xcode")
+                .mimicHelp(text("open.xcode")).accessibilityLabel(text("open.xcode")).accessibilityIdentifier("footer.xcode")
             Button {
                 if let project = self.model.project { NSWorkspace.shared.open(URL(fileURLWithPath: project.path)) }
             } label: { Label(text("footer.finder"), systemImage: "folder").padding(.horizontal, MimicMetrics.medium).frame(height: MimicMetrics.footerRow).fixedSize(horizontal: true, vertical: false) }
                 .buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).disabled(self.model.project == nil)
-                .help(text("open.finder")).accessibilityLabel(text("open.finder")).accessibilityIdentifier("footer.finder")
+                .mimicHelp(text("open.finder")).accessibilityLabel(text("open.finder")).accessibilityIdentifier("footer.finder")
         }.mimicFont(.caption).frame(height: MimicMetrics.footerRow)
     }
 
     private var diagnosticsRow: some View {
         GeometryReader { geometry in
-            let scale = appearance == .tileGrid ? textScale : 1
+            let scale = appearance.usesTileGrid ? textScale : 1
             let layout = FooterPerformanceLayout.resolve(width: geometry.size.width, scale: scale)
             HStack(spacing: MimicMetrics.medium) {
                 FooterCIButton(state: model.ci, settings: model.ciSettings, expanded: model.panelPage == .home && model.expandedSection == .ci, action: model.toggleFooterCI)
@@ -242,12 +242,12 @@ struct MimicFooter: View {
                     if let project = model.project { NSWorkspace.shared.open(URL(fileURLWithPath: project.workspace)) }
                 } label: { shortcutLabel("Xcode", symbol: "hammer", iconOnly: layout.iconOnly) }
                     .buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).disabled(model.project == nil || !model.canOpenXcode || model.switchingBranch)
-                    .help(text("open.xcode")).accessibilityLabel(text("open.xcode")).accessibilityIdentifier("footer.xcode")
+                    .mimicHelp(text("open.xcode")).accessibilityLabel(text("open.xcode")).accessibilityIdentifier("footer.xcode")
                 Button {
                     if let project = model.project { NSWorkspace.shared.open(URL(fileURLWithPath: project.path)) }
                 } label: { shortcutLabel(text("footer.finder"), symbol: "folder", iconOnly: layout.iconOnly) }
                     .buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).disabled(model.project == nil)
-                    .help(text("open.finder")).accessibilityLabel(text("open.finder")).accessibilityIdentifier("footer.finder")
+                    .mimicHelp(text("open.finder")).accessibilityLabel(text("open.finder")).accessibilityIdentifier("footer.finder")
             }.mimicFont(.caption)
         }.frame(height: MimicMetrics.footerRow)
     }
@@ -281,7 +281,7 @@ struct MimicFooter: View {
                     Image(systemName: activity.symbol).mimicStatus(activity.phase).foregroundStyle(activity.phase == .blocked ? Color.orange : .secondary).accessibilityHidden(true)
                     Text(activity.title).mimicFont(.body, weight: .medium).lineLimit(1).truncationMode(.middle).mimicStatus(activity.record.id)
                     if activity.otherCheckout {
-                        Image(systemName: "folder.badge.questionmark").foregroundStyle(.orange).help(text("footer.task.other.checkout"))
+                        Image(systemName: "folder.badge.questionmark").foregroundStyle(.orange).mimicHelp(text("footer.task.other.checkout"))
                             .accessibilityLabel(text("footer.task.other.checkout"))
                     }
                     Spacer(minLength: MimicMetrics.small)
@@ -299,9 +299,9 @@ struct MimicFooter: View {
                     Text("⌘1").mimicFont(.caption).foregroundStyle(.tertiary).accessibilityHidden(true)
                 }
             }.mimicStatus(self.model.footerActivity.map { $0.record.id.uuidString + $0.phase.rawValue } ?? "idle").padding(.horizontal, MimicMetrics.medium).frame(maxWidth: .infinity).frame(minHeight: activityRowHeight).contentShape(Rectangle())
-        }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).help(self.model.footerActivity?.help ?? text("tasks"))
+        }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).mimicHelp(self.model.footerActivity?.help ?? text("tasks"))
             .accessibilityLabel(self.model.footerActivity.map { $0.help } ?? text("tasks"))
-            .accessibilityValue(disclosureValue(self.model.panelPage == .home && self.model.expandedSection == .tasks)).accessibilityIdentifier(appearance == .tileGrid ? "footer.activity" : "tasks.toggle")
+            .accessibilityValue(disclosureValue(self.model.panelPage == .home && self.model.expandedSection == .tasks)).accessibilityIdentifier(appearance.usesTileGrid ? "footer.activity" : "tasks.toggle")
     }
 }
 
@@ -327,16 +327,16 @@ struct FooterCIButton: View {
             HStack(spacing: MimicMetrics.small) {
                 if showsSymbol { Image(systemName: status.symbol).mimicStatus(status.symbol).foregroundStyle(status.color).accessibilityHidden(true) }
                 if !compact {
-                    Text(status.title).lineLimit(1).mimicStatus(status.title).mimicFont(appearance == .tileGrid ? .body : .caption)
+                    Text(status.title).lineLimit(1).mimicStatus(status.title).mimicFont(appearance.usesTileGrid ? .body : .caption)
                         .foregroundStyle(status.error != nil || status.otherCommit ? status.color : .secondary)
                 }
                 if status.otherCommit {
-                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(text("footer.ci.other.commit"))
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).mimicHelp(text("footer.ci.other.commit"))
                         .accessibilityLabel(text("footer.ci.other.commit"))
                 }
                 if status.loading, status.pipeline != nil { ProgressView().controlSize(.mini) }
-            }.padding(.horizontal, MimicMetrics.medium).frame(minHeight: appearance == .tileGrid ? max(32, 24 * textScale) : MimicMetrics.footerRow).contentShape(Rectangle())
-        }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).help(status.help).accessibilityLabel(status.help)
+            }.padding(.horizontal, MimicMetrics.medium).frame(minHeight: appearance.usesTileGrid ? max(32, 24 * textScale) : MimicMetrics.footerRow).contentShape(Rectangle())
+        }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).mimicHelp(status.help).accessibilityLabel(status.help)
             .accessibilityValue(disclosureValue(self.expanded)).accessibilityIdentifier("ci.expand")
     }
 }

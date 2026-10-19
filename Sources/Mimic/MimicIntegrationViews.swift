@@ -17,17 +17,17 @@ struct JenkinsSettingsView: View {
                              check: self.settings.check, save: self.settings.save, disconnect: self.settings.disconnect,
                              identifier: "jenkins") {
                 SettingsField(title: text("settings.field.server")) {
-                    TextField(text("ci.server"), text: self.$settings.address).textFieldStyle(.roundedBorder)
+                    TextField(text("ci.server"), text: self.$settings.address).textFieldStyle(.roundedBorder).mimicInput()
                         .mimicFont(.caption).fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("jenkins.address")
                 }
                 SettingsField(title: text("jenkins.username")) {
-                    TextField(text("settings.jenkins.username.placeholder"), text: self.$settings.username).accessibilityIdentifier("jenkins.username")
+                    TextField(text("settings.jenkins.username.placeholder"), text: self.$settings.username).mimicInput().accessibilityIdentifier("jenkins.username")
                 }
                 Text(text("jenkins.username.help")).mimicFont(.caption).foregroundStyle(.secondary)
                 SettingsField(title: text("jenkins.token")) {
                     SecureField(text(self.settings.connection == nil ? "settings.token.placeholder" : "ci.token.replace"), text: self.$settings.enteredToken)
-                        .accessibilityIdentifier("jenkins.token")
+                        .mimicInput().accessibilityIdentifier("jenkins.token")
                 }
                 Text(text("settings.jenkins.token.detail")).mimicFont(.caption).foregroundStyle(.secondary)
             } credential: {

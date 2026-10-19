@@ -51,16 +51,19 @@ public struct GenerationPlan: Codable, Sendable {
 
 // MARK: - Simulators
 
-/// A concrete Apple simulator device; commands always use its UUID, never the ambiguous `booted` selector.
+/// A catalogue target. Physical devices use their CoreDevice UUID for presentation only;
+/// simctl commands must reject targets carrying `physical` metadata.
 public struct SimulatorDevice: Codable, Identifiable, Equatable, Sendable {
     public let id: UUID
     public let name: String
     public let runtime: String
     public let state: String
     public let deviceTypeIdentifier: String?
-    public var isBooted: Bool { self.state == "Booted" }
-    public init(id: UUID, name: String, runtime: String, state: String, deviceTypeIdentifier: String? = nil) {
-        self.id = id; self.name = name; self.runtime = runtime; self.state = state; self.deviceTypeIdentifier = deviceTypeIdentifier
+    public let physical: PhysicalDeviceInfo?
+    public var isBooted: Bool { self.physical == nil && self.state == "Booted" }
+    public var isActive: Bool { self.physical == nil ? self.isBooted : self.state == "connected" }
+    public init(id: UUID, name: String, runtime: String, state: String, deviceTypeIdentifier: String? = nil, physical: PhysicalDeviceInfo? = nil) {
+        self.id = id; self.name = name; self.runtime = runtime; self.state = state; self.deviceTypeIdentifier = deviceTypeIdentifier; self.physical = physical
     }
 }
 

@@ -38,10 +38,10 @@ struct TerminalContainer: NSViewRepresentable {
     }
 
     private func configure(_ view: TerminalView) {
-        let tiled = appearance == .tileGrid
+        let tiled = appearance.usesTileGrid
         BootstrapTerminalTheme.apply(to: view, dark: tiled || colorScheme == .dark, increasedContrast: false)
-        view.nativeBackgroundColor = tiled ? MimicTheme.native("terminal", dark: colorScheme == .dark) : .textBackgroundColor
-        view.nativeForegroundColor = tiled ? MimicTheme.native("terminalText", dark: colorScheme == .dark) : .textColor
+        view.nativeBackgroundColor = appearance.isRetro ? NativeRetro.color("terminal", appearance: appearance) : tiled ? MimicTheme.native("terminal", dark: colorScheme == .dark) : .textBackgroundColor
+        view.nativeForegroundColor = appearance.isRetro ? NativeRetro.color("terminalText", appearance: appearance) : tiled ? MimicTheme.native("terminalText", dark: colorScheme == .dark) : .textColor
     }
     private func focusIfRequested(_ view: TerminalView, coordinator: TerminalDelegate) {
         guard self.model.terminalFocusTaskID == self.id, coordinator.lastFocusRequest != self.model.terminalFocusRequest else { return }
@@ -60,10 +60,18 @@ final class TerminalDelegate: NSObject, TerminalViewDelegate {
     let subscriptionID = UUID()
     var lastFocusRequest: UUID?
     init(model: TaskCoordinator, id: UUID) { self.model = model; self.id = id }
-    func sizeChanged(source _: TerminalView, newCols: Int, newRows: Int) { Task { @MainActor [model, id] in model.resize(id: id, columns: newCols, rows: newRows) } }
+    func sizeChanged(source _: TerminalView, newCols: Int, newRows: Int) {
+        MainActor.assumeIsolated { [model, id] in model.resize(id: id, columns: newCols, rows: newRows) }
+    }
     func setTerminalTitle(source _: TerminalView, title _: String) { }
     func hostCurrentDirectoryUpdate(source _: TerminalView, directory _: String?) { }
-    func send(source _: TerminalView, data: ArraySlice<UInt8>) { let bytes = Data(data); Task { @MainActor [model, id] in model.input(id: id, data: bytes) } }
+    func send(source _: TerminalView, data: ArraySlice<UInt8>) {
+        // AppKit input arrives on the main thread. Admit it here rather than retaining paste
+        // fragments in an unbounded backlog of MainActor tasks before the PTY budget check.
+        MainActor.assumeIsolated { [model, id] in
+            if !model.input(id: id, data: Data(data)) { NSSound.beep() }
+        }
+    }
     func scrolled(source _: TerminalView, position _: Double) { }
     func requestOpenLink(source _: TerminalView, link: String, params _: [String: String]) {
         if let url = URL(string: link), ["https", "http"].contains(url.scheme ?? "") { NSWorkspace.shared.open(url) }
@@ -151,10 +159,10 @@ enum BootstrapTerminalTheme {
         guard self.presentation != signature else { return }
         self.presentation = signature
         if view.font.pointSize != fontSize { view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular) }
-        BootstrapTerminalTheme.apply(to: view, dark: dark || appearance == .tileGrid, increasedContrast: increasedContrast)
-        if appearance == .tileGrid {
-            view.nativeBackgroundColor = MimicTheme.native("terminal", dark: dark)
-            view.nativeForegroundColor = MimicTheme.native("terminalText", dark: dark)
+        BootstrapTerminalTheme.apply(to: view, dark: appearance.usesTileGrid || dark, increasedContrast: increasedContrast)
+        if appearance.usesTileGrid {
+            view.nativeBackgroundColor = appearance.isRetro ? NativeRetro.color("terminal", appearance: appearance) : MimicTheme.native("terminal", dark: dark)
+            view.nativeForegroundColor = appearance.isRetro ? NativeRetro.color("terminalText", appearance: appearance) : MimicTheme.native("terminalText", dark: dark)
             view.caretColor = view.nativeForegroundColor
         }
     }

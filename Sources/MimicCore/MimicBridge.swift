@@ -6,7 +6,7 @@
 import Darwin
 import Foundation
 
-/// JSON values shared by the local bridge and MCP. Credentials never belong in this payload.
+/// JSON values shared by the bridge and MCP. Explicit service results may contain secrets and must not be persisted as task or workspace data.
 public enum BridgeValue: Codable, Sendable, Equatable {
     case object([String: BridgeValue]), array([BridgeValue]), string(String), number(Double), bool(Bool), null
     public init(from decoder: any Decoder) throws {

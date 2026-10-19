@@ -8,9 +8,15 @@ extension MimicIntegration {
     /// Private UI operations do not expose drafts or terminal traffic to model-visible results.
     func panelRequest(_ request: MimicBridgeRequest) async throws -> BridgeValue {
         guard let threadID = request.threadID else { throw failure("context") }
+        if request.method == "panel_profile_control" {
+            guard Set(request.parameters.keys) == Set(["actionID", "parameters", "context", "requestID"]),
+                  model.activeProfile?.profile.panel(forAction: request.parameters["actionID"]?.string ?? "") != nil else { throw failure("arguments") }
+            return try await local(request.parameters, threadID: threadID)
+        }
         if PanelBridge.buildTools.contains(request.method) { return try await panelBuildRequest(request) }
         let p = request.parameters
         let keys: [String: Set<String>] = [
+            "panel_set_appearance": ["appearance", "expectedRevision"],
             "panel_run_tool": ["actionID", "parameters", "context", "requestID"],
             "panel_save_tools_preferences": ["favorites", "expectedRevision"],
             "panel_get_tool_configuration": ["actionID", "parameters", "context"],
@@ -21,6 +27,13 @@ extension MimicIntegration {
             "panel_terminal_open": ["taskID", "publicKey"], "panel_terminal_poll": ["channelID"], "panel_terminal_send": ["channelID", "packet"], "panel_terminal_close": ["channelID"], "panel_secret_input": ["taskID"], "panel_bootstrap_control": ["taskID", "operation"]]
         guard let allowed = keys[request.method], Set(p.keys) == allowed else { throw failure("arguments") }
         switch request.method {
+        case "panel_set_appearance":
+            guard let raw = p["appearance"]?.string, let appearance = CodexPanelAppearance(rawValue: raw),
+                  let revision = p["expectedRevision"]?.integer, revision >= 0 else { throw failure("arguments") }
+            guard let native = PanelAppearance(rawValue: appearance.rawValue), NativeRetro.missingFonts(native).isEmpty else { throw failure("appearanceFontsMissing") }
+            do { return .object(["codexAppearance": try BridgeValue.encode(model.codexAppearance.select(appearance, expectedRevision: revision))]) }
+            catch CodexAppearanceError.conflict { throw failure("appearanceConflict") }
+            catch { throw failure("appearanceSave") }
         case "panel_run_tool": return try await local(p, threadID: threadID, preventToolRepeat: true)
         case "panel_save_tools_preferences":
             guard let revision = p["expectedRevision"]?.integer, let favorites = p["favorites"]?.array else { throw failure("arguments") }
@@ -124,6 +137,8 @@ extension MimicIntegration {
             JenkinsSettingsView(settings: model.jenkinsSettings)
             CISettingsView(settings: settings, hasCheckout: true)
         }.padding(16) }.frame(width: 440, height: 600)
+            .mimicFont(.body).buttonStyle(MimicAuxiliaryButtonStyle()).mimicWindowChrome()
+            .modifier(MimicAppearanceRoot(store: model.appearance))
         let window = NSWindow(contentViewController: NSHostingController(rootView: content))
         window.title = text("panel.credentials.title"); window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false; window.center(); window.makeKeyAndOrderFront(nil)

@@ -67,9 +67,10 @@ struct MimicPanel: View {
                         } else {
                             BranchPicker(model: model).frame(width: bounds.size.width - 64, height: min(400, max(80, bounds.size.height - top - 32)))
                         }
-                    }.padding(16).background(theme.color("raised"), in: RoundedRectangle(cornerRadius: 18))
-                        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(theme.color("line"), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.16), radius: 24, y: 8)
+                    }.padding(16).background(theme.color("raised"), in: RoundedRectangle(cornerRadius: theme.retro ? 0 : 18))
+                        .modifier(NativeRetroSurface())
+                        .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(theme.color("line"), lineWidth: 1).allowsHitTesting(false))
+                        .shadow(color: .black.opacity(theme.retro ? 0 : 0.16), radius: 24, y: 8)
                         .padding(.horizontal, 16)
                 }.padding(.top, top)
             }
@@ -91,6 +92,8 @@ struct MimicPanel: View {
                     if self.model.hasCompatibleProfile { HomePage(model: self.model) }
                     else { ProfileSetupView(model: self.model) }
                 }.padding(MimicMetrics.documentInset)
+                    // The R1 rail overlays the native clip view; keep the document inset beside it.
+                    .padding(.trailing, theme.retro ? 17 : 0)
                     .background(MimicDocumentVisibility(page: .home, visible: self.model.panelPage == .home))
             }.scrollIndicators(.hidden).modifier(MimicScrollEdges())
                 .modifier(MimicPanelScrollDriver(model: self.model, scroll: self.model.panelScroll, page: .home, proxy: proxy))
@@ -179,6 +182,7 @@ struct SettingsDocument: View {
                                 PanelMessages(model: model)
                                 SettingsContent(model: model)
                             }.padding(.vertical, 16).padding(.trailing, 16).padding(.leading, compact ? 16 : 0)
+                                .padding(.trailing, theme.retro ? 17 : 0)
                                 .background(MimicDocumentVisibility(page: .settings, visible: model.panelPage == .settings))
                         }.scrollIndicators(.hidden).modifier(MimicScrollEdges())
                             .modifier(MimicPanelScrollDriver(model: model, scroll: model.settingsScroll, page: .settings, proxy: proxy))
@@ -188,7 +192,7 @@ struct SettingsDocument: View {
         }.background(theme.color("paper")).foregroundStyle(theme.color("ink")).tint(theme.color("accent"))
             .buttonStyle(TileGridButtonStyle())
             // Settings share B typography and text scaling even in the legacy working panel.
-            .environment(\.mimicPanelAppearance, .tileGrid)
+            .environment(\.mimicPanelAppearance, theme.retro ? theme.appearance : .tileGrid)
     }
 }
 
@@ -206,7 +210,7 @@ private struct MimicPanelScrollDriver: ViewModifier {
     private func scrollPanel(using proxy: ScrollViewProxy) {
         let request = self.scroll.request, target = self.scroll.target
         guard self.model.panelPage == self.page, !target.isEmpty else { return }
-        let policy = MimicMotionPolicy(source: self.scroll.source, reduceMotion: self.model.motionSettings.nativeReduceMotion, multiplier: self.model.motionSettings.multiplier)
+        let policy = MimicMotionPolicy(source: self.scroll.source, reduceMotion: self.model.motionSettings.nativeReduceMotion, multiplier: self.model.motionSettings.multiplier, retro: self.model.appearance.selection.isRetro)
         // Reveal the lazy history row before seeking a terminal or analysis inside it.
         DispatchQueue.main.async {
             guard self.model.panelPage == self.page, self.scroll.isActive(request) else { return }
@@ -235,21 +239,21 @@ struct ProjectBar: View {
                     Button { model.toggleSection(.branches); if model.expandedSection == .branches { model.loadBranches() } } label: {
                         Label(project.branch, systemImage: "arrow.triangle.branch").lineLimit(1).truncationMode(.middle)
                     }.buttonStyle(.plain).mimicFont(.caption).disabled(model.switchingBranch)
-                        .help(project.branch).accessibilityIdentifier("branch.toggle")
+                        .mimicHelp(project.branch).accessibilityIdentifier("branch.toggle")
                         .accessibilityLabel(text("branch.choose")).accessibilityValue(project.branch)
                         .layoutPriority(-1)
                     Spacer(minLength: 2)
                     Toggle(text("branch.rebase"), isOn: Binding(
                         get: { model.branchSwitch.rebaseEnabled(path: project.path) },
                         set: { value in do { try model.branchSwitch.setRebase(value, path: project.path) } catch { model.branchError = text("branch.blocked") } }
-                    )).toggleStyle(.checkbox).mimicFont(.caption).fixedSize()
-                        .disabled(model.switchingBranch).help(text("branch.rebase.help"))
+                    )).toggleStyle(MimicCheckboxStyle()).mimicFont(.caption).fixedSize()
+                        .disabled(model.switchingBranch).mimicHelp(text("branch.rebase.help"))
                         .accessibilityIdentifier("branch.rebase")
                 } else { Text(text("project.no.branch")).mimicFont(.caption); Spacer() }
                 Button { model.toggleSettings() } label: { Image(systemName: "gearshape") }
-                    .buttonStyle(.plain).help(text("settings")).accessibilityIdentifier("settings.toggle")
+                    .buttonStyle(.plain).mimicHelp(text("settings")).accessibilityIdentifier("settings.toggle")
             }.foregroundStyle(.secondary)
-            if let project = model.project, let operation = model.branchSwitch.latest(path: project.path) {
+            if let operation = model.branchStatusOperation {
                 BranchSwitchStatus(model: model, operation: operation)
             }
         }
@@ -266,6 +270,7 @@ struct BranchSwitchStatus: View {
                     HStack(spacing: 6) {
                         if model.branchSwitch.isExecuting { ProgressView().controlSize(.mini) }
                         Text(text("branch.phase." + operation.phase.rawValue)).lineLimit(2)
+                            .mimicHelp(operation.source.path + " → " + operation.target)
                         Spacer(minLength: 0)
                         if let thread = operation.ownerThreadID, let url = URL(string: "codex://threads/" + thread.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!) {
                             Button(text("branch.codex.open")) { NSWorkspace.shared.open(url) }.buttonStyle(.plain)
@@ -281,8 +286,8 @@ struct BranchSwitchStatus: View {
                     if operation.phase == .awaitingAgent {
                         Text(text("branch.delivery." + operation.delivery.rawValue)).foregroundStyle(.secondary)
                     }
-                    if let error = operation.error { Text(text(error)).foregroundStyle(.orange).lineLimit(3).help(text(error)) }
-                    if let stash = operation.stashName { Text(text("branch.stash.backup") + " " + operation.source.branch).lineLimit(1).truncationMode(.middle).help(stash) }
+                    if let error = operation.error { Text(text(error)).foregroundStyle(.orange).lineLimit(3).mimicHelp(text(error)) }
+                    if let stash = operation.stashName { Text(text("branch.stash.backup") + " " + operation.source.branch).lineLimit(1).truncationMode(.middle).mimicHelp(stash) }
                 }.mimicFont(.caption).accessibilityIdentifier("branch.progress")
             }
         }
@@ -308,13 +313,13 @@ struct BranchPicker: View {
                     MimicChromeIconButton(symbol: "xmark", label: text("panel.chrome.close"), identifier: "branch.close") { model.expandedSection = nil }
                 }
             }
-            TextField(text("branch.search"), text: self.$model.branchSearch).textFieldStyle(.roundedBorder).mimicFont(.body).mimicImmediate().accessibilityIdentifier("branch.search")
+            TextField(text("branch.search"), text: self.$model.branchSearch).textFieldStyle(.roundedBorder).mimicInput().mimicFont(.body).mimicImmediate().accessibilityIdentifier("branch.search")
             if self.model.loadingBranches { ProgressView().controlSize(.small) }
             if let blocker = self.model.branchSwitchBlocker {
                 Text(blocker.message).mimicFont(.caption).foregroundStyle(.orange).accessibilityIdentifier("branch.blocker")
             }
-            if !self.model.branchError.isEmpty, self.model.branchError != self.model.branchSwitchBlocker?.message {
-                Text(self.model.branchError).mimicFont(.caption).foregroundStyle(.orange).accessibilityIdentifier("branch.error")
+            if let error = self.model.branchSelectionError {
+                Text(error).mimicFont(.caption).foregroundStyle(.orange).accessibilityIdentifier("branch.error")
             }
             if theme.tiled { ScrollView { branchList } }
             else { branchList }
@@ -323,8 +328,8 @@ struct BranchPicker: View {
                 Toggle(text("branch.rebase"), isOn: Binding(
                     get: { model.branchSwitch.rebaseEnabled(path: project.path) },
                     set: { value in do { try model.branchSwitch.setRebase(value, path: project.path) } catch { model.branchError = text("branch.blocked") } }
-                )).toggleStyle(.checkbox).mimicFont(.body).disabled(model.switchingBranch)
-                    .help(text("branch.rebase.help")).accessibilityIdentifier("branch.rebase")
+                )).toggleStyle(MimicCheckboxStyle()).mimicFont(.body).disabled(model.switchingBranch)
+                    .mimicHelp(text("branch.rebase.help")).accessibilityIdentifier("branch.rebase")
                 Text(text("branch.rebase.help")).mimicFont(.caption).foregroundStyle(.secondary)
             }
         }
@@ -338,12 +343,46 @@ struct BranchPicker: View {
                     HStack {
                         Text(branch.name).font(theme.tiled ? .system(size: MimicTheme.metric("body") * textScale, design: .monospaced) : MimicMetrics.body.monospaced()).lineLimit(1).truncationMode(.middle)
                         Spacer()
-                        if branch.name == self.model.project?.branch { Image(systemName: "checkmark") }
+                        Image(systemName: "checkmark").frame(width: 14)
+                            .opacity(branch.name == self.model.project?.branch ? 1 : 0).accessibilityHidden(true)
                     }.padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                }.buttonStyle(.plain).disabled(!self.model.canSwitchBranch && branch.name != self.model.project?.branch)
-                    .help(branch.name).accessibilityIdentifier("branch.select." + branch.name)
+                }.buttonStyle(BranchSelectionButtonStyle(current: branch.name == self.model.project?.branch))
+                    .disabled(!self.model.canSwitchBranch && branch.name != self.model.project?.branch)
+                    .mimicHelp(self.model.canSwitchBranch ? branch.name : self.model.branchSwitchBlocker?.message ?? branch.name)
+                    .accessibilityIdentifier("branch.select." + branch.name)
+                    .accessibilityAddTraits(branch.name == self.model.project?.branch ? .isSelected : [])
             }
         }
+    }
+}
+
+/// Approved B variant: full-row lavender feedback with a reserved trailing
+/// action arrow. Disabled rows retain their geometry and never imply activation.
+private struct BranchSelectionButtonStyle: ButtonStyle {
+    let current: Bool
+    private var theme = MimicTheme()
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.isFocused) private var focused
+    @State private var hovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let highlighted = enabled && (hovered || focused || configuration.isPressed)
+        configuration.label.padding(.horizontal, 10)
+            .foregroundStyle(theme.retro && highlighted ? theme.color("onAccent") : theme.color("ink"))
+            .opacity(enabled ? 1 : 0.45)
+            .background(highlighted ? theme.color(theme.retro ? "accent" : "accentSoft") : .clear,
+                        in: RoundedRectangle(cornerRadius: theme.retro ? 0 : 8))
+            .overlay(alignment: .trailing) {
+                if !current {
+                    Image(systemName: "arrow.right").foregroundStyle(theme.color(theme.retro ? "onAccent" : "accent"))
+                        .frame(width: 14).padding(.trailing, 10).opacity(highlighted ? 1 : 0)
+                        .accessibilityHidden(true).allowsHitTesting(false)
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: theme.retro ? 0 : 8)
+                .strokeBorder(theme.color("accent").opacity(enabled && (focused || configuration.isPressed) ? 1 : 0), lineWidth: 2)
+                .allowsHitTesting(false))
+            .contentShape(Rectangle()).onHover { hovered = $0 }
     }
 }
 
@@ -364,7 +403,7 @@ struct ToolRow: View {
                     Image(systemName: ActionPresentation.symbol(self.action)).foregroundStyle(.secondary).frame(width: 20)
                     Text(text("tool.name." + self.action.rawValue)).font(.system(size: 12, weight: .medium))
                     Spacer()
-                    if let missing = model.readiness[action], !missing.isEmpty { Image(systemName: "exclamationmark.circle").foregroundStyle(.orange).help(missing.joined(separator: ", ")) }
+                    if let missing = model.readiness[action], !missing.isEmpty { Image(systemName: "exclamationmark.circle").foregroundStyle(.orange).mimicHelp(missing.joined(separator: ", ")) }
                     Image(systemName: self.expanded ? "chevron.down" : "chevron.right").font(.system(size: 9)).foregroundStyle(.tertiary)
                 }.contentShape(Rectangle())
             }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets(top: MimicMetrics.medium, leading: MimicMetrics.medium, bottom: MimicMetrics.medium, trailing: MimicMetrics.medium))).accessibilityIdentifier(self.action.rawValue).accessibilityValue(disclosureValue(self.expanded))

@@ -12,7 +12,7 @@ import UniformTypeIdentifiers
 func text(_ key: String) -> String { NSLocalizedString(key, bundle: MimicResources.bundle, comment: "") }
 
 /// A rejected click and a disabled row describe the same admission decision.
-enum BranchSwitchBlocker: String, Error {
+enum BranchSwitchBlocker: String, Error, CaseIterable {
     case update, shutdown, tasks, builds, simulator, git, checking, unavailable
     var message: String { text("branch.blocker." + self.rawValue) }
 }
@@ -20,9 +20,15 @@ enum BranchSwitchBlocker: String, Error {
 /// The single owner of queued jobs and PTY sessions; view lifetime never controls execution.
 @MainActor
 final class TaskCoordinator: ObservableObject {
+    let work = WorkCoordinator()
+    let serviceTools: ServiceToolCoordinator
+    func verifyServiceProfile(_ snapshot: ProfileSnapshot) throws { try profileStore.verify(snapshot) }
+    func serviceSettingsSelection(checkout: String, panelID: String) -> [String] { defaults.stringArray(forKey: "customPanel.target." + checkout + ":" + panelID) ?? [] }
     let systemOptions: MimicSystemOptions
     let frameDiagnostics: FrameDiagnosticsSettings
     let appearance: PanelAppearanceStore
+    let codexAppearance: CodexPanelAppearanceStore
+    private var appearanceContinuity: NativeAppearanceContinuity?
     @Published
     var projects: [ProjectContext] = []
     @Published var activeProfile: ProfileSnapshot?
@@ -318,8 +324,12 @@ final class TaskCoordinator: ObservableObject {
         ], scanUsage: { await scanner.scanUsage() })
         self.analysis = analysis ?? AnalysisCoordinator(makeRunner: { AIProcessRunner(helper: helper) }, makeProbeRunner: { AIProcessRunner(helper: helper, timeLimit: 8) })
         let directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mimic")
+        self.serviceTools = ServiceToolCoordinator(defaults: defaults, directory: directory.appendingPathComponent("ServiceTools"))
         self.history = HistoryStore(directory: directory)
         self.supportDirectory = directory
+        self.codexAppearance = CodexPanelAppearanceStore(directory: directory, previous: self.appearance.selection)
+        self.appearance.connect(to: self.codexAppearance)
+        self.appearanceContinuity = NativeAppearanceContinuity(store: self.appearance, shared: self.codexAppearance)
         if let data = defaults.data(forKey: "agentPreparationReceipts"), let receipts = try? JSONDecoder().decode([String: PreparationReceipt].self, from: data) { preparationReceipts = receipts }
         self.profileStore = ProfileStore(directory: directory.appendingPathComponent("Profiles"))
         self.activeProfile = try? self.profileStore.active()
@@ -448,6 +458,7 @@ final class TaskCoordinator: ObservableObject {
         if self.analysis.isActive || self.aiSettings.checking != nil { blockers.append("ai") }
         // Submitted CI jobs live on the server; restart restores their observers without another POST.
         if self.ciLaunch.submitting { blockers.append("ci") }
+        if self.serviceTools.pendingCount > 0 { blockers.append("serviceRequests") }
         return blockers
     }
     var branchSwitchBlocker: BranchSwitchBlocker? {
@@ -455,6 +466,17 @@ final class TaskCoordinator: ObservableObject {
         return self.branchSwitchBlocker(for: project, requiresSnapshot: true)
     }
     var canSwitchBranch: Bool { self.branchSwitchBlocker == nil }
+    /// A global reservation must expose its recovery controls even when the
+    /// desktop has selected another checkout since that operation was admitted.
+    var branchStatusOperation: BranchSwitchOperation? {
+        self.branchSwitch.active ?? self.project.flatMap { self.branchSwitch.latest(path: $0.path) }
+    }
+    /// Admission reasons come from live owners; a rejected click cannot leave
+    /// a stale warning after that owner has finished or released the queue.
+    var branchSelectionError: String? {
+        guard !self.branchError.isEmpty, !BranchSwitchBlocker.allCases.contains(where: { $0.message == self.branchError }) else { return nil }
+        return self.branchError
+    }
 
     /// Queue ownership is global; desktop inspection must never gate a different chat checkout.
     private func branchSwitchBlocker(for project: ProjectContext, requiresSnapshot: Bool) -> BranchSwitchBlocker? {
@@ -462,12 +484,13 @@ final class TaskCoordinator: ObservableObject {
         if self.stoppingForExit { return .shutdown }
         if self.switchingBranch || self.branchSwitch.hasPending || self.branchSwitch.isExecuting || self.checkoutGate.isSwitching { return .git }
         if self.builds.hasPending || self.builds.admittingCount != 0 { return .builds }
-        if self.simulatorScreen.hasPending { return .simulator }
+        if self.simulatorScreen.hasPendingOperations { return .simulator }
         if !self.checkoutGate.canSwitch(records: self.records, preparing: self.preparing) { return .tasks }
         if requiresSnapshot {
             guard self.project == project else { return .unavailable }
-            if self.checking { return .checking }
-            if self.gitSummary == nil { return .unavailable }
+            // Environment diagnostics can outlive a fresh Git snapshot from the
+            // picker. Only the absence of that snapshot prevents admission.
+            if self.gitSummary == nil { return self.checking || self.loadingBranches ? .checking : .unavailable }
             if self.hasGitOperation { return .git }
         }
         return nil
@@ -853,6 +876,7 @@ final class TaskCoordinator: ObservableObject {
         case BranchError.dirty: text("branch.dirty")
         case BranchError.operation: text("branch.operation")
         case BranchError.missing: text("branch.missing")
+        case BranchError.timeout: text("branch.timeout")
         case let BranchError.command(output): output
         default: text("branch.error")
         }
@@ -1018,6 +1042,7 @@ final class TaskCoordinator: ObservableObject {
         guard self.simulatorContextProject?.path != next?.path || self.simulatorContextProject?.developerDirectory != next?.developerDirectory else { return }
         self.simulatorContextProject = next; self.simulatorRevision = UUID()
         self.simulators = []; self.simulatorDeveloper = ""; self.simulatorError = ""
+        self.simulatorPanel.physicalError = ""
         self.simulatorFailures = [:]; self.simulatorOpening = [:]
         self.simulatorRefreshRequested = self.simulatorRefreshTask != nil
     }
@@ -1045,7 +1070,10 @@ final class TaskCoordinator: ObservableObject {
                     if self.simulatorDeveloper != snapshot.developer {
                         self.simulatorRevision = UUID(); self.simulatorFailures = [:]
                     }
-                    self.simulatorPanel.apply(devices: snapshot.devices, usage: self.simulatorUsage, developer: snapshot.developer)
+                    // A CoreDevice failure retains disabled physical cards while simctl stays usable.
+                    let retained = snapshot.physicalError.isEmpty || self.simulatorDeveloper != snapshot.developer ? [] : self.simulators.filter { $0.physical != nil }
+                    self.simulatorPanel.apply(devices: snapshot.devices + retained, usage: self.simulatorUsage, developer: snapshot.developer)
+                    self.simulatorPanel.physicalError = snapshot.physicalError
                     self.simulatorError = ""
                 case .failure: self.simulatorError = text("simulators.error")
                 }
@@ -1081,19 +1109,23 @@ final class TaskCoordinator: ObservableObject {
         return SimulatorPanelFailure(message: record.error ?? text("simulators.operation.error"), taskID: record.id)
     }
     func canActivateSimulator(_ device: SimulatorDevice) -> Bool {
-        !self.admissionsClosed && !self.switchingBranch && !self.simulatorStale && !self.simulatorDeveloper.isEmpty &&
-        !self.simulatorBusy(device) && self.simulators.contains(where: { $0.id == device.id }) &&
-        (device.isBooted || (device.state == "Shutdown" && self.readiness[.simulatorBoot] == []))
+        guard !self.admissionsClosed, !self.switchingBranch, !self.simulatorStale, !self.simulatorDeveloper.isEmpty,
+              !self.simulatorBusy(device), self.simulators.contains(device) else { return false }
+        if let physical = device.physical {
+            return self.simulatorPanel.physicalError.isEmpty && device.isActive && PhysicalDeviceCatalog.viewingURL(physical.screenViewingURL?.absoluteString, deviceID: device.id) != nil
+        }
+        return device.isBooted || (device.state == "Shutdown" && self.readiness[.simulatorBoot] == [])
     }
     func activateSimulator(_ device: SimulatorDevice) {
         guard self.canActivateSimulator(device) else { return }
-        if device.isBooted { self.openSimulator(device) }
+        if device.physical != nil || device.isBooted { self.openSimulator(device) }
         else { self.requestSimulator(.simulatorBoot, device: device) }
     }
 
     /// Reserve before admission suspends so double clicks cannot enqueue the same device twice.
     func requestSimulator(_ action: MimicAction, device: SimulatorDevice) {
         guard action == .simulatorBoot || action == .simulatorShutdown,
+              device.physical == nil,
               self.canActivateSimulator(device), let project = self.project,
               action == .simulatorBoot ? device.state == "Shutdown" : device.isBooted else { return }
         let operation = SimulatorPanelOperation(id: UUID(), device: device, action: action, project: project,
@@ -1116,7 +1148,8 @@ final class TaskCoordinator: ObservableObject {
     }
 
     func openSimulator(_ device: SimulatorDevice) {
-        guard let current = self.project, !self.simulatorDeveloper.isEmpty, self.simulatorOpening[device.id] == nil else { return }
+        guard device.physical == nil || self.canActivateSimulator(device),
+              let current = self.project, !self.simulatorDeveloper.isEmpty, self.simulatorOpening[device.id] == nil else { return }
         let developer = self.simulatorDeveloper, revision = self.simulatorRevision, opening = UUID()
         self.simulatorOpening[device.id] = opening; self.simulatorFailures[device.id] = nil
         self.dismissSimulatorFailure(device)
@@ -1129,10 +1162,16 @@ final class TaskCoordinator: ObservableObject {
                 self.recordSimulatorUsage(device.id, developer: developer)
             } catch {
                 if self.project == current, self.simulatorRevision == revision {
-                    self.simulatorFailures[device.id] = SimulatorPanelFailure(message: text("simulators.open.error") + " " + error.localizedDescription, taskID: nil)
+                    self.simulatorFailures[device.id] = SimulatorPanelFailure(message: text(device.physical == nil ? "simulators.open.error" : "devices.open.error") + " " + error.localizedDescription, taskID: nil)
                 }
             }
         }
+    }
+
+    func copyDeviceUDID(_ device: SimulatorDevice) {
+        guard self.simulators.contains(where: { $0.id == device.id }), let physical = device.physical else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(physical.udid, forType: .string)
     }
 
     /// Only this request's successful completion can open a window in the unchanged context.
@@ -1417,6 +1456,10 @@ final class TaskCoordinator: ObservableObject {
         if let code = event?.launchError, code != 0 { self.records[index].error = text("process.launch.error") + " \(code)" }
         if let pending = self.sanitizedLogPending.removeValue(forKey: id) { try? self.log?.append(Data(DiagnosticText.clean(String(decoding: pending, as: UTF8.self)).utf8)) }
         self.sanitizedLogDropping.remove(id)
+        if let execution = self.records[index].profileExecution, let panel = execution.snapshot.profile.panel(forAction: execution.actionID) {
+            self.records[index].panelResult = ProfilePanelResult.parse(self.buffers[id] ?? Data(), panel: panel)
+            if self.records[index].panelResult == nil, self.records[index].status == .succeeded { self.records[index].status = .failed }
+        }
         self.records[index].truncated = (self.log?.truncated ?? false) || self.truncatedBuffers.contains(id)
         self.log?.close(); self.log = nil; self.session = nil
         if self.records[index].action == .bootstrap { self.bootstrapProgress.finish(succeeded: self.records[index].status == .succeeded) }
@@ -1570,15 +1613,19 @@ final class TaskCoordinator: ObservableObject {
     }
 
     /// Echoed input must not become a durable log or a diagnostic fragment.
-    func input(id: UUID, data: Data) {
-        guard id == activeID, !data.isEmpty, let index = records.firstIndex(where: { $0.id == id }) else { return }
+    /// False reports an atomic admission refusal, so private transports must not acknowledge success.
+    @discardableResult
+    func input(id: UUID, data: Data) -> Bool {
+        guard id == activeID, !data.isEmpty, let index = records.firstIndex(where: { $0.id == id }) else { return false }
         if records[index].hasPrivateInput != true {
             records[index].hasPrivateInput = true; log?.close(); log = nil
             if let path = records[index].logPath { try? FileManager.default.removeItem(atPath: path) }
             records[index].logPath = nil; sanitizedLogPending[id] = nil; sanitizedLogDropping.remove(id); persist()
         }
         self.bootstrapTerminals[id]?.discardReplayAfterPrivateInput()
-        self.awaitingInput.remove(id); self.session?.send(data)
+        guard self.session?.send(data) == true else { self.message = text("terminal.input.rejected"); return false }
+        self.awaitingInput.remove(id)
+        return true
     }
     func resize(id: UUID, columns: Int, rows: Int) { if id == self.activeID { self.session?.resize(columns: columns, rows: rows) } }
     func replay(id: UUID) -> Data {

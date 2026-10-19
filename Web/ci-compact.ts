@@ -57,6 +57,7 @@ export function renderCIProgress(host:HTMLElement,summary:CICompactSummary,t:Tra
  if(!host.firstElementChild){const track=document.createElement('div');track.className='ci-compact-progress';track.append(document.createElement('div'));const count=document.createElement('span');count.className='ci-compact-count';host.append(track,count);}
  const track=host.firstElementChild as HTMLElement,fraction=ciFraction(summary);
  const color=['failed','error'].includes(summary.status)?'#c55c27':summary.status==='success'?'#2b9463':'var(--accent)';
+ track.style.setProperty('--progress-fraction',String(fraction??0));
  (track.firstElementChild as HTMLElement).style.transform=`scaleX(${fraction??0})`;(track.firstElementChild as HTMLElement).style.background=color;
  track.setAttribute('role','progressbar');track.setAttribute('aria-label',t('ci.checks.progress'));track.setAttribute('aria-valuemin','0');track.setAttribute('aria-valuemax','100');
  if(fraction!=null){track.setAttribute('aria-valuenow',String(Math.round(fraction*100)));track.setAttribute('aria-valuetext',Math.round(fraction*100)+'%');}

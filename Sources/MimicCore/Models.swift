@@ -100,7 +100,7 @@ public struct CommandSpec: Sendable, Equatable {
             return try CacheCleanup.command(action: action, project: project, environment: environment, home: cleanupHome)
         }
         if action == .simulatorBoot || action == .simulatorShutdown {
-            guard let simulator else { throw MimicError.invalidSimulator }
+            guard let simulator, simulator.physical == nil else { throw MimicError.invalidSimulator }
             return CommandSpec(executable: "/usr/bin/xcrun", arguments: ["simctl", action == .simulatorBoot ? "boot" : "shutdown", simulator.id.uuidString], directory: project.path, environment: environment)
         }
         throw MimicError.invalidProject
@@ -115,6 +115,8 @@ public enum MimicError: Error, Equatable { case invalidBootstrap, invalidProject
 public enum TaskStatus: String, Codable, Sendable { case queued, running, succeeded, failed, cancelled, interrupted }
 public struct TaskRecord: Codable, Identifiable, Sendable {
     public var completedProfileSteps: Int?
+    /// Validated non-secret form state returned by a profile adapter.
+    public var panelResult: ProfilePanelResult?
     public var preparationReceipt: PreparationReceipt?
     public var changes: ActivityChanges?
     public let id: UUID

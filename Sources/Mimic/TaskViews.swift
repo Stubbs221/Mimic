@@ -37,10 +37,10 @@ struct TaskHistoryContent: View {
                 Spacer()
                 Label("\(self.model.summary.failed + self.model.builds.records.filter { $0.project.path == self.model.selectedProjectPath && [.failed, .interrupted].contains($0.status) }.count) " + text("summary.failed"), systemImage: "exclamationmark.circle").foregroundStyle(.secondary)
             }.mimicFont(.caption)
-            TextField(text("tasks.search"), text: self.$model.taskSearch).textFieldStyle(.roundedBorder).accessibilityIdentifier("tasks.search")
+            TextField(text("tasks.search"), text: self.$model.taskSearch).textFieldStyle(.roundedBorder).mimicInput().accessibilityIdentifier("tasks.search")
             Picker(text("tasks.filter"), selection: self.$model.taskFilter) {
                 ForEach(TaskHistoryFilter.allCases, id: \.self) { filter in Text(text("filter." + filter.rawValue)).tag(filter) }
-            }.pickerStyle(.segmented).labelsHidden().accessibilityIdentifier("tasks.filter")
+            }.pickerStyle(.segmented).mimicSegments(selection: $model.taskFilter, options: TaskHistoryFilter.allCases.map { .init(text("filter." + $0.rawValue), $0) }).labelsHidden().accessibilityIdentifier("tasks.filter")
             if self.model.filteredTaskRecords.isEmpty && self.model.filteredBuildRecords.isEmpty {
                 EmptyState(symbol: "terminal", title: text(self.model.records.isEmpty && self.model.builds.records.isEmpty ? "tasks.empty.title" : "search.empty"), message: text(self.model.records.isEmpty && self.model.builds.records.isEmpty ? "tasks.empty.description" : "search.suggest"))
             }
@@ -145,8 +145,8 @@ struct LegacyHistoryRow: View {
                                 Image(systemName: ActionPresentation.statusSymbol(record.status)).foregroundStyle(ActionPresentation.statusColor(record.status)).padding(.top, 2)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(taskResultTitle(record)).font(.system(size: 12, weight: .semibold))
-                                    if let name = record.generation?.name ?? record.simulator?.name { Text(name).mimicFont(.caption).lineLimit(2).help(name) }
-                                    Text(URL(fileURLWithPath: record.project.path).lastPathComponent + " · " + record.project.branch).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(2).help(record.project.path + " · " + record.project.branch)
+                                    if let name = record.generation?.name ?? record.simulator?.name { Text(name).mimicFont(.caption).lineLimit(2).mimicHelp(name) }
+                                    Text(URL(fileURLWithPath: record.project.path).lastPathComponent + " · " + record.project.branch).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(2).mimicHelp(record.project.path + " · " + record.project.branch)
                                     HStack {
                                         Text(record.action == .bootstrap ? taskResultStatus(record) : text("status." + record.status.rawValue))
                                         if record.action == .bootstrap, record.startedAt != nil {

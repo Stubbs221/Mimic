@@ -3,7 +3,11 @@
 # Created by Василий Маслов on 05.10.2026.
 """Deploy a verified development bundle after the native owner agrees to an idle exit."""
 import argparse
+import contextlib
+import fcntl
+import hashlib
 import json
+import os
 import pathlib
 import plistlib
 import socket
@@ -88,14 +92,58 @@ def verify_launch(destination):
     raise RuntimeError(MESSAGES['development.launchFailed'])
 
 
+@contextlib.contextmanager
+def native_handoff(seconds):
+    """Hold the app's canonical flock after its confirmed exit; helpers cannot create a queue owner."""
+    directory = SUPPORT / 'Bridge'
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(directory / 'native-instance.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    deadline = time.monotonic() + seconds
+    locked = False
+    try:
+        while not locked:
+            wait_for_exit(max(0, deadline - time.monotonic()))
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(MESSAGES['development.timeout'])
+        # A losing background launch may still be exiting before it constructs TaskCoordinator.
+        while process_ids('Mimic') or process_ids('TaskHost'):
+            if time.monotonic() >= deadline:
+                raise RuntimeError(MESSAGES['development.timeout'])
+            time.sleep(0.05)
+        yield
+    finally:
+        if locked:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def executable_digest(app):
+    path = app / 'Contents/MacOS/Mimic'
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
 def deploy(app, destination, wait_seconds):
     if app.resolve() == destination.resolve():
         raise RuntimeError(MESSAGES['development.source'])
     installer = ['/bin/bash', str(ROOT / 'setup-mimic.command'), '--app', str(app)]
     subprocess.run(installer + ['--check-only'], check=True)
-    wait_for_exit(wait_seconds)
-    # The installer repeats inventory immediately before replacing and restores the backup on move failure.
-    subprocess.run(installer + ['--destination', str(destination), '--yes', '--background'], check=True)
+    with native_handoff(wait_seconds):
+        previous = executable_digest(destination)
+        # Keep every installer inventory check. A transient losing launch can fail a check
+        # during staging; retry only while the old executable remains unchanged and no task host exists.
+        for attempt in range(5):
+            try:
+                subprocess.run(installer + ['--destination', str(destination), '--yes', '--defer-launch'], check=True)
+                break
+            except subprocess.CalledProcessError:
+                if attempt == 4 or process_ids('TaskHost') or not process_ids('Mimic') or executable_digest(destination) != previous:
+                    raise
+                time.sleep(0.2)
+    subprocess.run(['/usr/bin/open', '-a', str(destination), '--args', '--mcp-background'], check=True)
     verify_launch(destination)
     with (destination / 'Contents/Info.plist').open('rb') as info_file:
         refreshes_on_launch = plistlib.load(info_file).get('MimicRefreshPluginOnLaunch', False)

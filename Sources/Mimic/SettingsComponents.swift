@@ -7,17 +7,17 @@ import SwiftUI
 
 // MARK: - Shared settings vocabulary
 
-/// Settings use the same B surfaces in both panel appearances.
+/// Retained settings groups adopt R1 borders without changing the category composition.
 struct SettingsCard<Content: View>: View {
     private var theme = MimicTheme()
     @ViewBuilder let content: () -> Content
     var body: some View {
         VStack(alignment: .leading, spacing: 12, content: content)
             .frame(maxWidth: .infinity, alignment: .leading).padding(16)
-            .background(theme.color("surface"), in: RoundedRectangle(cornerRadius: 18))
+            .background(theme.color("surface"), in: RoundedRectangle(cornerRadius: theme.retro ? 0 : 18))
+            .modifier(NativeRetroSurface())
     }
 }
-
 /// Text keeps its natural height; an action moves below it when the pair cannot fit.
 struct SettingsRow<Control: View>: View {
     let title: String
@@ -39,13 +39,15 @@ struct SettingsRow<Control: View>: View {
 }
 
 struct SettingsSwitch: View {
+    private var theme = MimicTheme()
     let title: String
     var detail: String? = nil
     @Binding var isOn: Bool
     var identifier: String
     var body: some View {
         SettingsRow(title: title, detail: detail) {
-            Toggle(title, isOn: $isOn).labelsHidden().toggleStyle(.switch)
+            Toggle(title, isOn: $isOn).labelsHidden().toggleStyle(MimicCheckboxStyle(originalSwitch: true, hidesLabel: true))
+                .accessibilityLabel(title)
                 .accessibilityIdentifier(identifier)
         }
     }
@@ -67,6 +69,7 @@ struct SettingsCategoryNavigation: View {
                 )) {
                     ForEach(SettingsGroup.allCases) { Text($0.title).tag($0) }
                 }.pickerStyle(.menu).mimicFont(.body)
+                    .mimicSelection(text("settings.category"), selection: Binding(get: { model.settingsGroup ?? .application }, set: { model.openSettings(group: $0) }), options: SettingsGroup.allCases.map { .init($0.title, $0) }, labelsHidden: true)
                     .accessibilityIdentifier("settings.categories.compact")
             } else {
                 VStack(alignment: .leading, spacing: 4) {
@@ -76,16 +79,17 @@ struct SettingsCategoryNavigation: View {
                                 .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                                 .padding(.horizontal, 8).padding(.vertical, 4)
-                                .foregroundStyle(theme.color(model.settingsGroup == group ? "paper" : "ink"))
-                                .background(model.settingsGroup == group ? theme.color("ink") : .clear,
-                                            in: RoundedRectangle(cornerRadius: 10))
-                                .contentShape(RoundedRectangle(cornerRadius: 10))
+                                .foregroundStyle(theme.color(model.settingsGroup == group ? theme.retro ? "onAccent" : "paper" : "ink"))
+                                .background(model.settingsGroup == group ? theme.color(theme.retro ? "accent" : "ink") : .clear,
+                                            in: RoundedRectangle(cornerRadius: theme.retro ? 0 : 10))
+                                .contentShape(RoundedRectangle(cornerRadius: theme.retro ? 0 : 10))
                         }.buttonStyle(.plain)
                             .accessibilityIdentifier(group.scrollID + ".tab")
                             .accessibilityAddTraits(model.settingsGroup == group ? .isSelected : [])
                     }
                 }.padding(8).frame(width: 132)
-                    .background(theme.color("surface"), in: RoundedRectangle(cornerRadius: 18))
+                    .background(theme.color("surface"), in: RoundedRectangle(cornerRadius: theme.retro ? 0 : 18))
+                    .modifier(NativeRetroSurface())
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier("settings.categories")
     }

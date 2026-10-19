@@ -129,24 +129,43 @@ private final class UsageRPCFixture: CodexUsageRPC {
 private final class UsageCredentialFixture: ClaudeUsageCredentialReading {
     let values: [ClaudeUsageCredential]
     var reads = 0
+    var current = true
     init(values: [ClaudeUsageCredential]) { self.values = values }
     func candidates(manual: Bool) throws -> [ClaudeUsageCredential] { self.reads += 1; return self.values }
+    func isCurrent(_ credential: ClaudeUsageCredential) -> Bool { self.current }
 }
 @MainActor
 private final class UsageHTTPFixture: AIUsageHTTPTransport {
     var status = 200
     var requests: [URLRequest] = []
     var retryAfter: String?
+    var profile = #"{"account":{"uuid":"fixture"},"organization":{"uuid":"org","rate_limit_tier":"pro"}}"#
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         self.requests.append(request)
         let url = try #require(request.url)
         let response = try #require(HTTPURLResponse(url: url, statusCode: self.status, httpVersion: nil, headerFields: self.retryAfter.map { ["Retry-After": $0] }))
-        let body = request.url?.lastPathComponent == "profile" ? #"{"account":{"uuid":"fixture"},"organization":{"uuid":"org","rate_limit_tier":"pro"}}"# : #"{"five_hour":{"utilization":10},"seven_day":{"utilization":50}}"#
+        let body = request.url?.lastPathComponent == "profile" ? self.profile : #"{"five_hour":{"utilization":10},"seven_day":{"utilization":50}}"#
         return (Data(body.utf8), response)
     }
 }
 @Suite @MainActor
 struct AIUsageAdapterTests {
+    @Test(arguments: ["match", "account", "organization", "missing", "changed"])
+    func desktopProfileIdentityAndLateAccountSwitch(mode: String) async throws {
+        let credential = ClaudeUsageCredential(desktopToken: "fixture-only", expiresAt: .distantFuture, plan: nil, account: "fixture", organization: "org", generation: "fixture")
+        let credentials = UsageCredentialFixture(values: [credential]), http = UsageHTTPFixture()
+        if mode == "account" { http.profile = #"{"account":{"uuid":"other"},"organization":{"uuid":"org"}}"# }
+        if mode == "organization" { http.profile = #"{"account":{"uuid":"fixture"},"organization":{"uuid":"other"}}"# }
+        if mode == "missing" { http.profile = "{}" }
+        if mode == "changed" { credentials.current = false }
+        let adapter = ClaudeUsageAdapter(credentials: credentials, http: http)
+        if mode == "match" {
+            #expect(try await adapter.fetch(manual: false).snapshot.accountID == "fixture:org")
+        } else {
+            await #expect(throws: mode == "changed" ? AIUsageError.accountChanged : .authentication) { try await adapter.fetch(manual: false) }
+        }
+        #expect(http.requests.count == 2 && http.requests.allSatisfy { $0.httpMethod == "GET" })
+    }
     @Test
     func codexAccountOnlyHandshakeAndCleanup() async throws {
         let fixture = UsageRPCFixture(), root = FileManager.default.temporaryDirectory.appendingPathComponent("CodexUsage-" + UUID().uuidString)

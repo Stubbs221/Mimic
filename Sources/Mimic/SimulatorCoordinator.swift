@@ -32,7 +32,14 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
 @MainActor final class SimulatorCoordinator: ObservableObject {
     @Published private(set) var localRecords: [SimulatorActivity] = []
     @Published private(set) var descriptor: AppleSimulatorDescriptor?
-    private(set) var frame: SimulatorFrame?
+    private(set) var frame: SimulatorFrame? {
+        didSet {
+            if let frame { inputSize = (Double(frame.width), Double(frame.height)) }
+        }
+    }
+    // HID needs screen geometry, while Apple commands need a fresh observation.
+    // Retain only dimensions when a completed gesture invalidates that observation.
+    private var inputSize: (width: Double, height: Double)?
     private(set) var ownerProject: ProjectContext?
     private var ownerDeveloper: String?
     private var driver: (any SimulatorNativeDriver)?
@@ -115,13 +122,21 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
         if FileManager.default.fileExists(atPath: path.path) {
             do {
                 let saved = try JSONDecoder().decode([SimulatorActivity].self, from: Data(contentsOf: path))
+                var releasedConnection = false
                 for var record in saved {
                     guard ledger[record.id] == nil else { throw BuildError.duplicate }
                     if record.status == .running || record.status == .preparing { record.status = .unknown; record.errorCode = "connectionLost" }
                     if record.status == .queued { record.status = .cancelled }
+                    // A previous process cannot retain a live connection. Viewer
+                    // lifecycle and capture never install an app or send input; keep the unknown
+                    // result for deduplication without reserving the execution queue.
+                    if [.start, .refresh, .close].contains(record.kind), record.status == .unknown, !record.queueReleased {
+                        record.queueReleased = true; releasedConnection = true
+                    }
                     ledger[record.id] = record
                 }
                 localRecords = Self.retained(Array(ledger.values))
+                if releasedConnection { try persist() }
             } catch { ledger = [:]; storageUnavailable = true }
         }
         if !isChild, let directories = try? FileManager.default.contentsOfDirectory(at: directory.appendingPathComponent("Devices"), includingPropertiesForKeys: nil) {
@@ -130,6 +145,12 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
     }
     var busy: Bool { activeID != nil || reading || inputStarting || inputRetiring || touchLease != nil || localRecords.contains(where: \.holdsQueue) || children.values.contains(where: \.busy) }
     var hasPending: Bool { busy || records.contains { $0.status == .queued } }
+    /// Passive frame reads share the simulator connection but do not reserve the Git checkout.
+    var hasPendingOperations: Bool {
+        activeID != nil || inputStarting || inputRetiring || touchLease != nil
+            || localRecords.contains { $0.holdsQueue || $0.status == .queued }
+            || children.values.contains(where: \.hasPendingOperations)
+    }
     var canExit: Bool { SimulatorVideo.canExit && SimulatorInput.canExit && touchLease == nil && !inputStarting && !inputRetiring && activeID == nil && !reading && descriptor == nil && children.values.allSatisfy(\.canExit) }
     var metadata: BridgeValue {
         .object(["session": descriptor.map { .object(["id": .string($0.id.uuidString), "deviceID": .string($0.deviceID.uuidString), "context": ownerProject.map { MimicIntegration.context($0, profile: currentProfile()) } ?? .null, "revision": frame.map { _ in .number(Double(publicRevision)) } ?? .null, "ready": .bool(frame != nil && !busy)]) } ?? .null, "activities": .array(localRecords.map(\.metadata)), "busy": .bool(busy)])
@@ -366,7 +387,7 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
     func inputAccess(_ viewer: UUID, thread: String) async throws -> BridgeValue {
         guard let value = viewers[viewer], value.thread == thread, value.visible,
               let descriptor = value.owner.descriptor, let developer = value.owner.ownerDeveloper,
-              value.owner.frame != nil, !busy, !hasPending, mayAdmit(), mayStartInput() else { throw AppleSimulatorError.occupied }
+              value.owner.inputSize != nil, !busy, !hasPending, mayAdmit(), mayStartInput() else { throw AppleSimulatorError.occupied }
         let owner = value.owner
         owner.inputStarting = true
         defer { owner.inputStarting = false; schedule(); if owner.stopped { Task { await owner.cleanupForExit() } } }
@@ -377,9 +398,16 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
             catch { await input.stop(); if input.stopped { owner.input = nil }; throw error }
         }
         guard !stopped, !owner.stopped, viewers[viewer]?.owner === owner, viewers[viewer]?.visible == true,
-              owner.descriptor?.id == descriptor.id, let frame = owner.frame else { owner.retireInput(); throw AppleSimulatorError.noSession }
-        return .object(["sessionID": .string(descriptor.id.uuidString), "generation": .string(owner.inputGeneration.uuidString),
-                        "width": .number(Double(frame.width)), "height": .number(Double(frame.height)), "orientation": .string(owner.orientation)])
+              owner.descriptor?.id == descriptor.id else { owner.retireInput(); throw AppleSimulatorError.noSession }
+        return try owner.inputGeometry()
+    }
+
+    /// An app-only geometry grant never makes a stale Apple observation actionable.
+    private func inputGeometry() throws -> BridgeValue {
+        guard let descriptor, let size = inputSize else { throw AppleSimulatorError.noSession }
+        return .object(["sessionID": .string(descriptor.id.uuidString), "generation": .string(inputGeneration.uuidString),
+                        "width": .number(size.width), "height": .number(size.height), "orientation": .string(orientation),
+                        "revision": .number(Double(publicRevision))])
     }
 
     func inputEvent(_ viewer: UUID, thread: String, event: SimulatorTouchEvent) async throws -> BridgeValue {
@@ -388,9 +416,9 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
         guard !stopped, !owner.stopped, event.sessionID == owner.descriptor?.id, event.generation == owner.inputGeneration,
               let input = owner.input, !owner.inputSending else { throw AppleSimulatorError.noSession }
         if event.phase == .down {
-            guard !busy, !hasPending, mayAdmit(), mayStartInput(), event.sequence == 1, let frame = owner.frame else { throw AppleSimulatorError.occupied }
-            _ = try event.physicalPoint(width: Double(frame.width), height: Double(frame.height), orientation: owner.orientation)
-            owner.touchLease = TouchLease(viewer: viewer, gesture: event.gestureID, width: Double(frame.width), height: Double(frame.height), orientation: owner.orientation, sequence: 0)
+            guard !busy, !hasPending, mayAdmit(), mayStartInput(), event.sequence == 1, let size = owner.inputSize else { throw AppleSimulatorError.occupied }
+            _ = try event.physicalPoint(width: size.width, height: size.height, orientation: owner.orientation)
+            owner.touchLease = TouchLease(viewer: viewer, gesture: event.gestureID, width: size.width, height: size.height, orientation: owner.orientation, sequence: 0)
         }
         guard var lease = owner.touchLease, !lease.closing, lease.viewer == viewer, lease.gesture == event.gestureID,
               event.sequence == lease.sequence + 1 else { throw AppleSimulatorError.arguments }
@@ -405,7 +433,7 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
         if event.phase == .up || event.phase == .cancel {
             owner.touchLease = nil; owner.frame = nil; owner.publicRevision += 1; schedule()
         }
-        return .object(["accepted": .bool(true), "sequence": .number(Double(event.sequence))])
+        return .object(["accepted": .bool(true), "sequence": .number(Double(event.sequence)), "geometry": try owner.inputGeometry()])
     }
 
     func cancelInput(_ viewer: UUID, thread: String) async throws {
@@ -616,6 +644,13 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
                     await driver?.disconnect(); clearSession()
                     update(record.id, status: .failed, error: "connectionLost")
                 } else {
+                    if record.kind == .start || record.kind == .refresh {
+                        // Retire even a session whose frame capture failed. No app
+                        // mutation was submitted, so this disconnected viewer cannot
+                        // keep Git, builds and other tasks blocked indefinitely.
+                        await driver?.disconnect(); clearSession()
+                        if let index = localRecords.firstIndex(where: { $0.id == record.id }) { localRecords[index].queueReleased = true }
+                    }
                     update(record.id, status: nativeCallStarted ? .unknown : .failed, error: nativeCallStarted ? "connectionLost" : error is BuildError ? "context" : "requiresNativeAccess")
                 }
                 if descriptor == nil { await driver?.disconnect(); driver = nil }
@@ -706,7 +741,7 @@ extension Xcode27SimulatorConnection: SimulatorNativeDriver {
                 Task { completedRecordings[id] = await recording.finish(interrupted: true) }
             }
         }
-        retireInput(); video?.stop(); video = nil; descriptor = nil; frame = nil; driver = nil; ownerProject = nil; ownerDeveloper = nil; leaseTimer?.cancel(); leaseTimer = nil
+        retireInput(); video?.stop(); video = nil; descriptor = nil; frame = nil; inputSize = nil; driver = nil; ownerProject = nil; ownerDeveloper = nil; leaseTimer?.cancel(); leaseTimer = nil
     }
     private func update(_ id: UUID, status: BuildStatus, error: String? = nil) { if let index = localRecords.firstIndex(where: { $0.id == id }) { localRecords[index].status = status; localRecords[index].errorCode = error; try? persist() } }
     private func persist() throws {

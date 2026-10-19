@@ -1,9 +1,11 @@
+import {fadePopup} from './retro-interactions';
+import {MimicAbout,type MimicDelivery} from './about';
 // Created by Василий Маслов on 08.10.2026.
 type Context={checkoutId:string;branch:string;sha:string;xcode:string;profileID:string|null;profileRevision:string|null};
 type Activity={type:'task'|'build'|'run';id:string;title:string;status:string;needsInput?:boolean};
-type Presentation={tiled:boolean;context:Context|null;busy:boolean;locked:boolean;stale:boolean;editing:boolean;rebase:boolean;catalogOpen:boolean;historyOpen:boolean;activity:Activity|null;progress?:string;needsBinding?:boolean};
+type Presentation={tiled:boolean;retro?:boolean;delivery?:MimicDelivery;context:Context|null;busy:boolean;locked:boolean;stale:boolean;editing:boolean;rebase:boolean;catalogOpen:boolean;historyOpen:boolean;activity:Activity|null;progress?:string;needsBinding?:boolean};
 type Dependencies={t:(key:string)=>string;preference:HTMLElement;branches:()=>void;switchBranch:(branch:string)=>void;refresh:()=>void;newAction:()=>void;history:()=>void;edit:()=>void;setup:(operation:string)=>void;bind:()=>void;select:(activity:Activity)=>void};
-type Popup='branches'|'context'|'settings'|'menu';
+type Popup='branches'|'context'|'settings'|'menu'|'appearance';
 
 function node<K extends keyof HTMLElementTagNameMap>(tag:K,className='',text=''){const n=document.createElement(tag);n.className=className;n.textContent=text;return n;}
 function icon(name:string){const n=node('span','chrome-icon chrome-icon-'+name);n.setAttribute('aria-hidden','true');return n;}
@@ -16,6 +18,12 @@ export class PanelChrome {
  private readonly branch=node('button','chrome-branch');
  private readonly branchName=node('span','chrome-branch-name');
  private readonly rebase=node('span','chrome-rebase','R');
+ private readonly rebaseControl=node('div','chrome-rebase-control');
+ private readonly layoutButton:HTMLButtonElement;
+ private readonly rebaseButton:HTMLButtonElement;
+ private readonly heading=node('h1','chrome-identity');
+ private readonly row=node('div','chrome-row');
+ private readonly projectRow=node('div','chrome-project-row');
  private readonly actions=node('div','chrome-actions');
  private readonly status=node('button','chrome-status');
  private readonly popup=node('section','chrome-popover');
@@ -29,6 +37,7 @@ export class PanelChrome {
  private readonly historyButton:HTMLButtonElement;
  private readonly settingsButton:HTMLButtonElement;
  private readonly menuButton:HTMLButtonElement;
+ private readonly about:MimicAbout;
  private state:Presentation|null=null;
  private opened:Popup|null=null;
  private trigger:HTMLButtonElement|null=null;
@@ -38,7 +47,8 @@ export class PanelChrome {
 
  constructor(private readonly dependencies:Dependencies){
   const {t}=dependencies;
-  const heading=node('h1','chrome-identity'),row=node('div','chrome-row');
+  this.about=new MimicAbout(t);
+  const heading=this.heading,row=this.row;
   this.identity.type='button';this.identity.append(node('span','chrome-brand',t('title')),this.project);heading.append(this.identity);
   this.identity.onclick=()=>this.toggle('context',this.identity);
   this.identity.setAttribute('aria-label',t('context.details'));this.identity.title=t('context.details');
@@ -50,16 +60,19 @@ export class PanelChrome {
   this.settingsButton=this.iconButton('gear',t('settings'),()=>this.toggle('settings',this.settingsButton));
   this.menuButton=this.iconButton(null,t('chrome.menu'),()=>this.toggle('menu',this.menuButton));
   this.menuButton.textContent='⋯';this.menuButton.classList.add('chrome-more');
+  this.rebaseButton=this.textButton('Rebase',()=>dependencies.preference.querySelector<HTMLInputElement>('input')?.click());this.rebaseButton.className='chrome-rebase-button';
+  this.layoutButton=this.textButton(t('layout.edit'),dependencies.edit);this.layoutButton.className='chrome-layout';
   this.actions.append(this.actionButton,this.historyButton,this.settingsButton,this.menuButton);
   row.append(heading,this.branch,this.actions);
   this.status.type='button';this.status.onclick=()=>{if(this.state?.activity)dependencies.select(this.state.activity);};
   const live=node('div','chrome-status-region');live.setAttribute('role','status');live.append(this.status);
   this.popup.id='mimic-chrome-popover';this.popup.hidden=true;this.popup.setAttribute('role','region');
   const popupHeader=node('div','chrome-popover-heading'),close=this.textButton(t('chrome.close'),()=>this.close());
-  close.classList.add('chrome-close');close.textContent='×';close.setAttribute('aria-label',t('chrome.close'));
+  close.classList.add('chrome-close','retro-close-control');close.dataset.caption='close';close.textContent='×';close.setAttribute('aria-label',t('chrome.close'));
   popupHeader.append(this.popupTitle,close);this.popup.append(popupHeader,this.popupBody);
   for(const button of [this.identity,this.branch,this.settingsButton,this.menuButton]){button.setAttribute('aria-controls',this.popup.id);button.setAttribute('aria-expanded','false');}
-  this.host.append(row,live,this.popup);this.host.hidden=true;
+  this.popup.addEventListener('keydown',event=>{if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key)||this.opened==='appearance'||!(event.target instanceof HTMLButtonElement))return;const options=Array.from(this.popupBody.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')),index=options.indexOf(event.target);if(index<0)return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?options.length-1:(index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length;options[next]?.focus();});
+  this.host.append(row,this.projectRow,live,this.popup);this.host.hidden=true;
   this.search.type='search';this.search.placeholder=t('search');this.search.setAttribute('aria-label',t('branch.search'));
   this.search.oninput=()=>this.renderBranches();this.select.setAttribute('aria-label',t('branch.local'));
   this.select.onchange=()=>this.updateSwitch();
@@ -72,8 +85,22 @@ export class PanelChrome {
  }
 
  update(state:Presentation){
-  const previous=this.state;this.state=state;this.host.hidden=!state.tiled;
-  if(!state.tiled){this.close(false);return;}
+  const previous=this.state;this.state=state;this.host.hidden=!state.tiled&&!this.opened;
+  this.about.update(state.delivery);
+  if(!!previous?.retro!==!!state.retro){
+   const focused=document.activeElement as HTMLElement;
+   if(state.retro){this.projectRow.append(this.branch,this.rebaseControl,this.settingsButton);this.rebaseControl.append(this.dependencies.preference,this.rebaseButton);this.actions.replaceChildren(this.actionButton,this.historyButton,this.layoutButton,this.menuButton);}
+   else{this.row.insertBefore(this.branch,this.actions);this.actions.replaceChildren(this.actionButton,this.historyButton,this.settingsButton,this.menuButton);}
+   if(focused?.isConnected)focused.focus({preventScroll:true});
+  }
+  this.settingsButton.textContent=state.retro?this.dependencies.t('settings'):'';
+  if(!state.retro&&!this.settingsButton.firstChild)this.settingsButton.append(icon('gear'));
+  this.rebaseButton.disabled=!!this.dependencies.preference.querySelector<HTMLInputElement>('input')?.disabled;this.rebaseButton.setAttribute('aria-pressed',String(!!this.dependencies.preference.querySelector<HTMLInputElement>('input')?.checked));
+  this.layoutButton.textContent=state.retro?this.dependencies.t('appearance.grid'):this.dependencies.t('layout.edit');
+  this.actionButton.setAttribute('data-label',this.dependencies.t('appearance.newAction'));this.historyButton.setAttribute('data-label',this.dependencies.t('history'));
+  this.layoutButton.disabled=state.editing;
+  this.host.classList.toggle('appearance-only',!state.tiled&&!!this.opened);this.host.hidden=!state.tiled&&!this.opened;
+  if(!state.tiled&&!this.opened){this.close(false);return;}
   const branchContext=JSON.stringify([state.context?.checkoutId,state.context?.branch]);
   if(previous&&branchContext!==this.branchContext){
    this.close(false);this.branchList=[];this.search.value='';this.select.value='';
@@ -84,7 +111,7 @@ export class PanelChrome {
   this.project.textContent='· '+project;this.project.title=state.context?.checkoutId??project;
   this.branchName.textContent=state.context?.branch??this.dependencies.t('branch.local');
   this.branch.title=state.context?.branch??this.dependencies.t('branch.local');
-  this.branch.setAttribute('aria-description',state.rebase?this.dependencies.t('branch.rebase'):'');this.rebase.hidden=!state.rebase;
+  this.branch.setAttribute('aria-description',state.rebase?this.dependencies.t('branch.rebase'):'');this.rebase.hidden=!!state.retro||!state.rebase;
   this.branch.disabled=!state.context||state.busy||state.locked||state.stale||state.editing;
   this.actionButton.disabled=!state.context||state.busy||state.locked||state.stale||state.editing;
   this.historyButton.disabled=state.editing;this.settingsButton.disabled=state.editing;this.menuButton.disabled=state.editing;
@@ -96,34 +123,39 @@ export class PanelChrome {
   this.status.title=this.status.textContent;
   this.updateSwitch();
   if(this.opened==='context')this.renderContext();
-  if(this.opened==='settings')for(const b of Array.from(this.popupBody.querySelectorAll<HTMLButtonElement>('[data-setup]')))b.disabled=state.busy||!['profile','notifications','appearance'].includes(b.dataset.setup!)&&!state.context;
+  if(this.opened==='settings')for(const b of Array.from(this.popupBody.querySelectorAll<HTMLButtonElement>('[data-setup]')))b.disabled=b.dataset.setup==='appearance'?false:state.busy||!['profile','notifications'].includes(b.dataset.setup!)&&!state.context;
  }
 
  /** Moving the existing preference keeps its pending save and shared checkout setting intact. */
  toggleBranches(){
   const opened=this.toggle('branches',this.branch);
-  if(opened){this.branchBody.insertBefore(this.dependencies.preference,this.switchButton);this.setBranches(this.branchList);}
+  if(opened){if(!this.state?.retro)this.branchBody.insertBefore(this.dependencies.preference,this.switchButton);this.setBranches(this.branchList);}
   return opened;
  }
  setBranches(branches:string[]){this.branchList=branches;this.renderBranches();}
  close(restoreFocus=true){
   if(!this.opened)return;
-  const trigger=this.trigger;this.opened=null;this.popup.hidden=true;trigger?.setAttribute('aria-expanded','false');
+  const trigger=this.trigger;this.opened=null;this.popup.getAnimations().forEach(a=>a.cancel());this.popup.hidden=true;this.host.classList.remove('appearance-only');this.host.hidden=!this.state?.tiled;trigger?.setAttribute('aria-expanded','false');
   if(restoreFocus&&trigger&&!trigger.disabled)trigger.focus();
  }
 
+ showAppearance(host:HTMLElement){
+  this.opened='appearance';this.trigger=this.settingsButton;this.popup.hidden=false;this.host.hidden=false;this.host.classList.toggle('appearance-only',!this.state?.tiled);
+  this.popupTitle.textContent=this.dependencies.t('setup.appearance');this.popupBody.replaceChildren(host);fadePopup(this.popup);(host.querySelector('[tabindex="0"]') as HTMLElement|null)?.focus();
+ }
  private iconButton(name:string|null,label:string,action:()=>void){const b=this.textButton(label,action);b.className='chrome-icon-button';b.setAttribute('aria-label',label);b.title=label;if(name)b.replaceChildren(icon(name));return b;}
  private textButton(label:string,action:()=>void){const b=node('button','',label);b.type='button';b.onclick=action;return b;}
  private toggle(kind:Popup,trigger:HTMLButtonElement){
   if(this.opened===kind){this.close();return false;}
   this.close(false);this.opened=kind;this.trigger=trigger;this.popup.hidden=false;trigger.setAttribute('aria-expanded','true');
   const title=this.dependencies.t(kind==='branches'?'branch.local':kind==='context'?'context.details':kind==='settings'?'settings':'chrome.menu');
-  this.popupTitle.textContent=title;this.popup.setAttribute('aria-label',title);this.popupBody.replaceChildren();
+  this.popupTitle.textContent=title;this.popup.setAttribute('aria-label',title);this.popupBody.replaceChildren();fadePopup(this.popup);
   if(kind==='branches')this.popupBody.append(this.branchBody);
   if(kind==='context')this.renderContext(true);
   if(kind==='settings')for(const operation of ['profile','xcode','target','credentials','notifications','appearance']){
    const b=this.textButton(this.dependencies.t('setup.'+operation),()=>this.dependencies.setup(operation));b.dataset.setup=operation;this.popupBody.append(b);
   }
+  if(kind==='settings')this.popupBody.append(this.about.host);
   if(kind==='menu')for(const [label,action]of [[this.dependencies.t('refresh'),this.dependencies.refresh],[this.dependencies.t('context.details'),()=>this.toggle('context',this.menuButton)],[this.dependencies.t('layout.edit'),this.dependencies.edit]] as const){
    this.popupBody.append(this.textButton(label,()=>{this.close();action();}));
   }

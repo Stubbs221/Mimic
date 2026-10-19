@@ -50,7 +50,7 @@ try{
  await chrome.getByRole('button',{name:'Контекст проекта',exact:true}).click();
  assert((await popup.innerText()).includes(savedContext.checkoutId));assert((await popup.innerText()).includes(savedContext.xcode));
  await page.keyboard.press('Escape');
- await chrome.getByRole('button',{name:'Настройки',exact:true}).click();assert(await popup.getByRole('button',{name:'Оформление в Mimic',exact:true}).isVisible());await page.keyboard.press('Escape');
+ await chrome.getByRole('button',{name:'Настройки',exact:true}).click();assert(await popup.getByRole('button',{name:'Оформление',exact:true}).isVisible());await page.keyboard.press('Escape');
  await chrome.getByRole('button',{name:'Новое действие',exact:true}).click();assert(await page.locator('.block-catalog').isVisible());await chrome.getByRole('button',{name:'Новое действие',exact:true}).click();
  await chrome.getByRole('button',{name:'История',exact:true}).click();assert(await page.locator('.card').filter({has:page.getByRole('heading',{name:'История',exact:true})}).isVisible());
  await panelCommand(page,'Настроить панель');assert(await page.getByRole('button',{name:'Готово',exact:true}).isVisible());assert(await branch.isDisabled());
@@ -65,14 +65,14 @@ try{
  await page.screenshot({path:output+'/large-text.png'});await page.evaluate(()=>document.documentElement.style.fontSize='13px');
  await update({checkoutLocked:true});assert(await branch.isDisabled());assert((await chrome.locator('.chrome-status').innerText()).includes('Переключение ветки'));
  await update({checkoutLocked:false,context:null});assert(await chrome.getByRole('button',{name:'Новое действие',exact:true}).isDisabled());assert(await branch.isDisabled());
- await chrome.getByRole('button',{name:'Настройки',exact:true}).click();assert(await popup.getByRole('button',{name:'Оформление в Mimic',exact:true}).isEnabled());await page.keyboard.press('Escape');
+ await chrome.getByRole('button',{name:'Настройки',exact:true}).click();assert(await popup.getByRole('button',{name:'Оформление',exact:true}).isEnabled());await page.keyboard.press('Escape');
  await update({context:savedContext,tasks:[{id:'header-test',title:'Подготовка проекта',status:'running',needsInput:true,createdAt:'2099-01-01T00:00:00Z',context:savedContext,diagnosticAvailable:false,canCancel:false}]});
  assert.equal(await chrome.locator('.chrome-status').getAttribute('data-status'),'input');await chrome.locator('.chrome-status').click();const detail=page.locator('.card').filter({has:page.getByRole('heading',{name:'Подготовка проекта',exact:true})});assert(await detail.isVisible());
  const detailBounds=await detail.boundingBox();assert(detailBounds.y>=0&&detailBounds.y<900,'attention status brings the task into view');
  await update({tasks:[{id:'header-test',title:'Подготовка проекта',status:'failed',createdAt:'2099-01-01T00:00:00Z',context:savedContext,diagnosticAvailable:false,canCancel:false}]});assert.equal(await chrome.locator('.chrome-status').getAttribute('data-status'),'failed');
- await branch.click();await page.evaluate(()=>window.mimicToolsFixture.appearance('legacy'));assert(await page.locator('.context-bar .branch-rebase').isVisible());assert(await chrome.isHidden());
+ await branch.click();await page.evaluate(()=>window.mimicToolsFixture.appearance('legacy'));assert(await page.locator('.context-bar .branch-rebase').isVisible());assert(await popup.isVisible());await page.keyboard.press('Escape');assert(await chrome.isHidden());
  await page.evaluate(()=>window.mimicToolsFixture.appearance('tileGrid'));await branch.click();assert(await checkbox.isChecked());await page.keyboard.press('Escape');
- await page.locator('[data-block=builds] .block-title').click();const draft=page.locator('#build-testIdentifiers');await draft.fill('FixtureTests/Smoke/testExample');await draft.evaluate(n=>window.chromeDraft=n);
+ await page.locator('[data-block=builds] .block-title').click();await page.locator('[data-block=builds] [role=tab]').last().click();const draft=page.locator('[data-block=builds] textarea');await draft.locator('..').evaluate(n=>n.open=true);await draft.fill('FixtureTests/Smoke/testExample');await draft.evaluate(n=>window.chromeDraft=n);
  await panelCommand(page,'Обновить');assert.equal(await draft.inputValue(),'FixtureTests/Smoke/testExample');assert(await draft.evaluate(n=>n===window.chromeDraft));
  assert.deepEqual(errors,[]);console.log('PASS: C1 sizes/themes/assets, Rebase/branch, menu/context/settings, catalog/history, edit cancel/save, 200% text, locks/missing context, task attention, legacy and draft identity.');
 }finally{await browser?.close();server.close();}

@@ -69,6 +69,7 @@ if "$INSTALL" && [ -z "$BUILD_SYSTEM" ] && [ -f "$(dirname "$PREFERENCE")/build-
   IFS= read -r BUILD_SYSTEM < "$(dirname "$PREFERENCE")/build-system"
 fi
 if [ -n "$BUILD_SYSTEM" ]; then MIMIC_BUILD_FLAGS+=(--build-system "$BUILD_SYSTEM"); fi
+python3 "$PWD/scripts/check-packaged-resources.py" --sources "$PWD"
 swift build "${MIMIC_BUILD_FLAGS[@]}" --scratch-path "$BUILD_PATH" -c release -j 4
 PRODUCTS=$(swift build "${MIMIC_BUILD_FLAGS[@]}" --scratch-path "$BUILD_PATH" -c release --show-bin-path)
 # Build every release bundle in a fresh staging tree.
@@ -107,6 +108,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>CFBundleDevelopmentRegion</key><string>ru</string>
 <key>NSHighResolutionCapable</key><true/>
+<!-- Trusted profile services may use development HTTP; the native client pins imported origins. -->
+<key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict></plist>
 PLIST
 python3 "$PWD/scripts/build-metadata.py" --app "$APP" --config "$UPDATE_CONFIG"
@@ -154,6 +157,7 @@ codesign "${MIMIC_SIGN_FLAGS[@]}" --identifier local.vmaslov.Mimic "$APP"
 codesign --verify --strict "$APP"
 codesign --verify --deep --strict "$APP/Contents/Frameworks/Sparkle.framework"
 for helper in "$APP/Contents/Helpers/"*; do codesign --verify --strict "$helper"; done
+python3 "$PWD/scripts/check-packaged-resources.py" --app "$APP"
 if [ -e "$FINAL_APP" ]; then mv "$FINAL_APP" "$STAGING/PreviousMimic.app"; fi
 mv "$APP" "$FINAL_APP"
 APP="$FINAL_APP"

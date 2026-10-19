@@ -27,16 +27,16 @@ struct InterfaceMapView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(text("interface.map.title")).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
-            Text(text("interface.map.intro")).font(.callout).foregroundStyle(.secondary)
-            TextField(text("interface.map.search"), text: self.$query)
+            Text(text("interface.map.intro")).mimicRetrofittedFont(.callout, role: .caption).foregroundStyle(.secondary)
+            TextField(text("interface.map.search"), text: self.$query).mimicInput()
                 .textFieldStyle(.roundedBorder).accessibilityIdentifier("interface.map.search")
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if self.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self.diagram }
                     ForEach(InterfaceTerm.matching(self.query)) { term in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(term.title).font(.headline).accessibilityAddTraits(.isHeader)
-                            Text(term.detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                            Text(term.title).mimicRetrofittedFont(.headline, role: .heading).accessibilityAddTraits(.isHeader)
+                            Text(term.detail).mimicRetrofittedFont(.callout, role: .caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityElement(children: .combine).accessibilityIdentifier("interface.term." + term.id)
                         Divider()
@@ -44,36 +44,36 @@ struct InterfaceMapView: View {
                     if InterfaceTerm.matching(self.query).isEmpty {
                         Text(text("interface.map.empty")).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Text(text("interface.map.examples")).font(.callout).fixedSize(horizontal: false, vertical: true)
-                }.padding(.trailing, 8)
-            }.textSelection(.enabled)
+                    Text(text("interface.map.examples")).mimicRetrofittedFont(.callout, role: .caption).fixedSize(horizontal: false, vertical: true)
+                }.padding(.trailing, theme.retro ? 17 : 8)
+            }.scrollIndicators(theme.retro ? .hidden : .automatic).mimicRetroScrollbars().textSelection(.enabled)
         }.padding(20).frame(minWidth: 440, idealWidth: 560, minHeight: 420, idealHeight: 700)
             .background(theme.tiled ? theme.color("paper") : Color(nsColor: .windowBackgroundColor)).accessibilityIdentifier("interface.map")
     }
 
     private var diagram: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(text("interface.map.diagram")).font(.headline)
+            Text(text("interface.map.diagram")).mimicRetrofittedFont(.headline, role: .heading)
             self.diagramRow(.project)
             VStack(alignment: .leading, spacing: 6) {
-                Text(InterfaceTerm.home.title).font(.callout.weight(.semibold))
-                Text(text("interface.map.home.contents")).font(.callout).foregroundStyle(.secondary)
+                Text(InterfaceTerm.home.title).mimicRetrofittedFont(.callout.weight(.semibold), bold: true)
+                Text(text("interface.map.home.contents")).mimicRetrofittedFont(.callout, role: .caption).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(InterfaceTerm.tasks.title).font(.callout.weight(.semibold))
-                    Text(text("interface.map.tasks.contents")).font(.callout).foregroundStyle(.secondary)
+                    Text(InterfaceTerm.tasks.title).mimicRetrofittedFont(.callout.weight(.semibold), bold: true)
+                    Text(text("interface.map.tasks.contents")).mimicRetrofittedFont(.callout, role: .caption).foregroundStyle(.secondary)
                 }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: theme.retro ? 0 : 8))
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: theme.retro ? 0 : 8))
             self.diagramRow(.settings)
-            Text(text("interface.map.settings.contents")).font(.caption).foregroundStyle(.secondary)
+            Text(text("interface.map.settings.contents")).mimicRetrofittedFont(.caption, role: .caption).foregroundStyle(.secondary)
             self.diagramRow(.footer)
-            Text(text("interface.map.separate")).font(.caption).foregroundStyle(.secondary)
-        }.padding(12).overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.secondary.opacity(0.3)))
+            Text(text("interface.map.separate")).mimicRetrofittedFont(.caption, role: .caption).foregroundStyle(.secondary)
+        }.padding(12).overlay(RoundedRectangle(cornerRadius: theme.retro ? 0 : 12).stroke(Color.secondary.opacity(0.3)))
     }
 
     private func diagramRow(_ term: InterfaceTerm) -> some View {
-        Text(term.title).font(.callout.weight(.medium)).padding(10).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        Text(term.title).mimicRetrofittedFont(.callout.weight(.medium)).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: theme.retro ? 0 : 8))
     }
 }

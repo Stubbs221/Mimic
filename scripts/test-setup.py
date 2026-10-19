@@ -113,6 +113,16 @@ class SetupScriptTests(unittest.TestCase):
         result = self.run_script('--destination', str(destination), '--yes', '--background', answer='')
         self.assertEqual(result.returncode, 0)
         self.assertIn(str(destination) + '\n--args\n--mcp-background', result.stdout)
+    def test_deferred_launch_keeps_backup_and_never_opens_owner(self):
+        launch = self.root / 'open-fixture'
+        launch.write_text('#!/bin/sh\nexit 99\n'); launch.chmod(0o700)
+        self.script.write_text(self.script.read_text().replace('/usr/bin/open', str(launch).replace(' ', '\\ ')))
+        destination = self.root / 'Mimic.app'
+        shutil.copytree(self.app, destination)
+        result = self.run_script('--destination', str(destination), '--yes', '--defer-launch', answer='')
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(destination.exists())
+        self.assertEqual(len(list(self.root.glob('Mimic.backup.*.app'))), 1)
     def test_process_appearing_after_staging_prevents_replacement(self):
         destination = self.root / 'Mimic.app'
         shutil.copytree(self.app, destination)

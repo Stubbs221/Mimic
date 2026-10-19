@@ -8,6 +8,56 @@ import Testing
 @testable import MimicCore
 
 struct PanelLayoutTests {
+    @Test func compactionCrossesFullRowsAndPreservesPinnedRightHalf() throws {
+        let rows = [PanelLayoutRow(slots: [nil, .utils]), PanelLayoutRow(slots: [.bootstrap]),
+                    PanelLayoutRow(slots: [.builds, nil]), PanelLayoutRow(slots: [.ci, .simulators])]
+        var layout = PanelLayout(rows: rows)
+        layout.compact(preserving: .simulators)
+        #expect(layout.rows.map(\.slots) == [[.utils, .builds], [.bootstrap], [.ci, nil], [nil, .simulators]])
+        #expect(layout.rows.last?.id == rows.last?.id)
+        let next = layout; layout.compact(preserving: .simulators); #expect(layout == next)
+        layout.compact()
+        #expect(layout.rows.map(\.slots) == [[.utils, .builds], [.bootstrap], [.ci, .simulators]])
+        try layout.validate(for: .desktop)
+    }
+
+    @Test func dragProposalsUseOriginAndStableGeneratedRowsAndRejectUnknownTargets() throws {
+        let origin = PanelLayout.standard(for: .desktop)
+        var transaction = PanelDragTransaction(origin: origin, block: .bootstrap)
+        let target = PanelInsertionTarget.boundary(before: origin.rows[1].id)
+        let reaction1 = transaction.propose(target, size: .mini, miniSlot: 1, surface: .desktop); #expect(reaction1)
+        let first = transaction.preview
+        #expect(first.rows.first?.slots[1] == .bootstrap)
+        let reaction2 = transaction.propose(target, size: .mini, miniSlot: 0, surface: .desktop); #expect(reaction2)
+        let reaction3 = transaction.propose(target, size: .mini, miniSlot: 1, surface: .desktop); #expect(reaction3)
+        #expect(transaction.preview == first)
+        let reaction4 = transaction.propose(.slot(row: UUID(), slot: 0), size: .mini, surface: .desktop); #expect(!reaction4)
+        #expect(!transaction.valid && transaction.preview == first)
+        let reaction5 = transaction.propose(target, size: .full, surface: .desktop); #expect(reaction5)
+        #expect(transaction.preview == origin)
+    }
+
+    @Test @MainActor func presentationMigrationRunsOnceAndKeepsBackupAndSurfaceIsolation() throws {
+        let suite = "PanelCompaction." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = PanelLayoutStore(defaults: defaults)
+        var original = store.load(.desktop); original.remove(.utils)
+        original = try store.save(original, for: .desktop, expectedRevision: 0)
+        let codex = store.load(.codex), migrated = store.prepareForPresentation(.desktop)
+        #expect(migrated.revision == 2 && migrated.rows[1].slots == [.builds, .ci])
+        #expect(store.load(.codex) == codex)
+        let backup = try #require(defaults.data(forKey: "panelLayout.desktop.beforeCompaction"))
+        #expect(try JSONDecoder().decode(PanelLayout.self, from: backup) == original)
+        var pinned = migrated
+        try pinned.insert(.simulators, at: .boundary(before: nil), miniSlot: 1)
+        pinned.compact(preserving: .simulators)
+        let saved = try store.save(pinned, for: .desktop, expectedRevision: migrated.revision)
+        #expect(store.prepareForPresentation(.desktop) == saved)
+        #expect(store.prepareForPresentation(.codex).revision == codex.revision)
+        #expect(store.prepareForPresentation(.codex).revision == codex.revision)
+    }
+
     @Test func sizeAndSideInsertionAreAtomicAndPreserveAllNeighbours() throws {
         let original = PanelLayout.standard(for: .desktop), ids = [UUID(), UUID(), UUID()]
         var mini = original

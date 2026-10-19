@@ -35,12 +35,16 @@ public final class PTYSession {
     public var onEvent: ((HostEvent) -> Void)?
     public var onCompletion: ((HostEvent?) -> Void)?
     public private(set) var running = false
-    private let writer = DispatchQueue(label: "Mimic.pty.input")
+    private var inputWriter: PTYInputWriter?
+
+    /// Includes framing and the partially written input frame; pending resize uses a separate slot.
+    public static let maximumQueuedInputBytes = PTYInputWriter.byteBudget
+    var pendingInputBytes: Int { self.inputWriter?.pending.bytes ?? 0 }
+    var pendingInputFrames: Int { self.inputWriter?.pending.frames ?? 0 }
 
     public init() { }
     public func start(helper: URL, command: CommandSpec) throws {
-        // A helper can exit between queuing a resize/cancel frame and writing it.
-        guard fcntl(self.input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) != -1 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        self.inputWriter = try PTYInputWriter(fileDescriptor: self.input.fileHandleForWriting.fileDescriptor)
         self.process.executableURL = helper; self.process.arguments = ["--cwd", command.directory, "--", command.executable] + command.arguments
         self.process.environment = command.environment; self.process.currentDirectoryURL = URL(fileURLWithPath: command.directory)
         self.process.standardInput = self.input; self.process.standardOutput = self.output; self.process.standardError = self.events
@@ -69,35 +73,42 @@ public final class PTYSession {
                 if data.isEmpty { self.eventEnded = true; self.completeIfReady() } else { self.receiveEvents(data) }
             }
         }
-        do { try self.process.run(); self.running = true }
-        catch { self.output.fileHandleForReading.readabilityHandler = nil; self.events.fileHandleForReading.readabilityHandler = nil; throw error }
+        do {
+            try self.process.run(); self.running = true
+            // The writer's private duplicate is the only remaining owner of the parent write end.
+            try? self.input.fileHandleForWriting.close()
+        } catch {
+            self.inputWriter?.stop(); self.inputWriter = nil
+            self.output.fileHandleForReading.readabilityHandler = nil; self.events.fileHandleForReading.readabilityHandler = nil
+            throw error
+        }
     }
 
-    public func send(_ bytes: Data) { self.frame(kind: 1, payload: bytes) }
+    /// Atomically admits input without blocking MainActor. False means no bytes were accepted:
+    /// the session is stopping, the frame exceeds 1 MiB, or the 4 MiB / 256-frame queue is full.
+    /// True confirms admission, not child consumption; cancellation may discard queued input.
+    @discardableResult
+    public func send(_ bytes: Data) -> Bool {
+        guard self.running, !self.cancellationRequested else { return false }
+        return self.inputWriter?.enqueue(bytes) ?? false
+    }
     public func resize(columns: Int, rows: Int) {
         let columns = UInt16(clamping: columns), rows = UInt16(clamping: rows)
-        self.frame(kind: 2, payload: Data([UInt8(columns >> 8), UInt8(columns & 255), UInt8(rows >> 8), UInt8(rows & 255)]))
+        guard self.running, !self.cancellationRequested else { return }
+        self.inputWriter?.resize(Data([UInt8(columns >> 8), UInt8(columns & 255), UInt8(rows >> 8), UInt8(rows & 255)]))
     }
 
     public func cancel() {
         guard self.running, !self.cancellationRequested else { return }
         self.cancellationRequested = true
-        // The frame can wait in stdin before helper startup. Signal only after its
-        // started event confirms handlers exist, including when paste is blocked.
-        self.frame(kind: 3, payload: Data())
+        // EOF cannot queue behind a blocked paste. Signal only once startup confirms handlers;
+        // an early cancellation is also delivered when the started event arrives.
+        self.inputWriter?.stop()
         if self.helperStarted { self.process.interrupt() }
     }
 
-    /// Used by recovery tests; EOF instructs the helper to stop its own children.
-    public func disconnect() { try? self.input.fileHandleForWriting.close() }
-    private func frame(kind: UInt8, payload: Data) {
-        guard self.running, payload.count <= 1024 * 1024 else { return }
-        let size = UInt32(payload.count)
-        var data = Data([kind, UInt8(size >> 24), UInt8((size >> 16) & 255), UInt8((size >> 8) & 255), UInt8(size & 255)]); data.append(payload)
-        let handle = self.input.fileHandleForWriting
-        let outgoing = data
-        self.writer.async { try? handle.write(contentsOf: outgoing) }
-    }
+    /// EOF stops the helper's children; interrupt also reaches a helper blocked writing to the PTY.
+    public func disconnect() { self.cancel(); try? self.input.fileHandleForWriting.close() }
 
     private func receiveEvents(_ data: Data) {
         self.eventBuffer.append(data)
@@ -117,6 +128,7 @@ public final class PTYSession {
     private func completeIfReady() {
         guard self.eventEnded, self.outputEnded, !self.didComplete else { return }
         self.didComplete = true; self.running = false
+        self.inputWriter?.stop()
         try? self.input.fileHandleForWriting.close()
         self.onCompletion?(self.exitEvent)
     }

@@ -78,10 +78,10 @@ struct CIPipelineCard: View {
                 }
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(self.title).mimicFont(.body, weight: .semibold).lineLimit(1).help(self.title)
+                    Text(self.title).mimicFont(.body, weight: .semibold).lineLimit(1).mimicHelp(self.title)
                     Spacer(minLength: 4)
                     CIStatusBadge(status: self.entry.status).fixedSize()
-                    if self.incomplete { Image(systemName: "exclamationmark.circle").foregroundStyle(.secondary).help(text("ci.checks.incomplete")) }
+                    if self.incomplete { Image(systemName: "exclamationmark.circle").foregroundStyle(.secondary).mimicHelp(text("ci.checks.incomplete")) }
                     if self.pipelineID != nil { Image(systemName: self.isExpanded ? "chevron.up" : "chevron.down").font(.system(size: 9)).foregroundStyle(.secondary) }
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(self.pipelineID == nil)
@@ -90,16 +90,16 @@ struct CIPipelineCard: View {
                 .accessibilityValue(disclosureValue(self.isExpanded)).accessibilityIdentifier("ci.card." + self.entry.id)
             HStack(spacing: 6) {
                 CIBranchLayout {
-                    Label(self.entry.branch, systemImage: "arrow.triangle.branch").lineLimit(1).truncationMode(.middle).help(self.entry.branch)
-                    if let user = self.entry.participant { Text("@" + user.username).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail).help("@" + user.username + " · " + user.name) }
+                    Label(self.entry.branch, systemImage: "arrow.triangle.branch").lineLimit(1).truncationMode(.middle).mimicHelp(self.entry.branch)
+                    if let user = self.entry.participant { Text("@" + user.username).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail).mimicHelp("@" + user.username + " · " + user.name) }
                 }
                 if let url = self.entry.pipeline?.webURL ?? self.entry.run?.pipelineURL ?? self.entry.run?.buildURL ?? self.entry.run?.queueURL { CIWebButton(url: url).fixedSize() }
             }
             if self.commitTitle != nil || self.entry.sha != nil {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    if let title = self.commitTitle, !title.isEmpty { Text(title).lineLimit(2).fixedSize(horizontal: false, vertical: true).help(title) }
+                    if let title = self.commitTitle, !title.isEmpty { Text(title).lineLimit(2).fixedSize(horizontal: false, vertical: true).mimicHelp(title) }
                     Spacer(minLength: 4)
-                    if let sha = self.entry.sha { Text(String(sha.prefix(8))).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).fixedSize().help(sha) }
+                    if let sha = self.entry.sha { Text(String(sha.prefix(8))).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary).fixedSize().mimicHelp(sha) }
                 }
             }
             self.timing
@@ -109,7 +109,7 @@ struct CIPipelineCard: View {
             else if ["queued", "triggering", "pending", "preparing", "waiting_for_resource"].contains(self.entry.status) { Text(text("ci.status." + self.entry.status)).foregroundStyle(.secondary) }
             if self.requesting { HStack(spacing: 6) { ProgressView().controlSize(.mini); Text(text("ci.checks.loading")) }.foregroundStyle(.secondary) }
             if self.entry.status == "failed", let failed = self.summary?.failed.first {
-                Text(text("ci.checks.failed") + " " + failed.name).foregroundStyle(.red).lineLimit(2).help(failed.name)
+                Text(text("ci.checks.failed") + " " + failed.name).foregroundStyle(.red).lineLimit(2).mimicHelp(failed.name)
             }
             if let error = self.entry.run?.error, !["ci.error.credential", "jenkins.error.credential", "ci.error.authentication", "jenkins.error.authentication"].contains(error) { Text(text(error)).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
             if self.isExpanded { self.details }
@@ -139,11 +139,11 @@ struct CIPipelineCard: View {
             HStack {
                 Text(text("ci.time.duration") + " " + duration).fixedSize()
                 Spacer(minLength: 8)
-                if let label = self.startLabel { Text(label).fixedSize().help((self.entry.pipeline?.startedAt ?? self.entry.createdAt).map(ciFullDate) ?? "") }
+                if let label = self.startLabel { Text(label).fixedSize().mimicHelp((self.entry.pipeline?.startedAt ?? self.entry.createdAt).map(ciFullDate) ?? "") }
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(text("ci.time.duration") + " " + duration).fixedSize()
-                if let label = self.startLabel { HStack { Spacer(minLength: 0); Text(label).fixedSize().help((self.entry.pipeline?.startedAt ?? self.entry.createdAt).map(ciFullDate) ?? "") } }
+                if let label = self.startLabel { HStack { Spacer(minLength: 0); Text(label).fixedSize().mimicHelp((self.entry.pipeline?.startedAt ?? self.entry.createdAt).map(ciFullDate) ?? "") } }
             }
         }
     }
@@ -155,11 +155,11 @@ struct CIPipelineCard: View {
         else {
             if summary.running.count == 1, let job = summary.running.first {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(text("ci.checks.current") + " " + job.name).lineLimit(2).help(job.name)
+                    Text(text("ci.checks.current") + " " + job.name).lineLimit(2).mimicHelp(job.name)
                     Spacer(minLength: 2)
                     if let started = job.startedAt { MimicActivityClock(running: true) { now in Text(ciElapsed(now.timeIntervalSince(started))).monospacedDigit().fixedSize() } }
                 }
-            } else if summary.running.count > 1 { Text(String(format: text("ci.checks.parallel"), summary.running.count)).help(summary.running.map(\.name).joined(separator: "\n")) }
+            } else if summary.running.count > 1 { Text(String(format: text("ci.checks.parallel"), summary.running.count)).mimicHelp(summary.running.map(\.name).joined(separator: "\n")) }
             if summary.complete, summary.total > 0 {
                 MimicProgressBar(value: Double(summary.completed) / Double(summary.total), color: FooterCIStatus.pipelineColor(self.entry.status), label: text("ci.checks.progress"))
                     .accessibilityValue(String(format: text("ci.checks.completed"), summary.completed, summary.total))
@@ -191,7 +191,7 @@ struct CIPipelineCard: View {
                 if !children.isEmpty {
                     Text(text("ci.children.jobs")).fontWeight(.semibold)
                     ForEach(children) { job in
-                        HStack { Text(job.name).lineLimit(2).help(job.name); Spacer(minLength: 4); CIStatusBadge(status: job.status); CIWebButton(url: job.webURL) }
+                        HStack { Text(job.name).lineLimit(2).mimicHelp(job.name); Spacer(minLength: 4); CIStatusBadge(status: job.status); CIWebButton(url: job.webURL) }
                         if job.allowFailure, job.status == "failed" { Text(text("ci.job.allowedFailure")).foregroundStyle(.secondary) }
                     }
                 }

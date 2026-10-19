@@ -3,20 +3,24 @@ import SwiftUI
 import MimicCore
 
 struct BootstrapIconButton: View {
+    private var theme = MimicTheme()
     let symbol: String
     let label: String
     let action: () -> Void
     var inControlBar = false
     var body: some View {
         Group {
-            if self.inControlBar {
+            if self.inControlBar && theme.retro {
+                Button(action: action) { symbolView.frame(width: theme.appearance == .windowsXP ? 21 : 16, height: theme.appearance == .windowsXP ? 21 : 14) }
+                    .buttonStyle(NativeRetroPrimitiveButtonStyle(height: theme.appearance == .windowsXP ? 21 : 14, caption: symbol == "xmark" ? "close" : "action"))
+            } else if self.inControlBar {
                 Button(action: self.action) { self.symbolView.frame(width: 32, height: 32) }
                     .buttonStyle(RowButtonStyle(contentInsets: EdgeInsets()))
             } else {
                 Button(action: self.action) { self.symbolView.frame(width: 24, height: 24) }
                     .buttonStyle(MimicButtonStyle(icon: true))
             }
-        }.help(self.label).accessibilityLabel(self.label)
+        }.mimicHelp(self.label).accessibilityLabel(self.label)
     }
 
     private var symbolView: some View {
@@ -129,16 +133,20 @@ struct MimicProgressBar: View {
     @Environment(\.colorSchemeContrast)
     private var contrast
     private var motion = MimicMotion()
+    private var theme = MimicTheme()
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
+                if theme.retro { NativeRetroArtwork(appearance: theme.appearance, kind: .progress(value)) }
+                else {
                 Capsule().fill(Color.primary.opacity(0.06))
                 Capsule().fill(self.color).frame(width: proxy.size.width)
                     .scaleEffect(x: min(1, max(0, self.value ?? 0)), y: 1, anchor: .leading)
                     .animation(self.motion.policy(.automatic).animation(.progress), value: self.value)
                 Capsule().stroke(Color.primary.opacity(self.contrast == .increased ? 0.6 : 0.15), lineWidth: 0.5)
+                }
             }
-        }.frame(height: 6).accessibilityElement().accessibilityLabel(self.label)
+        }.frame(height: theme.retro ? 13 : 6).accessibilityElement().accessibilityLabel(self.label)
             .accessibilityValue(self.value.map { $0.formatted(.percent.precision(.fractionLength(0))) } ?? text("ci.progress.unavailable"))
 
     }

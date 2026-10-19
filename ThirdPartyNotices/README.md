@@ -42,3 +42,5 @@ The following packages are present in esbuild's input graph for the current pane
 The previously retained [cfworker notice](cfworker-LICENSE.txt) remains available for SDK dependencies. Adapted usage algorithms/catalogs are attributed separately in [OpenUsage](OpenUsage/README.md). Their public catalogs retain their original schemas.
 
 When changing dependencies, compare the new source licenses, check the actual bundle inputs, update this inventory and regenerate the panel. Standard third-party license texts retain upstream authorship and do not receive Mimic creation comments.
+
+Retro caption vectors and Luna border/button reconstruction are adapted from [XP.css](https://github.com/botoxparty/XP.css); its [original MIT notice](XP-css-LICENSE.txt) is included. R1 icons are original Mimic illustrations. Windows fonts are referenced by installed local family only and are not redistributed.

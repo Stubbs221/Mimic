@@ -30,6 +30,7 @@ extension TaskCoordinator {
 
     /// Runs under LaunchPreparation's queue ownership, before any process starts.
     func prepareAgentMetadata(_ record: TaskRecord) async {
+        if let execution = record.profileExecution, execution.snapshot.profile.panel(forAction: execution.actionID) != nil { return }
         let before = try? await Task.detached { try GitActivitySnapshot.capture(path: record.project.path) }.value
         agentChangeSnapshots[record.id] = before
         guard let execution = record.profileExecution, let requirement = execution.snapshot.profile.preparation,
@@ -43,6 +44,7 @@ extension TaskCoordinator {
 
     /// Successful process completion is required; failed/interrupted/external operations cannot mint a receipt.
     func finishAgentMetadata(_ record: TaskRecord) async {
+        if let execution = record.profileExecution, execution.snapshot.profile.panel(forAction: execution.actionID) != nil { return }
         let after = try? await Task.detached { try GitActivitySnapshot.capture(path: record.project.path) }.value
         let changes = agentChangeSnapshots.removeValue(forKey: record.id).flatMap { before in after.map { before.changes(after: $0) } }
         if let index = records.firstIndex(where: { $0.id == record.id }) { records[index].changes = changes ?? { var value = ActivityChanges(); value.unavailable = true; return value }() }

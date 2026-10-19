@@ -18,6 +18,7 @@ struct AnalysisView: View {
 }
 
 private struct AnalysisEditor: View {
+    private var theme = MimicTheme()
     @ObservedObject
     var model: TaskCoordinator
     @ObservedObject
@@ -67,15 +68,15 @@ private struct AnalysisEditor: View {
                         if session.snapshot.truncated { Text(text("ai.fragment.truncated")).foregroundStyle(.secondary) }
                         Text(text("ai.fragment")).fontWeight(.medium)
                         TextEditor(text: Binding(get: { self.session?.fragment ?? "" }, set: { self.coordinator.edit(id: self.id, fragment: $0) }))
-                            .font(.system(size: 11, design: .monospaced)).frame(height: 150).padding(4)
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.18)))
+                            .font(.system(size: 11, design: .monospaced)).frame(height: 150).padding(4).mimicInput()
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(theme.retro ? 0 : 0.18)))
                             .disabled(self.active).focused(self.$editorFocused).accessibilityFocused(self.$accessibilityFocused)
                             .accessibilityLabel(text("ai.fragment")).mimicImmediate().accessibilityIdentifier("ai.analysis.fragment")
                         Text(text("ai.comment")).foregroundStyle(.secondary)
                         TextField(text("ai.comment.placeholder"), text: Binding(get: { self.session?.comment ?? "" }, set: { self.coordinator.edit(id: self.id, comment: $0) }), axis: .vertical)
-                            .textFieldStyle(.plain).lineLimit(1 ... 3).padding(8).frame(minHeight: 32)
-                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.18)))
+                            .textFieldStyle(.plain).lineLimit(1 ... 3).padding(8).frame(minHeight: 32).mimicInput()
+                            .background(Color.primary.opacity(theme.retro ? 0 : 0.035), in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(theme.retro ? 0 : 0.18)))
                             .disabled(self.active).accessibilityLabel(text("ai.comment")).mimicImmediate().accessibilityIdentifier("ai.analysis.comment")
                         MimicDisclosure(text("ai.request.full"), isExpanded: self.$previewExpanded) {
                             Text(session.prompt).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
@@ -157,6 +158,7 @@ struct AIIntegrationsSettingsView: View {
                     Picker(text("settings.ai.default"), selection: self.$settings.settings.provider) {
                         Text("Codex").tag(AIProvider.codex); Text("Claude").tag(AIProvider.claude)
                     }.labelsHidden().accessibilityIdentifier("ai.settings.provider")
+                        .mimicSelection(text("settings.ai.default"), selection: self.$settings.settings.provider, options: [.init("Codex", .codex), .init("Claude", .claude)], labelsHidden: true)
                         .disabled(self.settings.checking != nil || self.analysis.isActive)
                 }
             }
@@ -173,6 +175,7 @@ struct AIIntegrationsSettingsView: View {
                                 Text(text("usage.preference." + preference.rawValue)).tag(preference)
                             }
                         }.labelsHidden().accessibilityIdentifier("usage.preference." + provider.rawValue)
+                            .mimicSelection(text("settings.usage.period"), selection: Binding(get: { self.usage.settings.preference(for: provider) }, set: { self.usage.setPreference($0, for: provider) }), options: AIUsagePreference.allCases.map { .init(text("usage.preference." + $0.rawValue), $0) }, labelsHidden: true)
                     }
                 }
             }
@@ -196,14 +199,14 @@ private struct AIProviderSettingsView: View {
             Text(text("settings.ai.analysis.detail")).mimicFont(.caption).foregroundStyle(.secondary)
             SettingsField(title: text("settings.ai.path")) {
                 HStack {
-                    TextField(text("settings.ai.path.placeholder"), text: self.path).accessibilityIdentifier("ai.settings.path." + self.provider.rawValue)
+                    TextField(text("settings.ai.path.placeholder"), text: self.path).mimicInput().accessibilityIdentifier("ai.settings.path." + self.provider.rawValue)
                     Button { self.choose() } label: { Image(systemName: "folder") }
-                        .help(text("ai.cli.choose")).accessibilityLabel(text("ai.cli.choose"))
+                        .mimicHelp(text("ai.cli.choose")).accessibilityLabel(text("ai.cli.choose"))
                         .accessibilityIdentifier("ai.settings.choose." + self.provider.rawValue)
                 }
             }
             SettingsField(title: text("settings.ai.model")) {
-                TextField(text("settings.ai.model.placeholder"), text: self.model).accessibilityIdentifier("ai.settings.model." + self.provider.rawValue)
+                TextField(text("settings.ai.model.placeholder"), text: self.model).mimicInput().accessibilityIdentifier("ai.settings.model." + self.provider.rawValue)
             }
             HStack {
                 Button(text("ai.cli.check")) { self.settings.check(self.provider) }

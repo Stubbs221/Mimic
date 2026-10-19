@@ -15,7 +15,7 @@ struct TileGridIdentity: View {
             HStack(spacing: 8) {
                 Text(projectName).mimicFont(.heading).lineLimit(1).truncationMode(.middle)
                     .frame(width: min(120, ceil((projectName as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 13 * textScale, weight: .semibold)]).width) + 2), alignment: .leading)
-                    .help(model.project?.path ?? "Mimic").accessibilityIdentifier("panel.project")
+                    .mimicHelp(model.project?.path ?? "Mimic").accessibilityIdentifier("panel.project")
                 Button {
                     layout.cancelPresentation()
                     model.toggleSection(.branches)
@@ -30,7 +30,7 @@ struct TileGridIdentity: View {
                 }.buttonStyle(.plain).mimicFont(.caption).foregroundStyle(.secondary)
                     .frame(minWidth: 0, maxWidth: 288 * textScale, alignment: .leading).layoutPriority(-1)
                     .disabled(model.project == nil || model.switchingBranch)
-                    .help(model.project?.branch ?? text("branch.choose"))
+                    .mimicHelp(model.project?.branch ?? text("branch.choose"))
                     .accessibilityIdentifier("branch.toggle").accessibilityLabel(text("branch.choose"))
                     .accessibilityValue(model.project?.branch ?? "")
                 Spacer(minLength: 0)
@@ -48,7 +48,7 @@ struct TileGridIdentity: View {
                     layout.cancelPresentation(); model.toggleSettings()
                 }
             }.frame(minHeight: max(32, 24 * textScale)).accessibilityIdentifier("panel.chrome.b2")
-            if let project = model.project, let operation = model.branchSwitch.latest(path: project.path) {
+            if let operation = model.branchStatusOperation {
                 BranchSwitchStatus(model: model, operation: operation)
             }
         }
@@ -67,13 +67,23 @@ struct MimicChromeIconButton: View {
     var body: some View {
         Button(action: action) { Image(systemName: symbol).font(.system(size: 16 * textScale)) }
             .buttonStyle(MimicChromeButtonStyle(selected: selected, iconOnly: true))
-            .help(label).accessibilityLabel(label).accessibilityIdentifier(identifier)
+            .mimicHelp(label).accessibilityLabel(label).accessibilityIdentifier(identifier)
             .accessibilityValue(selected ? text("panel.expanded") : "")
     }
 }
 
 /// Frequent chrome interactions respond immediately, including keyboard activation.
-struct MimicChromeButtonStyle: ButtonStyle {
+struct MimicChromeButtonStyle: PrimitiveButtonStyle {
+    var selected = false
+    var iconOnly = false
+    private var theme = MimicTheme()
+    @ViewBuilder func makeBody(configuration: Configuration) -> some View {
+        if theme.retro { Button(configuration).buttonStyle(NativeRetroPrimitiveButtonStyle(selected: selected)).frame(width: iconOnly ? 28 : nil) }
+        else { Button(configuration).buttonStyle(MimicChromeArtworkStyle(selected: selected, iconOnly: iconOnly)) }
+    }
+}
+
+private struct MimicChromeArtworkStyle: ButtonStyle {
     var selected = false
     var iconOnly = false
     private var theme = MimicTheme()
@@ -101,7 +111,7 @@ struct PanelTileCatalog: View {
     @ObservedObject var model: TaskCoordinator
     @ObservedObject var layout: PanelLayoutController
     @State private var search = ""
-    private var blocks: [PanelBlockKind] { layout.availableBlocks.filter { search.isEmpty || text($0.titleKey).localizedCaseInsensitiveContains(search) } }
+    private var blocks: [PanelBlockKind] { layout.availableBlocks.filter { search.isEmpty || layout.title($0).localizedCaseInsensitiveContains(search) } }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -113,7 +123,7 @@ struct PanelTileCatalog: View {
                 Text(text("panel.tiles.all.added")).mimicFont(.body)
                 Text(text("panel.tiles.all.added.help")).mimicFont(.caption).foregroundStyle(.secondary)
             } else {
-                TextField(text("panel.tiles.search"), text: $search).textFieldStyle(.roundedBorder).mimicFont(.body)
+                TextField(text("panel.tiles.search"), text: $search).textFieldStyle(.roundedBorder).mimicInput().mimicFont(.body)
                     .accessibilityIdentifier("panel.catalog.search")
                 if blocks.isEmpty { Text(text("panel.tiles.no.results")).mimicFont(.body).foregroundStyle(.secondary) }
                 ScrollView {
@@ -122,7 +132,7 @@ struct PanelTileCatalog: View {
                             Button {
                                 if layout.add(block) { model.scrollPanel(to: block.scrollID) }
                             } label: {
-                                HStack { Text(text(block.titleKey)); Spacer(minLength: 8); Image(systemName: "plus") }
+                                HStack { Text(layout.title(block)); Spacer(minLength: 8); Image(systemName: "plus") }
                                     .mimicFont(.body).padding(.horizontal, 8).frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                                     .contentShape(Rectangle())
                             }.buttonStyle(RowButtonStyle(contentInsets: EdgeInsets()))

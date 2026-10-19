@@ -26,35 +26,35 @@ struct CICompactBody: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
                 Text(self.summary.displayID ?? text("ci.compact.launch")).foregroundStyle(.secondary)
-                    .lineLimit(1).help(self.summary.displayID ?? text("ci.compact.launch"))
+                    .lineLimit(1).mimicHelp(self.summary.displayID ?? text("ci.compact.launch"))
                 Spacer(minLength: 2)
                 CIStatusBadge(status: self.summary.status).lineLimit(1)
-                    .help(text("ci.status." + self.summary.status))
+                    .mimicHelp(text("ci.status." + self.summary.status))
                 if self.summary.stale {
                     Image(systemName: "exclamationmark.circle").foregroundStyle(.secondary)
-                        .help(text("ci.compact.stale")).accessibilityLabel(text("ci.compact.stale"))
+                        .mimicHelp(text("ci.compact.stale")).accessibilityLabel(text("ci.compact.stale"))
                 }
             }
             Label(self.summary.branch, systemImage: "arrow.triangle.branch")
-                .lineLimit(1).truncationMode(.middle).help(self.summary.branch)
+                .lineLimit(1).truncationMode(.middle).mimicHelp(self.summary.branch)
             if self.fillsAvailableHeight { Spacer(minLength: 4) }
             VStack(alignment: .leading, spacing: 4) {
                 if self.summary.active { CICompactProgress(summary: self.summary) }
                 MimicActivityClock(running: summary.status == "running" && !summary.stale && summary.startedAt != nil) { now in
                     HStack(spacing: 8) {
                         Label(self.summary.startedAt.map { ciDate($0) } ?? "—", systemImage: "clock")
-                            .help(text("ci.time.begin") + " · " + (self.summary.startedAt?.formatted(date: .complete, time: .complete) ?? "—"))
+                            .mimicHelp(text("ci.time.begin") + " · " + (self.summary.startedAt?.formatted(date: .complete, time: .complete) ?? "—"))
                             .accessibilityLabel(text("ci.time.begin"))
                             .accessibilityValue(self.summary.startedAt.map { ciDate($0) } ?? "—")
                         Spacer(minLength: 0)
                         Label(self.elapsed(now), systemImage: "timer")
-                            .help(text("ci.time.duration")).accessibilityLabel(text("ci.time.duration"))
+                            .mimicHelp(text("ci.time.duration")).accessibilityLabel(text("ci.time.duration"))
                             .accessibilityValue(self.elapsed(now))
                     }.monospacedDigit().foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }.mimicImmediate()
                 if let current = self.current {
                     Text(current).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                        .help(self.summary.runningJobs.isEmpty ? current : self.summary.runningJobs.joined(separator: "\n"))
+                        .mimicHelp(self.summary.runningJobs.isEmpty ? current : self.summary.runningJobs.joined(separator: "\n"))
                 }
             }
         }.frame(maxHeight: self.fillsAvailableHeight ? .infinity : nil, alignment: .topLeading)
@@ -94,7 +94,7 @@ struct CIProjectName: View {
         HStack(spacing: 4) {
             Text("·")
             Text(URL(fileURLWithPath: self.checkout).lastPathComponent).lineLimit(1).truncationMode(.middle)
-        }.mimicFont(.caption).foregroundStyle(.secondary).help(self.checkout)
+        }.mimicFont(.caption).foregroundStyle(.secondary).mimicHelp(self.checkout)
     }
 }
 
@@ -129,7 +129,7 @@ struct CIActivitySection: View {
                 CIProjectName(checkout: self.summary.checkout)
                 Spacer(minLength: 0)
                 BootstrapIconButton(symbol: "xmark", label: text("ci.compact.hide"), action: self.hide, inControlBar: true)
-            }
+            }.mimicRetroHeading()
             CICompactBody(summary: self.summary).allowsHitTesting(false)
         }.padding(MimicMetrics.cardInsets).frame(width: MimicMetrics.cardWidth, alignment: .leading)
             .background(CardMouseSurface(open: self.open, label: text("ci.compact.open")))

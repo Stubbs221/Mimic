@@ -44,6 +44,36 @@ private actor SwitchJournal {
 }
 
 struct BranchSwitchTests {
+    @MainActor @Test(arguments: [BranchSwitchPhase.checking, .fetching, .rebasing, .stashing, .switching, .restoring, .awaitingAgent, .resolving, .needsReview, .succeeded, .failed, .cancelled])
+    func restartOnlyReleasesReadOnlyPreflight(phase: BranchSwitchPhase) throws {
+        let suite = "BranchRecovery-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let project = ProjectContext(path: "/fixture/checkout", branch: "source", commit: "fixture")
+        var record = BranchSwitchOperation(id: UUID(), source: project, target: "develop", rebase: false)
+        record.phase = phase
+        defaults.set(try JSONEncoder().encode([record]), forKey: "branchSwitchOperations")
+        let owner = BranchSwitchCoordinator(defaults: defaults)
+        let expected = phase == .checking ? BranchSwitchPhase.cancelled : phase.holdsCheckout ? .needsReview : phase
+        #expect(try owner.operation(record.id).phase == expected)
+        #expect(owner.hasPending == expected.holdsCheckout && !owner.isExecuting)
+        let duplicate = try owner.start(id: record.id, project: project, target: "develop")
+        #expect(duplicate.phase == expected && !owner.isExecuting)
+        let restored = BranchSwitchCoordinator(defaults: defaults)
+        #expect(try restored.operation(record.id).phase == expected)
+    }
+
+    @MainActor @Test func inconsistentPreflightJournalStillRequiresReview() throws {
+        let suite = "BranchRecoveryGuard-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let project = ProjectContext(path: "/fixture/checkout", branch: "source", commit: "fixture")
+        var record = BranchSwitchOperation(id: UUID(), source: project, target: "develop", rebase: false)
+        record.stashName = "existing backup"
+        defaults.set(try JSONEncoder().encode([record]), forKey: "branchSwitchOperations")
+        let owner = BranchSwitchCoordinator(defaults: defaults)
+        let recovered = try owner.operation(record.id)
+        #expect(owner.hasPending && recovered.phase == .needsReview)
+    }
+
     @Test func rejectedCheckoutRestoresOriginalEditsWithoutOverwritingIgnoredFiles() async throws {
         let f = try SwitchFixture(); defer { f.remove() }
         try f.git(["switch", "feature/quoted-$value"])

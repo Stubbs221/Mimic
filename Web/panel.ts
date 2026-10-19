@@ -1,8 +1,14 @@
+import {WorkPanel,type WorkSnapshot} from './work-panel';
 // Shared appearance is private presentation metadata; task and workspace identities stay stable.
 import {BuildPanel,type BuildRecord,type BuildDraft} from './build-panel';
-import {resolveAppearance} from './appearance';
+import {AppearanceState,isRetro,type CodexAppearance,type AppearanceSnapshot} from './appearance';
+import {AppearancePicker} from './appearance-picker';
+import {MCPPanelTransport} from './mcp-panel-transport';
+import {ToolFailure} from './panel-transport';
+import {cancelRetroInteractions,installRetroInteractions,fadePopup} from './retro-interactions';
 import {BranchSwitchPanel,type BranchOperation} from './branch-switch';
 import {PanelChrome} from './panel-chrome';
+import {MimicAbout,type MimicDelivery} from './about';
 import {SimulatorPanel,type Frame,type SimulatorState,type SimulatorActivity,type SimulatorSession} from './simulator';
 // Created by Василий Маслов on 04.10.2026.
 import { App, applyDocumentTheme, applyHostStyleVariables } from '@modelcontextprotocol/ext-apps';
@@ -11,7 +17,9 @@ import ru from './ru.json';
 import {tools,defaultFavorites,toolRoles,toolSymbols,toolForRole,validateFavorites,toolTask,elapsed,statusSymbols,type ToolID,type ToolsPreferences} from './tools';
 import {renderCompactRuns,middleText,ciIdentity,type CICompactSummary} from './ci-compact';
 import {PanelCIView,type CIInspection} from './ci-details';
-import {catalog,standard,validate,change,remove,add,move,resize,replace,type Block,type Layout} from './layout';
+import {ProfilePanel,type CustomPanel} from './profile-panel';
+import {ServiceToolPanel,type ServiceCatalog} from './service-tool';
+import {catalog,standard,validate,change,remove,add,move,resize,replace,compact,type Block,type Layout} from './layout';
 import {applyRemoteDefaults} from './remote-parameters';
 import {PrivateTerminal,TerminalSelection} from './terminal';
 import {BootstrapTerminalPlaceholder} from './bootstrap-terminal-placeholder';
@@ -28,9 +36,10 @@ type Build=LocalTask&{actionKey?:string;tracking:string;phase:string;source:stri
 type Run={id:string;actionID?:string;branch:string;plan:string;status:string;createdAt:string;updatedAt?:string;error?:string;jenkinsURL?:string;gitlabURL?:string;allureURL?:string;pipelineID?:number;sha?:string;jobs:{name:string;status:string;allowFailure:boolean;url:string}[]};
 type UIBinding={role:string;actionID:string;fields:Record<string,string>};
 type UIInterface={version:number;bindings:UIBinding[]};
-type State={appearance?:unknown;branchRebase?:boolean;branchSwitch?:BranchOperation|null;checkoutLocked?:boolean;toolsPreferences?:ToolsPreferences;ciSummaries?:CICompactSummary[];ciSummary?:CICompactSummary|null;notices?:{id:string;taskID:string;title:string;body:string}[];layout?:Layout;workspace?:{toolSelection?:ToolID|null;toolGenerator?:'ui'|'module'|'feature'|null;expanded?:Block;selection?:string;drafts?:Record<string,Record<string,string>>};needsBinding?:boolean;queue?:LocalTask[];interface?:UIInterface|null;simulator?:SimulatorState;context:Context|null;actions:Action[];tasks:LocalTask[];builds?:Build[];runs:Run[];jenkinsConfigured:boolean;progress?:string};
+type State={serviceTools?:ServiceCatalog[];customPanels?:CustomPanel[];work?:WorkSnapshot;delivery?:MimicDelivery;appearance?:unknown;codexAppearance?:unknown;branchRebase?:boolean;branchSwitch?:BranchOperation|null;checkoutLocked?:boolean;toolsPreferences?:ToolsPreferences;ciSummaries?:CICompactSummary[];ciSummary?:CICompactSummary|null;notices?:{id:string;taskID:string;title:string;body:string}[];layout?:Layout;workspace?:{toolSelection?:ToolID|null;toolGenerator?:'ui'|'module'|'feature'|null;expanded?:Block;selection?:string;drafts?:Record<string,Record<string,string>>};needsBinding?:boolean;queue?:LocalTask[];interface?:UIInterface|null;simulator?:SimulatorState;context:Context|null;actions:Action[];tasks:LocalTask[];builds?:Build[];runs:Run[];jenkinsConfigured:boolean;progress?:string};
 type Diagnostic={task:LocalTask;text:string;truncated:boolean;outputUnavailable:boolean;analysisPrompt:string};
 const t=(key:string)=>(ru as Record<string,string>)[key]??key;
+const legacyAbout=new MimicAbout(t);
 const shell=document.querySelector<HTMLElement>('#app')!;
 const root=document.createElement('div');
 const simulatorHost=document.createElement('section');
@@ -40,6 +49,7 @@ header.append(element('h1',t('title')),button(t('refresh'),()=>void refresh(true
 shell.append(header,root);
 const app=new App({name:'Mimic',version:'1.2.0'},{});
 const extensions=new OpenAIExtensions(app);
+const transport=new MCPPanelTransport(app,extensions,t('error'));
 const preview=new URL(location.href).searchParams.get('preview')==='1';
 let state:State|null=null, selection:{type:'task'|'run'|'build';id:string}|null=null;
 let busy=false, error='', stale=false, branches:string[]=[], selectedBranch='', branchQuery='', plan='SMOKE';
@@ -50,23 +60,13 @@ function element<K extends keyof HTMLElementTagNameMap>(tag:K,text='',className=
 function button(label:string,action:()=>void,disabled=false,className=''){const b=element('button',label,className);b.type='button';b.disabled=disabled;b.onclick=action;return b;}
 function status(value:string){return element('span',t(value),'status '+value);}
 function date(value:string){return new Date(value).toLocaleString('ru-RU',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}
-function link(label:string,url?:string){if(!url)return null;try{if(new URL(url).protocol!=='https:')return null;}catch{return null;}const a=element('a',label);a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.onclick=event=>{if(!preview){event.preventDefault();void app.openLink({url}).catch(showError);}};return a;}
+function link(label:string,url?:string){if(!url)return null;try{if(new URL(url).protocol!=='https:')return null;}catch{return null;}const a=element('a',label);a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.onclick=event=>{if(!preview){event.preventDefault();void transport.openLink(url).catch(showError);}};return a;}
 function card(title:string){const box=element('section','','card');box.append(element('h2',title));return box;}
 function showError(value:unknown){error=value instanceof Error?value.message:t('error');render();}
-class ToolFailure extends Error { constructor(message:string,readonly code:string){super(message);} }
-async function tool(name:string,args:Record<string,unknown>={}):Promise<any>{
- if(preview)return fixtureTool(name,args);
- const result=await app.callServerTool({name,arguments:args});
- const text=result.content.find(item=>item.type==='text')?.text??'';
- if(result.isError){const value=result.structuredContent??{message:text};throw new ToolFailure(typeof value.message==='string'?value.message:t('error'),typeof value.code==='string'?value.code:'unavailable');}
- // Every private simulator tool uses the same app-only envelope, including accepted commands.
- if(name.startsWith('simulator_ui_'))return result._meta?.['mimic/simulator'];
- if(name.startsWith('panel_'))return result._meta?.['mimic/private'];
- const value=result.structuredContent??JSON.parse(text||'{}');return ['open_panel','get_state'].includes(name)?{...value,...(result._meta?.['mimic/workspace'] as object??{})}:value;
-}
+async function tool(name:string,args:Record<string,unknown>={}):Promise<any>{return preview?fixtureTool(name,args):transport.call(name,args);}
 function releaseRejectedRequest(key:string,error:unknown){if(error instanceof ToolFailure&&!['unavailable','unknown'].includes(error.code))pendingIDs.delete(key);}
 async function refresh(recheckTools=false){try{const next=await tool('get_state') as State;if(recheckTools){toolConfigurationRevision++;toolConfigurations.clear();}accept(next);stale=false;render();void branchSwitchPanel.poll();}catch{stale=true;render();}}
-function accept(next:State){if(!next||!Array.isArray(next.tasks)||!Array.isArray(next.runs))return;const old=stableJSON(state?.context),oldCheckout=state?.context?.checkoutId;state=next;for(const id of actionValues.keys())if(!next.actions.some(a=>a.id===id))actionValues.delete(id);updateSimulator();if(!selectedBranch)selectedBranch=next.context?.branch??'';if(old!==stableJSON(next.context)){if(oldCheckout!==next.context?.checkoutId){bootstrapTerminalTask=null;bootstrapFailedAttempt=null;void bootstrapTerminal?.detach();}bootstrapLaunchError='';if(diagnosticSource==='bootstrap')diagnostic=null;remoteFields.clear();buildCatalogue=null;buildValues.simulatorConfirmed='false';buildValues.workspaceTab='';buildValues.destinationID='';previews.clear();branches=[];selectedBranch=next.context?.branch??'';simulatorPanel.invalidate();void syncContext();}if(selection?.type==='task'&&!next.tasks.some(x=>x.id===selection?.id))selection=null;if(selection?.type==='run'&&!next.runs.some(x=>x.id===selection?.id))selection=null;if(selection?.type==='build'&&!next.builds?.some(x=>x.id===selection?.id))selection=null;notifyChanges(next);}
+function accept(next:State){if(!next||!Array.isArray(next.tasks)||!Array.isArray(next.runs))return;const old=stableJSON(state?.context),oldCheckout=state?.context?.checkoutId;state=next;for(const [id,view]of serviceViews)if(!next.serviceTools?.some(p=>p.block===id)||old!==stableJSON(next.context)){view.dispose();serviceViews.delete(id);}for(const [id,view]of customPanelViews)if(!next.customPanels?.some(p=>p.block===id)||old!==stableJSON(next.context)){view.dispose();customPanelViews.delete(id);}for(const id of actionValues.keys())if(!next.actions.some(a=>a.id===id))actionValues.delete(id);updateSimulator();if(!selectedBranch)selectedBranch=next.context?.branch??'';if(old!==stableJSON(next.context)){if(oldCheckout!==next.context?.checkoutId){bootstrapTerminalTask=null;bootstrapFailedAttempt=null;void bootstrapTerminal?.detach();}bootstrapLaunchError='';if(diagnosticSource==='bootstrap')diagnostic=null;remoteFields.clear();buildCatalogue=null;buildValues.simulatorConfirmed='false';buildValues.workspaceTab='';buildValues.destinationID='';previews.clear();branches=[];selectedBranch=next.context?.branch??'';simulatorPanel.invalidate();void syncContext();}if(selection?.type==='task'&&!next.tasks.some(x=>x.id===selection?.id))selection=null;if(selection?.type==='run'&&!next.runs.some(x=>x.id===selection?.id))selection=null;if(selection?.type==='build'&&!next.builds?.some(x=>x.id===selection?.id))selection=null;notifyChanges(next);}
 async function perform(operation:()=>Promise<void>){if(busy)return;busy=true;error='';notice='';render();try{await operation();}catch(e){showError(e);}finally{busy=false;render();}}
 function selectItem(type:'task'|'run'|'build',id:string){selection={type,id};historyOpen=true;diagnostic=null;diagnosticSource='history';scheduleWorkspace();notice='';render();void syncContext();}
 async function syncContext(){if(!state||preview)return;const selected=selection?.type==='build'?state.builds?.find(x=>x.id===selection?.id):selection?.type==='task'?state.tasks.find(x=>x.id===selection?.id):selection?.type==='run'?state.runs.find(x=>x.id===selection?.id):undefined;const metadata={context:state.context,selection:selection?{type:selection.type,id:selection.id,status:selected?.status}:null};try{if(extensions.modelContext)await extensions.modelContext.update({structuredContent:metadata});else await app.updateModelContext({structuredContent:metadata});}catch{/* Older clients can still use tools; selection never sends diagnostics. */}}
@@ -90,9 +90,9 @@ async function analyze(id:string,inline=false){if(diagnostic?.task.id===id){diag
  if(captured!==stableJSON(state?.context))return;
  diagnostic=result;diagnosticSource=inline?'bootstrap':'history';fragment=result.text;comment='';
  });}
-async function send(){await perform(async()=>{if(!diagnostic||!extensions.message&&!preview)throw new Error(t('unsupported'));const task=diagnostic.task;const numbered=cleanFragment(fragment,64*1024).split('\n').map((line,i)=>`${i+1}: ${line}`).join('\n');const message=`${diagnostic.analysisPrompt.split('<diagnostic-data>')[0]||t('promptIntro')+'\n'+stableJSON(task)}\n<diagnostic-data>\n${numbered}\n</diagnostic-data>\n<user-comment>\n${cleanFragment(comment,8192)}\n</user-comment>`;if(!preview)await extensions.message!.send({role:'user',content:[{type:'text',text:message}]});else fixtureSentMessage=message;notice=t('sent');diagnostic=null;diagnosticNode=null;diagnosticNodeID=null;});}
+async function send(){await perform(async()=>{if(!diagnostic||!extensions.message&&!preview)throw new Error(t('unsupported'));const task=diagnostic.task;const numbered=cleanFragment(fragment,64*1024).split('\n').map((line,i)=>`${i+1}: ${line}`).join('\n');const message=`${diagnostic.analysisPrompt.split('<diagnostic-data>')[0]||t('promptIntro')+'\n'+stableJSON(task)}\n<diagnostic-data>\n${numbered}\n</diagnostic-data>\n<user-comment>\n${cleanFragment(comment,8192)}\n</user-comment>`;if(!preview)await transport.sendMessage(message);else fixtureSentMessage=message;notice=t('sent');diagnostic=null;diagnosticNode=null;diagnosticNodeID=null;});}
 // MARK: - Persistent configurable workspace
-const banner=element('div'),contextBar=element('div','','context-bar'),contextDetail=element('details'),toolbar=element('div','','panel-toolbar'),catalogHost=element('section','','card block-catalog'),gridHost=element('div','','panel-grid'),historyHost=element('section','','card'),detailHost=element('div'),queueHost=element('p','','queue-summary');
+const banner=element('div'),contextBar=element('div','','context-bar'),contextDetail=element('details'),toolbar=element('div','','panel-toolbar'),catalogHost=element('section','','card block-catalog'),gridHost=element('div','','panel-grid'),historyHost=element('section','','card history-card'),detailHost=element('div'),queueHost=element('p','','queue-summary');
 root.append(banner,contextBar,contextDetail,toolbar,catalogHost,gridHost,queueHost,historyHost,detailHost);
 let selectedTool:ToolID|null=null,toolGenerator:'ui'|'module'|'feature'='ui';
 let toolsPreferences:ToolsPreferences={revision:0,favorites:[...defaultFavorites]};
@@ -100,44 +100,62 @@ let savedLayout:Layout=standard(),editLayout:Layout|null=null,expanded:Block|nul
 let layoutOrigin:Layout|null=null;
 const ciView=new PanelCIView(tool,t,link);
 const buildPanel=new BuildPanel(tool,t,refresh,id=>selectItem('build',id),()=>{if(state?.simulator?.visible)openBlock('simulators');});
+const workPanel=new WorkPanel(tool,t,url=>transport.openLink(url),text=>transport.sendMessage(text));
 function ciSummaries(){return state?.ciSummaries??(state?.ciSummary?[state.ciSummary]:[]);}
 function openCI(summary:CICompactSummary){if(editLayout||cardDrag.session||cardDrag.saving)return;ciView.select(summary);if(expanded!=='ci')animateGrid(()=>{expanded='ci';catalogOpen=false;renderGrid();});scheduleWorkspace();}
-const blockNodes=new Map<Block,{node:HTMLElement;title:HTMLButtonElement;summary:HTMLElement;content:HTMLElement;editor:HTMLElement}>();
+const blockNodes=new Map<Block,{node:HTMLElement;title:HTMLButtonElement;caption:HTMLButtonElement;summary:HTMLElement;content:HTMLElement;editor:HTMLElement}>();
 const formNodes=new Map<string,{signature:string;node:HTMLElement;update:()=>void}>();
 const previews=new Map<string,{taskID:string;fingerprint:string;plan?:{files:{path:string;exists:boolean}[];digest:string;canGenerate?:boolean}}>();
 let buildValues:Record<string,string>={backend:'cli',scheme:'',configuration:'',destinationID:'',workspaceTab:'',testPlan:'',testIdentifiers:'',simulatorConfirmed:'false'};
 let buildCatalogue:any=null;
 const contextLabel=button('',()=>void loadBranches(),false,'branch-current'),workStatus=button('',()=>{const active=[...state!.tasks.map(t=>({...t,type:'task' as const})),...(state!.builds??[]).map(t=>({...t,type:'build' as const}))].find(t=>['running','preparing'].includes(t.status));if(active)selectItem(active.type,active.id);historyOpen=true;render();},false,'quiet');const contextSettings=button('⚙',()=>{settingsOpen=!settingsOpen;render();},false,'quiet');contextSettings.setAttribute('aria-label',t('settings'));
-const branchSwitchPanel=new BranchSwitchPanel({tool,t,refresh,canSend:()=>!!extensions.message,send:prompt=>extensions.message!.send({role:'user',content:[{type:'text',text:prompt}],_meta:{'openai/message':{target:'new',send:true}}}),open:url=>app.openLink({url}),error:showError,preview});
+const branchSwitchPanel=new BranchSwitchPanel({tool,t,refresh,canSend:()=>!!extensions.message,send:prompt=>transport.sendMessage(prompt,true),open:url=>transport.openLink(url),error:showError,preview});
 contextBar.append(contextLabel,branchSwitchPanel.preference,contextSettings,workStatus);contextBar.after(branchSwitchPanel.status);
-const chrome=new PanelChrome({t,preference:branchSwitchPanel.preference,branches:()=>void loadBranches(),switchBranch:branch=>void switchBranch(branch),refresh:()=>void refresh(true),newAction:()=>{catalogOpen=!catalogOpen;render();},history:()=>{historyOpen=!historyOpen;render();},edit:beginEdit,setup:operation=>void setup(operation),bind:()=>void perform(async()=>{if(!preview)await extensions.message!.send({role:'user',content:[{type:'text',text:t('binding.prompt')}]});notice=t('sent');}),select:activity=>{selectItem(activity.type,activity.id);detailHost.scrollIntoView({block:'start'});}});
+const chrome=new PanelChrome({t,preference:branchSwitchPanel.preference,branches:()=>void loadBranches(),switchBranch:branch=>void switchBranch(branch),refresh:()=>void refresh(true),newAction:()=>{catalogOpen=!catalogOpen;render();},history:()=>{historyOpen=!historyOpen;render();},edit:beginEdit,setup:operation=>void setup(operation),bind:()=>void perform(async()=>{if(!preview)await transport.sendMessage(t('binding.prompt'));notice=t('sent');}),select:activity=>{selectItem(activity.type,activity.id);detailHost.scrollIntoView({block:'start'});}});
 shell.prepend(chrome.host);
 let detailSignature='';let detailsTerminal:PrivateTerminal|null=null;
 function currentLayout(){return cardDrag.layout??editLayout??savedLayout;}
-function blockTitle(block:Block){return t('block.'+block);}
+function blockTitle(block:Block){return state?.serviceTools?.find(p=>p.block===block)?.title??state?.customPanels?.find(p=>p.block===block)?.title??t('block.'+block);}
+const customPanelViews=new Map<string,ProfilePanel>();
+const serviceViews=new Map<string,ServiceToolPanel>();
+function renderServiceTool(block:Block,host:HTMLElement){const definition=state?.serviceTools?.find(p=>p.block===block);if(!definition||!state?.context)return;let view=serviceViews.get(block);if(!view){view=new ServiceToolPanel(definition,tool,t);serviceViews.set(block,view);}view.update(host);}
+function renderCustomPanel(block:Block,host:HTMLElement){const definition=state?.customPanels?.find(p=>p.block===block);if(!definition||!state?.context)return;let view=customPanelViews.get(block);if(!view){view=new ProfilePanel(definition,tool,t,()=>actionValues.get(definition.actionID)??{},draft=>{actionValues.set(definition.actionID,draft);scheduleWorkspace();});customPanelViews.set(block,view);}view.update(host,state.context);}
 function scheduleWorkspace(){if(preview||!workspaceLoaded)return;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{void tool('panel_save_workspace',{workspace:{expanded,toolSelection:selectedTool,toolGenerator,selection:selection?selection.type+':'+selection.id:null,drafts:{...Object.fromEntries(actionValues),builds:buildValues}}}).catch(showError);},350);}
-let panelAppearance:'tileGrid'|'legacy'|undefined;
+let panelAppearance:CodexAppearance|undefined;
+let compactSimulatorWatching=false;
+const appearanceState=new AppearanceState();
+const appearancePicker=new AppearancePicker(t,async(value,expectedRevision)=>{
+ let reply;try{reply=await tool('panel_set_appearance',{appearance:value,expectedRevision});}catch(error){if(error instanceof ToolFailure&&error.code==='appearanceConflict')await refresh();throw error;}
+ if(reply?.codexAppearance?.selection!==value||!Number.isSafeInteger(reply.codexAppearance.revision)||reply.codexAppearance.revision<expectedRevision)throw new Error(t('appearance.saveFailed'));
+ appearanceState.accept(reply.codexAppearance,undefined);if(state)state.codexAppearance=appearanceState.snapshot;render();return appearanceState.snapshot!;
+},async value=>{
+ if(!isRetro(value))return true;
+ const family=value==='windows95'?'Mimic Win95':'Mimic Tahoma';
+ try{const regular=await document.fonts.load(`11px "${family}"`,'Проверка Ёё'),bold=await document.fonts.load(`bold 11px "${family}"`,'Проверка Ёё');const caption=value==='windowsXP'?await document.fonts.load('bold 13px "Mimic XP Caption"','Проверка Ёё'):regular;return regular.length>0&&bold.length>0&&caption.length>0;}catch{return false;}
+});
+installRetroInteractions();
 function installWorkspace(next:State){
- const appearance=resolveAppearance(next.appearance,panelAppearance);
- if(appearance!==panelAppearance){cardDrag.cancel();panelAppearance=appearance;document.documentElement.dataset.appearance=appearance;}
+ const appearance=appearanceState.accept(next.codexAppearance,next.appearance);
+ appearancePicker.update(appearanceState.snapshot);
+ if(appearance!==panelAppearance){cardDrag.cancel();cancelRetroInteractions();panelAppearance=appearance;document.documentElement.dataset.appearance=appearance;document.documentElement.dataset.retro=String(isRetro(appearance));}
  if(appearance==='legacy'&&branchSwitchPanel.preference.parentElement!==contextBar)contextBar.insertBefore(branchSwitchPanel.preference,contextSettings);
 
  if(next.toolsPreferences&&next.toolsPreferences.revision>=toolsPreferences.revision)try{toolsPreferences=validateFavorites(next.toolsPreferences);}catch{/* Retain the last valid selection. */}
  if(!editLayout&&!cardDrag.session&&!cardDrag.saving&&next.layout&&next.layout.revision>=savedLayout.revision){try{savedLayout=validate(next.layout);}catch{/* Keep the last valid layout. */}}
  if(!workspaceLoaded&&next.context&&next.workspace!==undefined){workspaceLoaded=true;for(const form of formNodes.values())form.signature='';const workspace=next.workspace;expanded=workspace?.expanded??null;selectedTool=workspace?.toolSelection??null;toolGenerator=workspace?.toolGenerator??'ui';for(const [id,values]of Object.entries(workspace?.drafts??{})){if(id==='builds')buildValues={...buildValues,...values,simulatorConfirmed:'false'};else if(next.actions.some(a=>a.id===id))actionValues.set(id,Object.fromEntries(Object.entries(values).filter(([field])=>next.actions.find(a=>a.id===id)!.parameters.some(p=>p.id===field))));}if(workspace?.selection){const [type,...parts]=workspace.selection.split(':');if(['task','run','build'].includes(type))selection={type:type as 'task'|'run'|'build',id:parts.join(':')};}}
 }
-function edit(operation:(layout:Layout)=>void){if(!editLayout)return;try{animateGrid(()=>{editLayout=change(editLayout!,operation);renderGrid();});}catch(e){showError(e instanceof Error?new Error(t(e.message)):e);}}
+function edit(operation:(layout:Layout)=>void,pinned?:Block){if(!editLayout)return;try{animateGrid(()=>{editLayout=change(editLayout!,l=>{operation(l);compact(l,pinned);});renderGrid();});}catch(e){showError(e instanceof Error?new Error(t(e.message)):e);}}
 function openBlock(block:Block){if(editLayout||cardDrag.session||cardDrag.saving)return;if(block==='utils')selectedTool=null;if(block==='generateUI')toolGenerator='ui';if(block==='generateSicilia')toolGenerator='module';if(block==='generateGalera')toolGenerator='feature';if(block==='ci'&&expanded!=='ci'&&ciSummaries()[0])ciView.select(ciSummaries()[0]);animateGrid(()=>{expanded=expanded===block?null:block;catalogOpen=false;renderGrid();});scheduleWorkspace();}
 function beginEdit(){if(cardDrag.session||cardDrag.saving)return;for(const view of blockNodes.values())view.editor.dataset.layout='';layoutOrigin=structuredClone(savedLayout);editLayout=structuredClone(savedLayout);expanded=null;catalogOpen=false;render();}
 async function finishEdit(){if(!editLayout)return;await perform(async()=>{const layout=await tool('panel_save_layout',{layout:editLayout,expectedRevision:layoutOrigin!.revision});savedLayout=validate(layout);editLayout=null;layoutOrigin=null;scheduleWorkspace();});}
 function cancelEdit(){cardDrag.cancel();editLayout=null;layoutOrigin=null;render();}
 function editMenu(block:Block){const host=element('details','','placement-menu'),summary=element('summary',t('layout.options'));host.append(summary);const list=element('div','','placement-actions');
  const size=currentLayout().rows.find(r=>r.slots.includes(block))!.slots.length;
- list.append(button(t(size===1?'layout.mini':'layout.full'),()=>edit(l=>resize(l,block,size===1?'mini':'full'))));
+ list.append(button(t(size===1?'layout.mini':'layout.full'),()=>edit(l=>resize(l,block,size===1?'mini':'full'),block)));
  const rows=currentLayout().rows,index=rows.findIndex(r=>r.slots.includes(block));
- list.append(button(t('layout.up'),()=>edit(l=>move(l,block,l.rows[index-1]?.id)),index===0),button(t('layout.down'),()=>edit(l=>move(l,block,l.rows[index+2]?.id)),index===rows.length-1));
+ list.append(button(t('layout.up'),()=>edit(l=>move(l,block,l.rows[index-1]?.id),block),index===0),button(t('layout.down'),()=>edit(l=>move(l,block,l.rows[index+2]?.id),block),index===rows.length-1));
  const replacement=element('select');replacement.setAttribute('aria-label',t('layout.replace'));replacement.append(new Option(t('layout.replace'),''));for(const kind of availableBlocks().filter(b=>!currentLayout().rows.some(r=>r.slots.includes(b))))replacement.append(new Option(blockTitle(kind),kind));replacement.onchange=()=>{if(replacement.value)edit(l=>replace(l,block,replacement.value as Block));};list.append(replacement);
- if(size===2){const join=element('select');join.setAttribute('aria-label',t('layout.join'));join.append(new Option(t('layout.join'),''));for(const row of rows.filter(r=>r.slots.length===2&&r.slots.some(x=>x===null)&&!r.slots.includes(block))){join.append(new Option(row.slots.map(b=>b?blockTitle(b):t('layout.empty')).join(' · '),row.id));}join.onchange=()=>edit(l=>move(l,block,join.value,rows.find(r=>r.id===join.value)!.slots.indexOf(null)));list.append(join);}
+ if(size===2){const join=element('select');join.setAttribute('aria-label',t('layout.join'));join.append(new Option(t('layout.join'),''));for(const row of rows.filter(r=>r.slots.length===2&&r.slots.some(x=>x===null)&&!r.slots.includes(block))){join.append(new Option(row.slots.map(b=>b?blockTitle(b):t('layout.empty')).join(' · '),row.id));}join.onchange=()=>edit(l=>move(l,block,join.value,rows.find(r=>r.id===join.value)!.slots.indexOf(null)),block);list.append(join);}
  list.append(button(t('layout.remove'),()=>edit(l=>remove(l,block))));host.append(list);return host;
 }
 function blockStatus(block:Block){
@@ -154,24 +172,31 @@ function renderGrid(){
  const layout=currentLayout(),rows=structuredClone(layout.rows).map(row=>({...row,slots:row.slots.map(block=>block==='simulators'&&state?.simulator?.visible!==true?null:block)})).filter(row=>row.slots.some(Boolean));gridHost.dataset.layoutRevision=String(layout.revision);if(visualExpanded&&!rows.some(r=>r.slots.includes(visualExpanded)))rows.unshift({id:'transient',slots:[visualExpanded]});
  const narrow=isCompact();gridHost.classList.toggle('single-column',narrow);const visualRow=(index:number,slot=0)=>narrow?rows.slice(0,index).reduce((total,row)=>total+row.slots.length,0)+slot+1:index+1;
  gridHost.style.gridTemplateRows=rows.flatMap(row=>Array(narrow?row.slots.length:1).fill('auto')).join(' ')+(editLayout||cardDrag.session?.gesture.phase==='dragging'?' 32px':'');
- for(const block of catalog){let view=blockNodes.get(block);if(!view){const node=element('section','','card panel-block');node.dataset.block=block;const title=button('',()=>openBlock(block),false,'block-title');const icon=element('span','','block-icon');icon.setAttribute('aria-hidden','true');icon.innerHTML=blockIcon(block);title.append(icon,element('span',blockTitle(block),'block-name'));node.onpointerdown=event=>cardDrag.start(event,block);const summary=element('div','','block-summary');const content=element('div','','block-content'),editor=element('div','','block-editor');node.append(title,summary,editor,content);view={node,title,summary,content,editor};node.onclick=event=>{if(!editLayout&&!cardDrag.session&&!cardDrag.saving&&!isBlockControl(event.target as HTMLElement))openBlock(block);};blockNodes.set(block,view);gridHost.append(node);}
+ for(const block of [...new Set([...catalog,...(state?.customPanels??[]).map(p=>p.block),...(state?.serviceTools??[]).map(p=>p.block),...blockNodes.keys()])]){let view=blockNodes.get(block);if(!view){const node=element('section','','card panel-block');node.dataset.block=block;const title=button('',()=>openBlock(block),false,'block-title');const icon=element('span','','block-icon');icon.setAttribute('aria-hidden','true');icon.innerHTML=blockIcon(block);title.append(icon,element('span',blockTitle(block),'block-name'));node.onpointerdown=event=>cardDrag.start(event,block);const summary=element('div','','block-summary');const content=element('div','','block-content'),editor=element('div','','block-editor');const caption=button('',()=>openBlock(block),false,'retro-caption');caption.dataset.caption='maximize';node.append(title,caption,summary,editor,content);view={node,title,caption,summary,content,editor};node.onclick=event=>{if(!editLayout&&!cardDrag.session&&!cardDrag.saving&&!isBlockControl(event.target as HTMLElement))openBlock(block);};blockNodes.set(block,view);gridHost.append(node);}
   const rowIndex=rows.findIndex(r=>r.slots.includes(block)),row=rows[rowIndex];const peer=!!row&&!!visualExpanded&&row.slots.includes(visualExpanded)&&visualExpanded!==block;
-  if(block==='simulators')simulatorPanel.setVisible(rowIndex>=0&&!peer&&visualExpanded===block&&!editLayout);view.node.hidden=rowIndex<0||peer;view.node.inert=peer||rowIndex<0;view.node.setAttribute('aria-hidden',String(peer||rowIndex<0));if(!row)continue;
+  if(block==='simulators')simulatorPanel.setVisible(rowIndex>=0&&!peer&&(visualExpanded===block||compactSimulatorWatching)&&!editLayout);view.node.hidden=rowIndex<0||peer;view.node.inert=peer||rowIndex<0;view.node.setAttribute('aria-hidden',String(peer||rowIndex<0));if(!row)continue;
   const isExpanded=visualExpanded===block&&!editLayout;const showFullBootstrap=block==='bootstrap'&&row.slots.length===1&&!editLayout;view.node.style.gridRow=isExpanded&&narrow&&row.slots.length===2?`${visualRow(rowIndex)} / span 2`:String(visualRow(rowIndex,row.slots.indexOf(block)));view.node.style.gridColumn=narrow||isExpanded||row.slots.length===1?'1 / -1':String(row.slots.indexOf(block)+1);view.node.classList.toggle('full-bootstrap',showFullBootstrap);view.node.style.setProperty('--block-accent',blockAccent(block));view.node.classList.toggle('expanded',isExpanded);view.node.classList.toggle('mini',row.slots.length===2&&!isExpanded);
-  if(block==='simulators'){simulatorPanel.setCardHeader(isExpanded?view.title:null,()=>openBlock(block));}
-  view.title.setAttribute('aria-expanded',String(isExpanded));view.title.disabled=!!editLayout;view.content.hidden=block==='bootstrap'?!!editLayout:!isExpanded&&!showFullBootstrap;view.content.inert=view.content.hidden;view.summary.hidden=block==='bootstrap'||isExpanded||showFullBootstrap||!!editLayout;view.editor.hidden=!editLayout;
-  if(block==='builds'){buildPanel.update(view.summary,row.slots.length===1&&!narrow?'full':'mini',state?.context??null,(state?.builds??[]) as BuildRecord[],!!editLayout);
+  if(block==='simulators'){view.node.classList.toggle('compact-simulator-view',compactSimulatorWatching&&!isExpanded);simulatorPanel.setCardHeader(isExpanded?view.title:null,()=>openBlock(block));}
+  view.title.querySelector('.block-name')!.textContent=isRetro(panelAppearance)&&['bootstrap','builds'].includes(block)?t('appearance.title.'+block):blockTitle(block);
+  view.caption.dataset.caption=isExpanded?'restore':'maximize';view.caption.setAttribute('aria-label',t(isExpanded?'appearance.restore':'appearance.expand')+' '+blockTitle(block));view.caption.disabled=!!editLayout;view.title.setAttribute('aria-expanded',String(isExpanded));view.title.disabled=!!editLayout;const showCompactSimulator=block==='simulators'&&compactSimulatorWatching&&!editLayout;
+  view.content.hidden=block==='bootstrap'?!!editLayout:!isExpanded&&!showFullBootstrap&&!showCompactSimulator;view.content.inert=view.content.hidden;view.summary.hidden=block==='bootstrap'||isExpanded||showFullBootstrap||!!editLayout;view.editor.hidden=!editLayout;
+  if(block.startsWith('profile:')){view.content.hidden=true;view.content.inert=true;view.summary.hidden=!!editLayout;if(state?.serviceTools?.some(p=>p.block===block))renderServiceTool(block,view.summary);else renderCustomPanel(block,view.summary);
+  }else if(block==='builds'){if(!isExpanded)buildPanel.update(view.summary,row.slots.length===1&&!narrow?'full':'mini',state?.context??null,(state?.builds??[]) as BuildRecord[],!!editLayout);
+  }else if(block==='workItem'){
+   view.title.hidden=!editLayout&&!isRetro(panelAppearance);view.summary.hidden=!!editLayout;view.content.hidden=true;view.content.inert=true;workPanel.update(view.summary,row.slots.length===1&&!narrow,state?.work,state?.context??null);
   }else if(block==='ci'){
    const summaries=ciSummaries();
    ciView.update(summaries,state?.context?.checkoutId,isExpanded);
    renderCompactRuns(view.summary,summaries.slice(0,row.slots.length===1&&!narrow?2:1),t,openCI);
    let project=view.title.querySelector<HTMLElement>('.ci-project');if(!project){project=element('span','','ci-project');view.title.append(project);}
+   let refreshCI=view.node.querySelector<HTMLButtonElement>(':scope > .retro-ci-refresh');if(!refreshCI){refreshCI=button(t('refresh'),()=>void refresh(true),false,'retro-ci-refresh');view.node.append(refreshCI);}refreshCI.hidden=isExpanded||!!editLayout;refreshCI.disabled=busy;
    const checkout=state?.context?.checkoutId??summaries[0]?.checkout;
    project.hidden=!checkout;if(checkout){middleText(project,'· '+checkout.split('/').filter(Boolean).at(-1));project.title=checkout;}
   }else if(block==='utils'){renderToolsCompact(view.summary,row.slots.length===1&&!narrow);
+  }else if(block==='simulators'){renderSimulatorCompact(view.summary);
   }else{view.summary.textContent=blockStatus(block);view.summary.title=view.summary.textContent;}view.title.title=blockTitle(block)+'\n'+t('layout.drag.hint');
-  if(editLayout&&view.editor.dataset.layout!==stableJSON(layout)){view.editor.dataset.layout=stableJSON(layout);const grip=button(t('layout.drag'),()=>{},false,'drag-handle');grip.setAttribute('aria-label',t('layout.drag')+' '+blockTitle(block));grip.onkeydown=event=>{if(event.key==='ArrowUp'||event.key==='ArrowDown'){event.preventDefault();const index=editLayout!.rows.findIndex(r=>r.slots.includes(block));if(event.key==='ArrowUp'&&index>0)edit(l=>move(l,block,l.rows[index-1].id));if(event.key==='ArrowDown')edit(l=>move(l,block,l.rows[index+2]?.id));}};view.editor.replaceChildren(grip,editMenu(block));}
-  if(block==='bootstrap'){ensureBootstrapContent(view.content);updateBootstrap(isExpanded? 'expanded':row.slots.length===1?'full':'mini',!!editLayout||view.node.hidden);}else if(isExpanded||showFullBootstrap)ensureBlockContent(block,view.content);
+  if(editLayout&&view.editor.dataset.layout!==stableJSON(layout)){view.editor.dataset.layout=stableJSON(layout);const grip=button(t('layout.drag'),()=>{},false,'drag-handle');grip.setAttribute('aria-label',t('layout.drag')+' '+blockTitle(block));grip.onkeydown=event=>{if(event.key==='ArrowUp'||event.key==='ArrowDown'){event.preventDefault();const index=editLayout!.rows.findIndex(r=>r.slots.includes(block));if(event.key==='ArrowUp'&&index>0)edit(l=>move(l,block,l.rows[index-1].id));if(event.key==='ArrowDown')edit(l=>move(l,block,l.rows[index+2]?.id),block);}};view.editor.replaceChildren(grip,editMenu(block));}
+  if(block==='bootstrap'){ensureBootstrapContent(view.content);updateBootstrap(isExpanded? 'expanded':row.slots.length===1?'full':'mini',!!editLayout||view.node.hidden);}else if(isExpanded||showFullBootstrap||showCompactSimulator)ensureBlockContent(block,view.content);
  }
  const hasTargets=!!editLayout||cardDrag.session?.gesture.phase==='dragging';const placeholders=hasTargets?stableJSON(layout)+narrow+!!editLayout:'';if(gridHost.dataset.placeholders!==placeholders){gridHost.dataset.placeholders=placeholders;gridHost.querySelectorAll('.empty-slot,.grid-end').forEach(n=>n.remove());
  if(hasTargets){for(const [index,row]of rows.entries())if(row.slots.length===2)for(const slot of [0,1])if(row.slots[slot]===null){const empty=element('div','','empty-slot');empty.dataset.row=row.id;empty.dataset.slot=String(slot);empty.style.gridRow=String(visualRow(index,slot));empty.style.gridColumn=narrow?'1 / -1':String(slot+1);empty.classList.toggle('drag-slot',!editLayout);const choose=element('select');choose.setAttribute('aria-label',t('layout.add'));choose.append(new Option(t('layout.add'),''));for(const kind of availableBlocks().filter(b=>!layout.rows.some(r=>r.slots.includes(b))))choose.append(new Option(blockTitle(kind),kind));choose.onchange=()=>edit(l=>{add(l,choose.value as Block,'mini');move(l,choose.value as Block,row.id,slot);});if(editLayout)empty.append(choose);gridHost.append(empty);}
@@ -185,7 +210,7 @@ window.addEventListener('keydown',()=>{keyboardMotion=true;gridHost.classList.ad
 /** Current visual positions retarget an unfinished transition; keyboard and Reduce Motion change instantly. */
 function animateGrid(mutation:()=>void){
  const before=new Map(Array.from(blockNodes,([kind,v])=>[kind,v.node.hidden?null:v.node.getBoundingClientRect()]));mutation();
- if(keyboardMotion||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+ if(isRetro(panelAppearance)||keyboardMotion||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
  for(const [kind,v]of blockNodes){const old=before.get(kind);if(!old||v.node.hidden||v.node.classList.contains('dragging'))continue;const next=v.node.getBoundingClientRect(),dx=Math.abs(old.width-next.width)>next.width*.1?0:old.x-next.x,dy=old.y-next.y;if(Math.abs(dx)+Math.abs(dy)<1)continue;
   v.node.style.transition='none';v.node.style.transform=`translate(${dx}px,${dy}px)`;v.node.getBoundingClientRect();v.node.style.transition='';v.node.style.transform='';
  }
@@ -198,7 +223,7 @@ const textProbe=element('span');textProbe.setAttribute('aria-hidden','true');tex
 new ResizeObserver(()=>{const textHeight=textProbe.getBoundingClientRect().height;document.documentElement.style.setProperty('--bootstrap-text-scale',String(Math.max(1,textHeight/13)));const next=textHeight>18;if(next!==largeText){largeText=next;document.documentElement.dataset.largeText=String(next);cardDrag.cancel();renderGrid();}}).observe(textProbe);
 const cardDrag=new CardDragController({
  grid:gridHost,toolbar,nodes:blockNodes,getLayout:currentLayout,editing:()=>!!editLayout,blocked:()=>busy,
- render:renderGrid,animate:animateGrid,label:size=>t('layout.drag.'+size),
+ render:renderGrid,animate:animateGrid,
  commit:async(next,origin,editing)=>{
   if(editing){editLayout=next;return;}
   savedLayout=next;
@@ -229,7 +254,7 @@ function diagnosticEditor(){
 }
 function ensureBootstrapContent(host:HTMLElement){
  if(bootstrapView){if(bootstrapView.host!==host){host.append(...Array.from(bootstrapView.host.children));bootstrapView.host=host;}return;}
- host.classList.add('bootstrap-content');const controls=element('div','','bootstrap-controls'),launchers=element('div','','bootstrap-launchers');
+ host.classList.add('bootstrap-content');const projectCaption=element('p','','retro-bootstrap-project');const controls=element('div','','bootstrap-controls'),launchers=element('div','','bootstrap-launchers');
  const buttons=(['ios','tvos'] as const).map(platform=>button(platform==='ios'?'iOS':'tvOS',()=>void launchBootstrap(platform),false,'primary'));
  for(const [i,b]of buttons.entries()){b.dataset.platform=i===0?'ios':'tvos';b.title=t(i===0?'bootstrap_ios':'bootstrap_tvos');const icon=element('span','','bootstrap-platform-icon');icon.setAttribute('aria-hidden','true');icon.innerHTML=i===0?'<svg viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5"/><path d="M7 3h2M7.5 12.5h1"/></svg>':'<svg viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/><path d="M5 14h6M8 11.5V14"/></svg>';b.prepend(icon);launchers.append(b);}
  const platform=element('span','','bootstrap-platform'),notice=element('p','','bootstrap-notice'),stages=element('div','','bootstrap-stages'),description=element('p',t('bootstrap.preparation.description'),'bootstrap-description');
@@ -238,7 +263,7 @@ function ensureBootstrapContent(host:HTMLElement){
  notice.title=t('bootstrap.xcode.notice');
  const noticeIcon=element('span','','bootstrap-notice-icon');noticeIcon.setAttribute('aria-hidden','true');noticeIcon.innerHTML='<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 4.5v4M8 11h.01"/></svg>';notice.append(noticeIcon,element('span',t('bootstrap.xcode.launch.notice')));
  const result=element('div','','bootstrap-result'),footer=element('div','','bootstrap-details-footer'),technical=element('details','','bootstrap-technical');technical.append(element('summary',t('task.technical')),element('p','','mono'));
- result.append(stateLabel,time,progress);controls.append(launchers,platform,actions,result,notice,stages,failure);
+ result.append(stateLabel,time,progress);controls.append(projectCaption,launchers,platform,actions,result,notice,stages,failure);
  const preparation=element('details','','bootstrap-preparation-reference');preparation.append(element('summary',t('bootstrap.preparation.title')),description);
  const region=element('div','','bootstrap-terminal-region'),overlay=button(t('bootstrap.error.agent'),()=>{const task=currentBootstrap();if(task){if(expanded!=='bootstrap')openBlock('bootstrap');void analyze(task.id,true);}},false,'bootstrap-agent-overlay');
  const idle=element('div','','bootstrap-terminal-idle');new TerminalSelection(idle);bootstrapIdlePlaceholder=new BootstrapTerminalPlaceholder(bootstrapPlaceholderLabels);idle.append(bootstrapIdlePlaceholder.host);region.append(idle,overlay);
@@ -255,12 +280,14 @@ function currentBootstrap(){if(!state?.context)return undefined;if(bootstrapFail
 function bootstrapDarkTheme(){const theme=document.documentElement.dataset.theme;return theme==='dark'||theme!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches;}
 function updateBootstrap(mode=bootstrapMode,hidden=bootstrapHidden){
  bootstrapMode=mode;bootstrapHidden=hidden;const view=bootstrapView;if(!view)return;
+ const caption=view.controls.querySelector<HTMLElement>('.retro-bootstrap-project')!;caption.textContent=(state?.context?.checkoutId.split('/').filter(Boolean).at(-1)??t('noCheckout'))+' · '+t('appearance.preparation');
  const task=currentBootstrap(),live=!!task&&['queued','running'].includes(task.status),active=live||bootstrapLaunching;
  for(const b of view.buttons)b.disabled=busy||stale||!state?.context||!uiAction('bootstrap')||active;
  view.launchers.hidden=active;view.platform.hidden=!active;view.platform.textContent=(bootstrapLaunching?bootstrapLaunchPlatform:task?.bootstrap?.platform)==='tvos'?'tvOS':'iOS';
  view.notice.hidden=active||mode==='expanded';view.description.hidden=mode!=='expanded';view.stages.hidden=mode!=='expanded'||!live||task?.status!=='running';
  view.footer.hidden=mode!=='expanded';view.technical.hidden=!task;
  view.technical.querySelector('p')!.textContent=task?[task.context.checkoutId,task.context.branch,task.context.sha,task.context.xcode].join('\n'):'';
+ caption.hidden=!!task;
  const actionsHost=mode==='expanded'?view.footer:view.controls;
  if(view.launchers.parentElement!==actionsHost){if(mode==='expanded')actionsHost.prepend(view.launchers);else actionsHost.prepend(view.launchers);}
  if(view.actions.parentElement!==actionsHost){if(mode==='expanded')actionsHost.prepend(view.actions);else actionsHost.insertBefore(view.actions,view.result);}
@@ -322,17 +349,38 @@ function taskDescription(task:LocalTask){return[t(task.status),elapsed(task)].fi
 async function saveToolFavorites(favorites:ToolID[]){await perform(async()=>{try{toolsPreferences=validateFavorites(await tool('panel_save_tools_preferences',{favorites,expectedRevision:toolsPreferences.revision}));if(!favorites.length)notice=t('tools.favorites.restored');await refresh();}catch(error){await refresh();if(error instanceof ToolFailure&&error.code==='toolsConflict')throw new Error(t('tools.favorites.conflict'));throw error;}});}
 function toggleTool(id:ToolID){const current=toolsPreferences.favorites;void saveToolFavorites(current.includes(id)?current.filter(value=>value!==id):[...current,id]);}
 function moveTool(id:ToolID,offset:number){const favorites=[...toolsPreferences.favorites],index=favorites.indexOf(id);if(index<0||index+offset<0||index+offset>=favorites.length)return;[favorites[index],favorites[index+offset]]=[favorites[index+offset],favorites[index]];void saveToolFavorites(favorites);}
+const compactToolRows=new Map<ToolID,{row:HTMLButtonElement;wrapper:HTMLElement;run:HTMLButtonElement}>();
 function renderToolsCompact(host:HTMLElement,full:boolean){
  host.classList.add('tools-compact');host.classList.toggle('tools-wide',full);
  const ids=new Set(toolsPreferences.favorites);for(const child of Array.from(host.children))if(!ids.has((child as HTMLElement).dataset.tool as ToolID))child.remove();
  for(const [index,id]of toolsPreferences.favorites.entries()){
-  let row=host.querySelector<HTMLButtonElement>('[data-tool="'+id+'"]');if(!row){row=button('',()=>openProjectTool(id),false,'tools-favorite');row.dataset.tool=id;row.append(element('span',['generation','localization','format'].includes(id)?'':toolSymbols[id],'tools-icon'),element('span',t('tool.name.'+id),'tools-name'),element('span','','tools-annotation'),element('span','','tools-state'));}
+  let cached=compactToolRows.get(id);if(!cached){const wrapper=element('div','','tools-compact-row');wrapper.dataset.tool=id;const row=button('',()=>openProjectTool(id),false,'tools-favorite');row.dataset.tool=id;row.append(element('span',['generation','localization','format'].includes(id)?'':toolSymbols[id],'tools-icon'),element('span',t('tool.name.'+id),'tools-name'),element('span','','tools-annotation'),element('span','','tools-state'));const run=button(t('run'),()=>void runCompactTool(id),false,'retro-tool-run');run.dataset.compactRun=id;cached={row,wrapper,run};compactToolRows.set(id,cached);}
+  const {row,wrapper,run}=cached,focused=document.activeElement as HTMLElement;
+  if(isRetro(panelAppearance)){if(row.parentElement!==wrapper)wrapper.prepend(row);if(run.parentElement!==wrapper)wrapper.append(run);}else if(row.parentElement===wrapper){if(wrapper.parentElement===host)host.insertBefore(row,wrapper);else host.append(row);wrapper.remove();}
+
   const task=currentToolTask(id),description=t('tools.description.'+id);
   const annotation=row.querySelector<HTMLElement>('.tools-annotation')!;annotation.textContent=full?(task?taskDescription(task):description):'';annotation.classList.toggle('tools-task-annotation',!!task);
   const badge=row.querySelector<HTMLElement>('.tools-state')!;badge.textContent=task?statusSymbols[task.status]??'':'';badge.dataset.status=task?.status??'';
   row.title=[t('tool.name.'+id),description,task?taskDescription(task):''].filter(Boolean).join('\n');row.setAttribute('aria-label',row.title);
-  if(host.children[index]!==row)host.insertBefore(row,host.children[index]??null);
+  const role=id==='generation'?generatorRole():toolRoles[id][0],action=uiAction(role);
+  const configuration=isRetro(panelAppearance)&&action?toolConfiguration(action):null,values=action?{...Object.fromEntries(action.parameters.map(p=>[p.id,p.defaultValue])),...actionValues.get(action.id)}:{};
+  const valid=!!action&&action.parameters.every(p=>!p.required||!!values[p.id])&&!!configuration&&!configuration.missing.length&&(action.presentation!=='generator'||!!previews.get(action.id)?.plan);
+  run.textContent=toolBusy(id)?t('stop'):t('run');run.disabled=busy||stale||!!editLayout||!!state?.checkoutLocked||(toolBusy(id)?!task?.canCancel:!valid);run.title=!valid&&!toolBusy(id)?t('tools.compact.needsParameters'):'';
+  const presented=isRetro(panelAppearance)?wrapper:row;if(host.children[index]!==presented)host.insertBefore(presented,host.children[index]??null);if(focused===row&&row.isConnected)row.focus({preventScroll:true});
  }
+}
+/** Compact actions use the same reviewed parameters and native task admission as Extended. */
+async function runCompactTool(id:ToolID){
+ const task=currentToolTask(id);if(toolBusy(id)){if(task?.canCancel)await perform(async()=>{await tool('cancel_local_task',{taskID:task.id});await refresh();});return;}
+ const action=uiAction(id==='generation'?generatorRole():toolRoles[id][0]);if(!action)return;
+ if(!actionValues.has(action.id))actionValues.set(action.id,Object.fromEntries(action.parameters.map(p=>[p.id,p.defaultValue])));
+ if(action.presentation==='generator')await generateAction(action);else await runAction(action,true);
+}
+/** Observe and disconnect the retained viewer directly; compact watching never requires Extended. */
+function renderSimulatorCompact(host:HTMLElement){
+ if(!host.querySelector('.retro-sim-actions')){host.replaceChildren(element('strong','','retro-sim-name'));const actions=element('div','','retro-sim-actions'),watch=button(t('appearance.watch'),()=>{compactSimulatorWatching=true;renderGrid();},false,'retro-sim-watch'),stop=button(t('stop'),()=>{compactSimulatorWatching=false;void simulatorPanel.disconnectViewer().finally(()=>renderGrid());},false,'retro-sim-stop');actions.append(watch,stop);host.append(actions);}
+ host.querySelector('.retro-sim-name')!.textContent=simulatorPanel.summary();
+ const controls=simulatorPanel.compactState();host.querySelector<HTMLButtonElement>('.retro-sim-watch')!.disabled=!!editLayout||busy||compactSimulatorWatching;host.querySelector<HTMLButtonElement>('.retro-sim-stop')!.disabled=!!editLayout||controls.blocked||!controls.connected;
 }
 function ensureToolsContent(host:HTMLElement){
  if(selectedTool){ensureToolForm(selectedTool,host,true);return;}
@@ -413,26 +461,28 @@ function ensureActionForm(action:Action,block:Block,host:HTMLElement){
  form={signature,node:box,update};formNodes.set(action.id,form);host.replaceChildren(box);update();
 }
 async function configureAction(action:Action,update:()=>void){await perform(async()=>{const result=await tool('get_action_configuration',{actionID:action.id});if(stableJSON(result.context)!==stableJSON(state?.context))throw new Error(t('stale'));remoteFields.set(action.id,result.fields);const values=actionValues.get(action.id)!;for(const id of applyRemoteDefaults(action.parameters,values,result.fields)){const input=formNodes.get(action.id)?.node.querySelector<HTMLInputElement|HTMLSelectElement>('#field-'+action.id+'-'+id);if(input){input.value=values[id];if(input instanceof HTMLInputElement&&input.type==='checkbox')input.checked=values[id]==='true';}}update();scheduleWorkspace();});}
-async function delegate(action:Action){await perform(async()=>{const parameters=actionValues.get(action.id)??{};let message=t('delegate.prompt')+'\n'+stableJSON({actionID:action.id,parameters,context:state?.context,operation:action.presentation==='generator'?'preview_generator → get_generator_preview → generate_files (expectedDigest)':action.remote?'run_remote_action':'run_local_action'});if(!preview)await extensions.message!.send({role:'user',content:[{type:'text',text:message}]});else fixtureSentMessage=message;notice=t('sent');});}
+async function delegate(action:Action){await perform(async()=>{const parameters=actionValues.get(action.id)??{};let message=t('delegate.prompt')+'\n'+stableJSON({actionID:action.id,parameters,context:state?.context,operation:action.presentation==='generator'?'preview_generator → get_generator_preview → generate_files (expectedDigest)':action.remote?'run_remote_action':'run_local_action'});if(!preview)await transport.sendMessage(message);else fixtureSentMessage=message;notice=t('sent');});}
 async function previewGenerator(action:Action){await perform(async()=>{const parameters=actionValues.get(action.id)!;const fingerprint=stableJSON([parameters,state?.context]),key='preview:'+action.id+':'+fingerprint;const result=await tool('panel_preview_generator',{actionID:action.id,parameters,context:state?.context,requestID:requestID(key)});pendingIDs.delete(key);previews.set(action.id,{taskID:result.id,fingerprint});if(!toolForAction(action))selection={type:'task',id:result.id};await refresh();});}
 async function generateAction(action:Action){const family=toolForAction(action),current=family?currentToolTask(family):undefined;if(family&&toolBusy(family))return;await perform(async()=>{const reviewed=previews.get(action.id);if(!reviewed?.plan||reviewed.fingerprint!==stableJSON([actionValues.get(action.id),state?.context]))throw new Error(t('generator.review'));const parameters={...actionValues.get(action.id),expectedDigest:reviewed.plan.digest},key=stableJSON([action.id,parameters,state?.context]);try{const result=await tool('panel_generate',{actionID:action.id,parameters,context:state?.context,requestID:requestID(key)});pendingIDs.delete(key);if(!toolForAction(action))selection={type:'task',id:result.id};previews.delete(action.id);await refresh();}catch(e){releaseRejectedRequest(key,e);throw e;}});}
 let checkingPreviews=false;
 async function updatePreviews(){if(checkingPreviews)return;checkingPreviews=true;try{for(const [id,reviewed]of previews){if(reviewed.plan)continue;const task=state?.tasks.find(t=>t.id===reviewed.taskID);if(task?.status==='succeeded'){const result=await tool('panel_get_preview',{taskID:reviewed.taskID});if(previews.get(id)===reviewed&&result.plan){reviewed.plan=result.plan;formNodes.get(id)?.update();}}else if(task&&['failed','cancelled','interrupted'].includes(task.status)){previews.delete(id);formNodes.get(id)?.update();}}}finally{checkingPreviews=false;}}
-async function setup(operation:string){await perform(async()=>{await tool('panel_setup',{operation});await refresh(true);});}
+async function setup(operation:string){if(operation==='appearance'){chrome.showAppearance(appearancePicker.host);appearancePicker.update(appearanceState.snapshot);return;}await perform(async()=>{await tool('panel_setup',{operation});await refresh(true);});}
 function render(){root.setAttribute('aria-busy',String(busy));banner.textContent=[preview?t('preview'):'',error,stale?t('stale'):'',notice].filter(Boolean).join(' · ');banner.className=error||stale?'error':'banner';if(!state){contextLabel.textContent=t('loading');workStatus.textContent='';return;}installWorkspace(state);
  const active=[...state.tasks.map(t=>({...t,type:'task' as const})),...(state.builds??[]).map(item=>({...item,title:t((item as BuildRecord).actionKey??'operation.'+item.parameters.operation),type:'build' as const}))].find(t=>['running','preparing'].includes(t.status));
  const project=state.context?.checkoutId.split('/').pop()??t('noCheckout'),xcode=state.context?.xcode.split('/').find(p=>p.endsWith('.app'))??t('build.chooseXcode');const contextText=[project,state.context?.branch,xcode].filter(Boolean).join(' · ');
  middleText(contextLabel,contextText);contextLabel.title=contextText;contextLabel.disabled=busy||!!state.checkoutLocked;branchSwitchPanel.update(state,busy);workStatus.textContent=active?t(active.needsInput?'notification.input':active.status):state.progress??t('ready');
  const records=[...state.tasks.map(item=>({...item,type:'task' as const})),...(state.builds??[]).map(item=>({...item,type:'build' as const})),...state.runs.map(item=>({...item,type:'run' as const,title:item.branch}))].sort((a,b)=>b.createdAt.localeCompare(a.createdAt));
  const activity=records.find(item=>'needsInput'in item&&item.needsInput)??records.find(item=>['running','preparing','queued','triggering','pending'].includes(item.status))??(records[0]&&['failed','interrupted','unknown','submissionFailed'].includes(records[0].status)?records[0]:null);
- chrome.update({tiled:panelAppearance==='tileGrid',context:state.context,busy,locked:!!state.checkoutLocked,stale,editing:!!editLayout,rebase:!!state.branchRebase,catalogOpen,historyOpen,activity,progress:state.progress,needsBinding:state.needsBinding});
+ chrome.update({delivery:state.delivery,tiled:panelAppearance!=='legacy',retro:isRetro(panelAppearance),context:state.context,busy,locked:!!state.checkoutLocked,stale,editing:!!editLayout,rebase:!!state.branchRebase,catalogOpen,historyOpen,activity,progress:state.progress,needsBinding:state.needsBinding});
  toolbar.classList.toggle('layout-editing',!!editLayout);
- if(contextDetail.dataset.text!==stableJSON(state.context)+settingsOpen){contextDetail.dataset.text=stableJSON(state.context)+settingsOpen;contextDetail.replaceChildren(element('summary',t('context.details')),element('p',[state.context?.checkoutId,state.context?.sha,state.context?.xcode,state.context?.profileRevision].filter(Boolean).join('\n'),'mono'));if(state.needsBinding)contextDetail.append(button(t('binding.request'),()=>void perform(async()=>{if(!preview)await extensions.message!.send({role:'user',content:[{type:'text',text:t('binding.prompt')}]});notice=t('sent');})));if(settingsOpen||!state.context||!state.actions.length){const row=element('div','','row');for(const operation of ['profile','xcode','target','credentials','notifications','appearance'])row.append(button(t('setup.'+operation),()=>void setup(operation),busy||!['profile','notifications','appearance'].includes(operation)&&!state.context));row.append(button(t('branch.local'),()=>void loadBranches(),busy||!state.context));contextDetail.append(row);contextDetail.open=true;}}
+ legacyAbout.update(state.delivery);
+ const contextSignature=stableJSON([state.context,state.delivery,settingsOpen]);
+ if(contextDetail.dataset.text!==contextSignature){contextDetail.dataset.text=contextSignature;contextDetail.replaceChildren(element('summary',t('context.details')),element('p',[state.context?.checkoutId,state.context?.sha,state.context?.xcode,state.context?.profileRevision].filter(Boolean).join('\n'),'mono'));if(state.needsBinding)contextDetail.append(button(t('binding.request'),()=>void perform(async()=>{if(!preview)await transport.sendMessage(t('binding.prompt'));notice=t('sent');})));if(settingsOpen||!state.context||!state.actions.length){const row=element('div','','row');for(const operation of ['profile','xcode','target','credentials','notifications','appearance'])row.append(button(t('setup.'+operation),()=>void setup(operation),operation!=='appearance'&&(busy||!['profile','notifications'].includes(operation)&&!state.context)));row.append(button(t('branch.local'),()=>void loadBranches(),busy||!state.context));contextDetail.append(row);if(settingsOpen)contextDetail.append(legacyAbout.host);contextDetail.open=true;}}
  const toolbarSignature=String(!!editLayout)+busy;if(toolbar.dataset.signature!==toolbarSignature){toolbar.dataset.signature=toolbarSignature;toolbar.replaceChildren(...(editLayout?[button(t('layout.add'),()=>{catalogOpen=!catalogOpen;renderCatalog();}),button(t('layout.reset'),()=>{editLayout=standard();renderGrid();}),button(t('layout.cancel'),cancelEdit),button(t('layout.done'),()=>void finishEdit(),busy,'primary')]:[button(t('newAction'),()=>{catalogOpen=!catalogOpen;renderCatalog();}),button(t('history'),()=>{historyOpen=!historyOpen;renderHistory();renderDetails();}),button(t('settings'),()=>{settingsOpen=!settingsOpen;render();}),button(t('layout.edit'),beginEdit)]));}
  renderCatalog();renderGrid();renderHistory();renderDetails();contextDetail.querySelectorAll<HTMLButtonElement>('[data-action=branch-switch]').forEach(button=>button.disabled=busy||!!state?.checkoutLocked||!button.parentElement?.querySelector('select')?.value);const waiting=state.queue?.filter(t=>t.context?.checkoutId!==state?.context?.checkoutId)??[];queueHost.textContent=waiting.length?t('queue.other')+' '+waiting.length:'';renderSimulatorRecovery();void updatePreviews();
 }
 async function switchBranch(branch:string){if(!branch||!state?.context||state.checkoutLocked||stale)return;await perform(async()=>{const key=stableJSON(['branch',branch,state?.context]);try{await tool('panel_switch_branch',{branch,context:state?.context,requestID:requestID(key)});pendingIDs.delete(key);await refresh();}catch(error){releaseRejectedRequest(key,error);throw error;}});}
-async function loadBranches(){if(!state?.context||state.checkoutLocked)return;const tiled=panelAppearance==='tileGrid';if(tiled&&!chrome.toggleBranches())return;await perform(async()=>{const context=stableJSON(state?.context),result=await tool('panel_branches');if(context!==stableJSON(state?.context))return;if(tiled){chrome.setBranches(result.branches);return;}contextDetail.querySelector('[data-branch-picker]')?.remove();const picker=element('div','','row');picker.dataset.branchPicker='';const select=element('select');select.setAttribute('aria-label',t('branch.local'));select.append(new Option(t('branch.local'),''),...result.branches.map((branch:string)=>new Option(branch,branch)));const change=button(t('branch.switch'),()=>void switchBranch(select.value),true,'quiet');change.dataset.action='branch-switch';select.onchange=()=>{change.disabled=busy||!select.value||!!state?.checkoutLocked;};picker.append(select,change);contextDetail.append(picker);contextDetail.open=true;});}
+async function loadBranches(){if(!state?.context||state.checkoutLocked)return;const tiled=panelAppearance!=='legacy';if(tiled&&!chrome.toggleBranches())return;await perform(async()=>{const context=stableJSON(state?.context),result=await tool('panel_branches');if(context!==stableJSON(state?.context))return;if(tiled){chrome.setBranches(result.branches);return;}contextDetail.querySelector('[data-branch-picker]')?.remove();const picker=element('div','','row');picker.dataset.branchPicker='';const select=element('select');select.setAttribute('aria-label',t('branch.local'));select.append(new Option(t('branch.local'),''),...result.branches.map((branch:string)=>new Option(branch,branch)));const change=button(t('branch.switch'),()=>void switchBranch(select.value),true,'quiet');change.dataset.action='branch-switch';select.onchange=()=>{change.disabled=busy||!select.value||!!state?.checkoutLocked;};picker.append(select,change);contextDetail.append(picker);contextDetail.open=true;});}
 function renderCatalog(){catalogHost.hidden=!catalogOpen;if(!catalogOpen)return;const signature=stableJSON([!!editLayout,currentLayout().rows,state?.actions.map(a=>a.id),state?.simulator?.visible]);if(catalogHost.dataset.signature===signature)return;catalogHost.dataset.signature=signature;catalogHost.replaceChildren(element('h2',t('catalog')));for(const block of availableBlocks()){if(editLayout&&editLayout.rows.some(r=>r.slots.includes(block)))continue;catalogHost.append(button(blockTitle(block),()=>{if(editLayout)edit(l=>add(l,block));else openBlock(block);},false,'tool-choice'));}}
 // MARK: - Inline Bootstrap history, with a terminal independent of the card
 const historyRows=new Map<string,HTMLButtonElement>();
@@ -519,7 +569,7 @@ function renderDetails(){const item=selection?.type==='task'?state?.tasks.find(t
 const simulatorPanel:SimulatorPanel=new SimulatorPanel(simulatorHost,tool,()=>({context:state?.context??null,simulator:state?.simulator,blocked:busy||!!state?.queue?.some(x=>['running','preparing'].includes(x.status)&&!simulatorPanel.ownsManualActivity(x.id))||!!state?.tasks.some(x=>['running','preparing'].includes(x.status))||!!state?.builds?.some(x=>['running','preparing'].includes(x.status))}),refresh);
 function updateSimulator(){simulatorPanel.update();}
 async function simulatorPrivateRelease(activityID:string){try{await tool('simulator_ui_release_unknown',{activityID});await refresh();}catch(error){showError(error);}}
-function availableBlocks(){return catalog.filter(block=>block!=='simulators'||state?.simulator?.visible===true);}
+function availableBlocks():Block[]{return [...catalog.filter(block=>block!=='simulators'||state?.simulator?.visible===true),...(state?.customPanels??[]).map(p=>p.block),...(state?.serviceTools??[]).map(p=>p.block)];}
 function renderSimulatorRecovery(){for(const activity of state?.simulator?.activities??[]){if(activity.status!=='unknown'||activity.queueReleased)continue;const row=element('div','','queue-recovery');row.append(element('span','Неизвестный результат команды симулятора · '+activity.id.slice(0,8)));const release=button('Проверить и восстановить очередь',()=>{if(release.dataset.confirm!=='true'){release.dataset.confirm='true';release.textContent='Xcode проверен — освободить очередь';return;}void simulatorPrivateRelease(activity.id);});row.append(release);queueHost.append(row);}}
 const fixtureSimulatorActions:Record<string,unknown>[]=[];
 const fixtureSimulatorInputEvents:Record<string,unknown>[]=[];
@@ -527,7 +577,7 @@ const fixtureContext:Context={checkoutId:'/private/tmp/MimicFixture',branch:'fea
 let fixtureBuildDraft:BuildDraft={operation:'build',backend:'cli',scheme:'Fixture',configuration:'Debug',destinationID:'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',testPlan:'',testIdentifiers:[],workspaceTab:''};
 let fixtureBuildTests:{id:string;target:string;className:string;name:string}[]|null=null;
 const fixtureBuildCalls:Record<string,unknown>[]=[];
-const fixtureState:State={appearance:new URL(location.href).searchParams.get('appearance')==='legacy'?'legacy':'tileGrid',interface:{version:1,bindings:[{role:'bootstrap',actionID:'prepare',fields:Object.fromEntries(['platform','device','match','full','dependencies','uiDependencies','setup'].map(x=>[x,x]))}]},context:fixtureContext,actions:[{id:'prepare',title:'Подготовка',presentation:'preparation',remote:false,parameters:[...['device','match','full','dependencies','uiDependencies','setup'].map(id=>({id,title:id,kind:'boolean',defaultValue:'true',required:true})),{id:'platform',title:'Платформа',kind:'platform',defaultValue:'ios',required:true}]}],tasks:[{id:'fixture-task',actionID:'prepare',bootstrap:{platform:'ios',phase:'failed',fraction:0},title:t('bootstrap_ios'),status:'failed',createdAt:new Date().toISOString(),context:fixtureContext,diagnosticAvailable:true,canCancel:false}],builds:[{id:'fixture-build',title:t('operation.build'),status:'failed',createdAt:new Date().toISOString(),context:fixtureContext,diagnosticAvailable:true,canCancel:false,tracking:'unavailable',source:'Terminal',phase:'build.phase.failed',parameters:{operation:'build',backend:'cli',scheme:'Fixture',configuration:'Debug',destinationID:'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',workspaceTab:''}}],runs:[],jenkinsConfigured:true,progress:t('failed')};
+const fixtureState:State={delivery:{native:{version:'1.5.0',build:'150'}},codexAppearance:{version:1,revision:0,selection:new URL(location.href).searchParams.get('appearance')??'tileGrid'},appearance:new URL(location.href).searchParams.get('appearance')==='legacy'?'legacy':'tileGrid',interface:{version:1,bindings:[{role:'bootstrap',actionID:'prepare',fields:Object.fromEntries(['platform','device','match','full','dependencies','uiDependencies','setup'].map(x=>[x,x]))}]},context:fixtureContext,actions:[{id:'prepare',title:'Подготовка',presentation:'preparation',remote:false,parameters:[...['device','match','full','dependencies','uiDependencies','setup'].map(id=>({id,title:id,kind:'boolean',defaultValue:'true',required:true})),{id:'platform',title:'Платформа',kind:'platform',defaultValue:'ios',required:true}]}],tasks:[{id:'fixture-task',actionID:'prepare',bootstrap:{platform:'ios',phase:'failed',fraction:0},title:t('bootstrap_ios'),status:'failed',createdAt:new Date().toISOString(),context:fixtureContext,diagnosticAvailable:true,canCancel:false}],builds:[{id:'fixture-build',title:t('operation.build'),status:'failed',createdAt:new Date().toISOString(),context:fixtureContext,diagnosticAvailable:true,canCancel:false,tracking:'unavailable',source:'Terminal',phase:'build.phase.failed',parameters:{operation:'build',backend:'cli',scheme:'Fixture',configuration:'Debug',destinationID:'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',workspaceTab:''}}],runs:[],jenkinsConfigured:true,progress:t('failed')};
 fixtureState.actions.push({id:'cleanup-all',title:'Cleanup',presentation:'regular',remote:false,parameters:[]},{id:'cleanup-derived',title:'DerivedData',presentation:'regular',remote:false,parameters:[]},{id:'test-job',title:'Tests',presentation:'ci',remote:true,parameters:[{id:'ref',title:'Branch',kind:'branch',defaultValue:'',required:true},{id:'plan',title:'Plan',kind:'choice',defaultValue:'SMOKE',choices:['SMOKE','FUNCTIONAL','STATS','FULL'],required:true}]});
 fixtureState.interface!.bindings.push({role:'fullCleanup',actionID:'cleanup-all',fields:{}},{role:'derivedDataCleanup',actionID:'cleanup-derived',fields:{}},{role:'uiTests',actionID:'test-job',fields:{branch:'ref',plan:'plan'}});
 
@@ -554,6 +604,8 @@ const fixtureSimulatorCalls:string[]=[];
 if(fixtureSimulatorOptions.has('simProjectless'))fixtureState.context=null;
 let fixtureScreenText='Тестовый экран',fixtureCounter=0;
 function fixtureFrame():Frame{const canvas=document.createElement('canvas');canvas.width=fixtureLandscape?(fixtureTablet?1194:874):(fixtureTablet?834:402);canvas.height=fixtureLandscape?(fixtureTablet?834:402):(fixtureTablet?1194:874);const context=canvas.getContext('2d')!;context.fillStyle='#f2f2f7';context.fillRect(0,0,canvas.width,canvas.height);context.fillStyle='#202024';context.font='bold 24px system-ui';context.fillText('Mimic · Simulator',24,120);context.font='18px system-ui';context.fillText(fixtureScreenText,24,235);context.fillText('Счётчик: '+fixtureCounter,24,340);return{sessionID:fixtureSimulator.session!.id,revision:fixtureSimulator.session!.revision!,width:canvas.width,height:canvas.height,image:canvas.toDataURL('image/jpeg').split(',')[1],mimeType:'image/jpeg',targets:[{x:24,y:200,width:350,height:60,hitX:200,hitY:230},{x:24,y:300,width:350,height:60,hitX:200,hitY:330}]};}
+let fixtureAppearanceFailure=false,fixtureAppearanceDelay=0;
+if(preview&&new URL(location.href).searchParams.get('helper')==='old'){delete fixtureState.codexAppearance;delete fixtureState.appearance;}
 async function fixtureTool(name:string,args:Record<string,unknown>):Promise<any>{
  if(name.startsWith('simulator_ui_'))fixtureSimulatorCalls.push(String(args.operation??name));
  if(name==='panel_save_tools_preferences'){if(args.expectedRevision!==toolsPreferences.revision)throw new ToolFailure('Conflict','toolsConflict');const value=validateFavorites({revision:toolsPreferences.revision+1,favorites:args.favorites as ToolID[]});fixtureState.toolsPreferences=value;return value;}
@@ -596,6 +648,7 @@ async function fixtureTool(name:string,args:Record<string,unknown>):Promise<any>
  if(name==='panel_get_preview')return{status:'succeeded',plan:{files:[{path:'Sources/Fixture.swift',exists:false}],digest:'a'.repeat(64)}};
  if(name==='panel_secret_input')return{done:true};
  if(name==='panel_terminal_open')return await fixtureTerminalOpen(args);
+ if(name==='panel_set_appearance'){if(fixtureAppearanceDelay)await new Promise(resolve=>setTimeout(resolve,fixtureAppearanceDelay));if(fixtureAppearanceFailure)throw new ToolFailure(t('appearance.saveFailed'),'appearanceSave');const old=fixtureState.codexAppearance as AppearanceSnapshot;if(old.revision!==args.expectedRevision)throw new ToolFailure(t('appearance.conflict'),'appearanceConflict');fixtureState.codexAppearance={version:1,selection:args.appearance,revision:old.revision+(old.selection!==args.appearance?1:0)};return{codexAppearance:fixtureState.codexAppearance};}
  if(name==='panel_terminal_poll')return await fixtureTerminalPoll(args);
  if(name==='panel_terminal_send')return await fixtureTerminalSend(args);
  if(name==='panel_terminal_close'){fixtureChannels.delete(String(args.channelID));return{closed:true};}
@@ -632,10 +685,11 @@ let fixtureToolsMissing:string[]=[];
 if(preview)(window as any).mimicToolsFixture={
  mode:(mode:'mini'|'full'|'expanded')=>{savedLayout=standard();if(mode==='full')resize(savedLayout,'utils','full');fixtureState.layout=savedLayout;expanded=mode==='expanded'?'utils':null;selectedTool=null;render();},
  tasks:(tasks:LocalTask[])=>{fixtureState.tasks=tasks;accept(fixtureState);render();},
- appearance:(value:unknown)=>{fixtureState.appearance=value;accept(fixtureState);render();},
+ appearance:(value:unknown)=>{fixtureState.appearance=value;fixtureState.codexAppearance=typeof value==='string'&&['tileGrid','legacy','windows95','windowsXP'].includes(value)?{version:1,selection:value,revision:((fixtureState.codexAppearance as AppearanceSnapshot)?.revision??0)+1}:undefined;accept(fixtureState);render();},
+ appearanceSave:(failure:boolean,delay=0)=>{fixtureAppearanceFailure=failure;fixtureAppearanceDelay=delay;},
  favorites:(favorites:ToolID[])=>{toolsPreferences=validateFavorites({revision:toolsPreferences.revision+1,favorites});fixtureState.toolsPreferences=toolsPreferences;render();},
  unavailable:(missing:string[])=>{fixtureToolsMissing=missing;toolConfigurations.clear();render();},
- current:()=>({expanded,selectedTool,toolGenerator,favorites:toolsPreferences.favorites,selection,drafts:Object.fromEntries(actionValues)}),
+ current:()=>({expanded,selectedTool,toolGenerator,favorites:toolsPreferences.favorites,selection,layoutDraft:editLayout,dragPhase:cardDrag.session?.gesture.phase??null,drafts:Object.fromEntries(actionValues)}),
  context:()=>fixtureContext,
 };
 /** Preview-only state changes exercise header admission and status without a live checkout. */
@@ -707,3 +761,10 @@ app.onhostcontextchanged=context=>hostStyle(context);
 render();
 if(preview){accept(fixtureState);render();}else{void app.connect().then(()=>{hostStyle(app.getHostContext());simulatorHost.dataset.hostConnectDomains=JSON.stringify(app.getHostCapabilities()?.sandbox?.csp?.connectDomains??[]);return refresh();}).catch(()=>{error=t('connecting');render();});}
 setInterval(()=>{if(!busy&&document.visibilityState==='visible')void refresh();},5000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!preview)void refresh();});
+
+// Disposable acceptance fixtures only; live panels never expose their drag transaction.
+if(preview)(window as any).mimicDragFixture={
+ set:(layout:Layout)=>{cardDrag.cancel();savedLayout=validate(structuredClone(layout));fixtureLayout=savedLayout;fixtureState.layout=savedLayout;state=fixtureState;editLayout=null;expanded=null;render();},
+ snapshot:()=>({saved:structuredClone(savedLayout),shown:structuredClone(cardDrag.layout??savedLayout),valid:cardDrag.session?.preview.valid??false,dragValid:cardDrag.session?.valid,point:cardDrag.session?{x:cardDrag.session.x,y:cardDrag.session.y}:null,placeholder:cardDrag.session?.placeholder,target:cardDrag.session?.target})
+};

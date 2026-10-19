@@ -36,11 +36,12 @@ struct MimicTextSizingRoot: ViewModifier {
 struct MimicTheme: DynamicProperty {
     @Environment(\.mimicPanelAppearance) var appearance
     @Environment(\.colorScheme) private var scheme
-    var tiled: Bool { appearance == .tileGrid }
-    var cardRadius: CGFloat { tiled ? Self.metric("cardRadius") : 14 }
-    var panelRadius: CGFloat { tiled ? Self.metric("panelRadius") : 12 }
+    var tiled: Bool { appearance.usesTileGrid }
+    var retro: Bool { appearance.isRetro }
+    var cardRadius: CGFloat { retro ? 0 : tiled ? Self.metric("cardRadius") : 14 }
+    var panelRadius: CGFloat { retro ? 0 : tiled ? Self.metric("panelRadius") : 12 }
     static func metric(_ key: String) -> CGFloat { PanelDesignTokens.shared.metrics[key]! }
-    func color(_ key: String) -> Color { Color(nsColor: Self.native(key, dark: scheme == .dark)) }
+    func color(_ key: String) -> Color { Color(nsColor: retro ? NativeRetro.color(key, appearance: appearance) : Self.native(key, dark: scheme == .dark)) }
     /// Healthy providers retain distinct colors; warnings, stale and unknown stay semantic.
     func usageColor(_ state: AIUsagePace.State, provider: AIProvider) -> Color {
         switch state.severity {
@@ -66,12 +67,26 @@ struct MimicAppearanceRoot: ViewModifier {
     func body(content: Content) -> some View {
         content.environment(\.mimicPanelAppearance, store.selection)
             .modifier(MimicTextSizingRoot())
-            .foregroundStyle(Color(nsColor: store.selection == .tileGrid ? MimicTheme.adaptive("ink") : .labelColor))
-            .tint(Color(nsColor: store.selection == .tileGrid ? MimicTheme.adaptive("accent") : .systemIndigo))
+            .foregroundStyle(Color(nsColor: store.selection.isRetro ? NativeRetro.color("ink", appearance: store.selection) : store.selection == .tileGrid ? MimicTheme.adaptive("ink") : .labelColor))
+            .tint(Color(nsColor: store.selection.isRetro ? NativeRetro.color("accent", appearance: store.selection) : store.selection == .tileGrid ? MimicTheme.adaptive("accent") : .systemIndigo))
+            .preferredColorScheme(store.selection.isRetro ? .light : nil)
+            .progressViewStyle(MimicActivityProgressStyle())
     }
 }
 
-struct TileGridButtonStyle: ButtonStyle {
+struct TileGridButtonStyle: PrimitiveButtonStyle {
+    var primary = false
+    var selected = false
+    var height: CGFloat = 32
+    var horizontalPadding: CGFloat = 12
+    private var theme = MimicTheme()
+    @ViewBuilder func makeBody(configuration: Configuration) -> some View {
+        if theme.retro { Button(configuration).buttonStyle(NativeRetroPrimitiveButtonStyle(height: min(height, 28), selected: selected)) }
+        else { Button(configuration).buttonStyle(TileGridArtworkStyle(primary: primary, selected: selected, height: height, horizontalPadding: horizontalPadding)) }
+    }
+}
+
+private struct TileGridArtworkStyle: ButtonStyle {
     var primary = false
     var selected = false
     var height: CGFloat = 32
@@ -100,21 +115,23 @@ struct MimicAuxiliaryButtonStyle: PrimitiveButtonStyle {
     var horizontalPadding: CGFloat = 12
     private var theme = MimicTheme()
     @ViewBuilder func makeBody(configuration: Configuration) -> some View {
-        if theme.tiled { Button(configuration).buttonStyle(TileGridButtonStyle(primary: primary, height: height, horizontalPadding: horizontalPadding)) }
+        if theme.retro { Button(configuration).buttonStyle(NativeRetroPrimitiveButtonStyle(height: min(height, 28))) }
+        else if theme.tiled { Button(configuration).buttonStyle(TileGridButtonStyle(primary: primary, height: height, horizontalPadding: horizontalPadding)) }
         else if primary { Button(configuration).buttonStyle(.borderedProminent) }
         else { Button(configuration).buttonStyle(.automatic) }
     }
 }
 
-enum MimicFontRole { case body, caption, heading }
+enum MimicFontRole { case body, caption, heading, workTitle }
 private struct MimicFont: ViewModifier {
     let role: MimicFontRole
     let weight: Font.Weight?
     private var theme = MimicTheme()
     @Environment(\.mimicTextScale) private var textScale
     func body(content: Content) -> some View {
-        let size = role == .caption ? MimicTheme.metric("caption") : role == .heading ? MimicTheme.metric("heading") : theme.tiled ? MimicTheme.metric("body") : 12
-        content.font(.system(size: size * (theme.tiled ? textScale : 1), weight: weight ?? (role == .heading ? .semibold : .regular)))
+        let size = role == .workTitle ? 18 : role == .caption ? MimicTheme.metric("caption") : role == .heading ? MimicTheme.metric("heading") : theme.tiled ? MimicTheme.metric("body") : 12
+        content.font(theme.retro ? Font(NativeRetro.font(theme.appearance, role: role, bold: weight != nil && weight != .regular, scale: textScale))
+                     : .system(size: size * (theme.tiled ? textScale : 1), weight: weight ?? (role == .heading ? .semibold : .regular)))
     }
 }
 extension View {

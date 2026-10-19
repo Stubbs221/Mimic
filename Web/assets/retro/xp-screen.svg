@@ -1,0 +1,21 @@
+<!-- Created by Василий Маслов on 12.10.2026. Exported from approved R1 Figma component. -->
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Editable screen">
+<path id="Vector" d="M6 11H10V14H13V15H3V14H6V11Z" fill="#546F86"/>
+<path id="Vector_2" d="M1.5 1.5H14.5V11.7H1.5V1.5Z" fill="url(#paint0_linear_0_10)" stroke="#526477" stroke-width="0.6"/>
+<path id="Vector_3" d="M3 3H13V9.8H3V3Z" fill="url(#paint1_linear_0_10)" stroke="#315B79" stroke-width="0.6"/>
+<path id="Vector_4" d="M3.5 3.5H11L3.5 7V3.5Z" fill="#93D6F6"/>
+<path id="Vector_5" d="M7 12H9V14H7V12Z" fill="#D7E1E8"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_0_10" x1="1.5" y1="1.5" x2="11.4071" y2="14.1267" gradientUnits="userSpaceOnUse">
+<stop stop-color="white"/>
+<stop offset="0.45" stop-color="#D1E5F5"/>
+<stop offset="1" stop-color="#7692B6"/>
+</linearGradient>
+<linearGradient id="paint1_linear_0_10" x1="3" y1="3" x2="3" y2="9.8" gradientUnits="userSpaceOnUse">
+<stop stop-color="#6CC4F5"/>
+<stop offset="1" stop-color="#1473BD"/>
+</linearGradient>
+</defs>
+</svg>

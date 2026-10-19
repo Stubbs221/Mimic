@@ -9,27 +9,61 @@ import MimicCore
     var snapshot: Data
     var buildCursor = 0
     private(set) var hasOutput = false
+    private var stopped = false
     private weak var model: TaskCoordinator?
     init(_ channel: PanelTerminalChannel, model: TaskCoordinator) {
         self.channel = channel; self.model = model
         self.snapshot = Data(model.terminalSnapshot(id: channel.taskID).suffix(128 * 1024)); self.hasOutput = !self.snapshot.isEmpty
         model.attachTerminal(owner: channel.id) { [weak self] id, bytes in
-            guard let self, id == channel.taskID else { return }
+            guard let self, !self.stopped, id == self.channel.taskID else { return }
             self.hasOutput = self.hasOutput || !bytes.isEmpty
             self.snapshot.append(bytes); self.snapshot = Data(self.snapshot.suffix(128 * 1024))
         }
     }
     func received(_ bytes: Data) { self.hasOutput = self.hasOutput || !bytes.isEmpty }
-    func stop() { self.model?.detachTerminal(owner: self.channel.id); self.snapshot = Data(); self.last = Data() }
+    /// Releases replay allocations and this observer only; it never closes the shared PTY.
+    func stop() {
+        guard !self.stopped else { return }
+        self.stopped = true; self.model?.detachTerminal(owner: self.channel.id); self.model = nil
+        self.snapshot = Data(); self.last = Data()
+    }
 }
 
 extension MimicIntegration {
+    // MARK: - Terminal subscription lifetime
+
+    /// Removing every expired observer in one commit avoids one timer task per subscription.
+    func expireTerminalChannels(now: Date = .now) {
+        let expired = self.terminalChannels.filter { $0.value.channel.expiresAt <= now }
+        guard !expired.isEmpty else { return }
+        for subscription in expired.values { subscription.stop() }
+        self.terminalChannels = self.terminalChannels.filter { $0.value.channel.expiresAt > now }
+    }
+
+    /// The earliest deadline owns cleanup even after a silent disconnect and without bridge traffic.
+    /// Polling does not renew the channel's cryptographic 15-minute lifetime.
+    func scheduleTerminalExpiry() {
+        let deadline = self.terminalChannels.values.map { $0.channel.expiresAt }.min()
+        guard deadline != self.terminalExpiryDeadline else { return }
+        self.terminalExpiryTask?.cancel(); self.terminalExpiryTask = nil; self.terminalExpiryDeadline = deadline
+        guard let deadline else { return }
+        let delay = max(0, deadline.timeIntervalSinceNow)
+        self.terminalExpiryTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            self.terminalExpiryTask = nil; self.terminalExpiryDeadline = nil
+            self.expireTerminalChannels()
+            // Recompute if the wall clock moved back or sleep resumed just before the boundary.
+            if self.terminalExpiryTask == nil { self.scheduleTerminalExpiry() }
+        }
+    }
+
+    // MARK: - Private terminal transport
+
     /// Ciphertext is the only terminal payload crossing MCP; task ownership is checked on every message.
     func terminalRequest(_ request: MimicBridgeRequest, threadID: String) async throws -> BridgeValue {
         let p = request.parameters
-        for (id, subscription) in terminalChannels where subscription.channel.expiresAt <= Date() {
-            subscription.stop(); terminalChannels.removeValue(forKey: id)
-        }
+        self.expireTerminalChannels()
         if request.method == "panel_terminal_open" || request.method == "panel_secret_input" {
             guard let id = p["taskID"]?.string.flatMap(UUID.init(uuidString:)), let project = project(threadID),
                   model.records.contains(where: { $0.id == id && $0.project.path == project.path }) || model.builds.records.contains(where: { $0.id == id && $0.project.path == project.path }) else { throw failure("notFound") }
@@ -37,12 +71,14 @@ extension MimicIntegration {
                 guard model.activeID == id || model.builds.canInput(id) else { throw failure("notFound") }
                 let alert = NSAlert(); alert.messageText = text("panel.secret.title")
                 let input = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24)); alert.accessoryView = input
+                defer { input.stringValue = "" }
                 alert.addButton(withTitle: text("send")); alert.addButton(withTitle: text("cancel"))
-                if alert.runModal() == .alertFirstButtonReturn {
+                if NativeRetroDialog.run(alert, store: model.appearance) == .alertFirstButtonReturn {
                     defer { input.stringValue = "" }
                     let bytes = Data((input.stringValue + "\n").utf8)
-                    if model.activeID == id { model.input(id: id, data: bytes) }
-                    else { try await model.builds.privateInput(id, bytes: bytes) }
+                    if model.activeID == id {
+                        guard model.input(id: id, data: bytes) else { throw failure("terminalInput") }
+                    } else { try await model.builds.privateInput(id, bytes: bytes) }
                 }
                 input.stringValue = ""; return .object(["done": .bool(true)])
             }
@@ -61,8 +97,9 @@ extension MimicIntegration {
             guard Set(payload.keys).isSubset(of: ["input", "columns", "rows"]), model.activeID == channel.taskID || model.builds.canInput(channel.taskID) else { throw failure("arguments") }
             if let input = payload["input"]?.string {
                 guard input.utf8.count <= 8192 else { throw failure("arguments") }
-                if model.activeID == channel.taskID { model.input(id: channel.taskID, data: Data(input.utf8)) }
-                else { try await model.builds.privateInput(channel.taskID, bytes: Data(input.utf8)) }
+                if model.activeID == channel.taskID {
+                    guard model.input(id: channel.taskID, data: Data(input.utf8)) else { throw failure("terminalInput") }
+                } else { try await model.builds.privateInput(channel.taskID, bytes: Data(input.utf8)) }
             }
             if let columns = payload["columns"]?.integer, let rows = payload["rows"]?.integer {
                 guard (10...500).contains(columns), (2...200).contains(rows) else { throw failure("arguments") }

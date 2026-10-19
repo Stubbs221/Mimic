@@ -20,11 +20,11 @@ public struct AgentHelperIdentity: Codable, Equatable, Sendable {
 }
 
 public enum AgentWorkflow {
-    public static let schemaRevision = 2
+    public static let schemaRevision = 3
     public static let tools = ["get_agent_state", "list_activity_history", "start_test_catalogue", "get_test_catalogue", "validate_selected_tests", "run_verified_tests", "get_preparation_state", "get_activity_changes", "preview_artifact_cleanup", "cleanup_activity_artifacts", "get_build_products", "select_build_product", "run_simulator_app", "open_simulator_deeplink", "prepare_simulator_scenario", "start_simulator_check", "get_simulator_check", "finish_simulator_check", "start_simulator_recording", "stop_simulator_recording"]
     public static let mutations: Set<String> = ["start_test_catalogue", "run_verified_tests", "cleanup_activity_artifacts", "select_build_product", "run_simulator_app", "open_simulator_deeplink", "prepare_simulator_scenario", "start_simulator_check", "finish_simulator_check", "start_simulator_recording", "stop_simulator_recording"]
     public static var capabilities: BridgeValue {
-        .object(["buildWorkflowVersion": .number(1), "agentWorkflowVersion": .number(2), "toolSchemaRevision": .number(Double(schemaRevision)), "projectBinding": .bool(true), "buildReadiness": .bool(true), "buildWait": .bool(true), "buildResults": .bool(true), "workflowCorrelation": .bool(true), "testCatalogue": .bool(true), "verifiedTestsCLI": .bool(true), "verifiedTestsXcodeMCP": .bool(false), "sourceRevision": .bool(true), "compactState": .bool(true), "preparationReceipts": .bool(true), "simulatorChecks": .bool(true), "artifactCleanup": .bool(true)])
+        .object(["serviceToolWorkflowVersion": .number(1), "atlassianWorkflowVersion": .number(1), "buildWorkflowVersion": .number(1), "agentWorkflowVersion": .number(2), "toolSchemaRevision": .number(Double(schemaRevision)), "projectBinding": .bool(true), "buildReadiness": .bool(true), "buildWait": .bool(true), "buildResults": .bool(true), "workflowCorrelation": .bool(true), "testCatalogue": .bool(true), "verifiedTestsCLI": .bool(true), "verifiedTestsXcodeMCP": .bool(false), "sourceRevision": .bool(true), "compactState": .bool(true), "preparationReceipts": .bool(true), "simulatorChecks": .bool(true), "artifactCleanup": .bool(true)])
     }
     public static func delivery(_ helper: AgentHelperIdentity?) -> BridgeValue {
         let compatible = helper?.toolSchemaRevision == schemaRevision

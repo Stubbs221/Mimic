@@ -1,6 +1,7 @@
 // Created by Василий Маслов on 08.10.2026.
 import AppKit
 import SwiftUI
+import QuartzCore
 
 /// B uses the same NSMenu command model as legacy; only its window and navigation differ.
 @MainActor final class ExpressMenuController {
@@ -9,9 +10,14 @@ import SwiftUI
     private var globalMonitor: Any?
     private weak var previousWindow: NSWindow?
     private weak var previousResponder: NSResponder?
-    func owns(_ candidate: NSWindow?) -> Bool { candidate != nil && candidate === window }
+    private let retro = NativeRetroMenuPresenter()
+    func owns(_ candidate: NSWindow?) -> Bool { candidate != nil && (candidate === window || retro.windows.contains { $0 === candidate }) }
     func show(menu: NSMenu, model: TaskCoordinator, anchor: NSRect, screen: NSRect) {
         close()
+        if model.appearance.selection.isRetro {
+            retro.show(items: NativeRetroMenuEntry.items(menu), appearance: model.appearance.selection, scale: 1, anchor: anchor, owner: NSApp.keyWindow, reducedMotion: model.motionSettings.nativeReduceMotion, keyboard: NSApp.currentEvent?.type == .keyDown)
+            return
+        }
         previousWindow = NSApp.keyWindow; previousResponder = previousWindow?.firstResponder
         let panel = ExpressMenuPanel(contentRect: .init(x: 0, y: 0, width: 320, height: 380), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.isOpaque = false; panel.backgroundColor = .clear; panel.hasShadow = true; panel.level = .popUpMenu
@@ -25,6 +31,14 @@ import SwiftUI
         panel.setFrameOrigin(.init(x: min(max(anchor.midX - 160, screen.minX), screen.maxX - 320), y: max(screen.minY, anchor.minY - height)))
         window = panel
         panel.makeKeyAndOrderFront(nil)
+        if model.appearance.selection == .windowsXP, !model.motionSettings.nativeReduceMotion,
+           NSApp.currentEvent?.type != .keyDown {
+            panel.alphaValue = 0
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.15; context.timingFunction = CAMediaTimingFunction(name: .linear)
+                panel.animator().alphaValue = 1
+            }
+        }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self, weak panel] event in
             if event.window !== panel { self?.close(returnFocus: false) }
             return event
@@ -34,6 +48,7 @@ import SwiftUI
         }
     }
     func close(returnFocus: Bool = true) {
+        retro.close(returnFocus: returnFocus)
         let restore = returnFocus && NSApp.keyWindow === window
         window?.orderOut(nil); window = nil
         if let localMonitor { NSEvent.removeMonitor(localMonitor); self.localMonitor = nil }

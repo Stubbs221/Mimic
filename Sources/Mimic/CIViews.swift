@@ -36,7 +36,7 @@ struct CISection: View {
             VStack(alignment: .leading, spacing: MimicMetrics.medium) {
                 HStack {
                     if self.showsHeader { Text("CI").mimicFont(.heading).accessibilityAddTraits(.isHeader) }
-                    if let owner = self.state.user { Text("@" + owner.username).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(1).help(owner.name) }
+                    if let owner = self.state.user { Text("@" + owner.username).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(1).mimicHelp(owner.name) }
                     Spacer(minLength: 4)
                     if self.state.loading { ProgressView().controlSize(.small) }
                     Button { self.state.refresh(manual: true) } label: { Image(systemName: "arrow.clockwise").frame(width: 28, height: 28) }
@@ -75,13 +75,13 @@ struct CISection: View {
                             ForEach(self.state.trackedUsers) { group in
                                 HStack(alignment: .top) {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(group.user.name).lineLimit(2).help(group.user.name)
-                                        Text("@" + group.user.username).foregroundStyle(.secondary).lineLimit(1).help(group.user.username)
+                                        Text(group.user.name).lineLimit(2).mimicHelp(group.user.name)
+                                        Text("@" + group.user.username).foregroundStyle(.secondary).lineLimit(1).mimicHelp(group.user.username)
                                         if let error = group.error, error != .credential, error != .authentication { Text(text(error.localizationKey)).foregroundStyle(.orange) }
                                     }
                                     Spacer(minLength: 4)
                                     Button { self.state.untrack(group.id) } label: { Image(systemName: "person.badge.minus") }
-                                        .buttonStyle(RowButtonStyle()).help(text("ci.tracking.stop"))
+                                        .buttonStyle(RowButtonStyle()).mimicHelp(text("ci.tracking.stop"))
                                         .accessibilityLabel(text("ci.tracking.stop") + " · " + group.user.name)
                                 }
                             }
@@ -103,7 +103,7 @@ struct CISection: View {
 
     private var memberSearch: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField(text("ci.tracking.search"), text: self.$userQuery).textFieldStyle(.roundedBorder)
+            TextField(text("ci.tracking.search"), text: self.$userQuery).textFieldStyle(.roundedBorder).mimicInput()
                 .accessibilityLabel(text("ci.tracking.search")).accessibilityIdentifier("ci.tracking.search")
                 .onChange(of: self.userQuery) { _, query in self.state.searchUsers(query) }
             if self.state.searching { ProgressView().controlSize(.small) }
@@ -119,7 +119,7 @@ struct CISection: View {
                                 Text(user.name).lineLimit(2)
                                 Text("@" + user.username).foregroundStyle(.secondary).lineLimit(1)
                             }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                        }.buttonStyle(RowButtonStyle()).help(user.name + " · @" + user.username)
+                        }.buttonStyle(RowButtonStyle()).mimicHelp(user.name + " · @" + user.username)
                             .accessibilityLabel(text("ci.tracking.add") + " · " + user.name + " · @" + user.username)
                     }
                 }
@@ -146,9 +146,9 @@ struct CIPipelineDetailsView: View {
                     Text(stage).mimicFont(.caption, weight: .semibold).foregroundStyle(.secondary)
                     ForEach(details.jobs.filter { $0.stage == stage }.sorted { $0.id < $1.id }) { job in
                         HStack {
-                            Text(job.name).lineLimit(1).truncationMode(.middle).help(job.name)
+                            Text(job.name).lineLimit(1).truncationMode(.middle).mimicHelp(job.name)
                             Spacer()
-                            if job.allowFailure { Image(systemName: "info.circle").help(text(job.status == "failed" ? "ci.job.allowedFailure" : "ci.allowed.failure")) }
+                            if job.allowFailure { Image(systemName: "info.circle").mimicHelp(text(job.status == "failed" ? "ci.job.allowedFailure" : "ci.allowed.failure")) }
                             CIStatusBadge(status: job.status)
                             CIWebButton(url: job.webURL)
                         }
@@ -194,14 +194,14 @@ struct CISettingsView: View {
                              check: self.settings.check, save: self.settings.save, disconnect: self.settings.disconnect,
                              identifier: "gitlab") {
                 SettingsField(title: text("settings.field.server")) {
-                    TextField("https://gitlab.example.com", text: self.$settings.address).accessibilityIdentifier("gitlab.address")
+                    TextField("https://gitlab.example.com", text: self.$settings.address).mimicInput().accessibilityIdentifier("gitlab.address")
                 }
                 SettingsField(title: text("ci.project")) {
-                    TextField("team/mobile", text: self.$settings.projectPath).accessibilityIdentifier("gitlab.project")
+                    TextField("team/mobile", text: self.$settings.projectPath).mimicInput().accessibilityIdentifier("gitlab.project")
                 }
                 SettingsField(title: text("ci.token")) {
                     SecureField(text(self.settings.connection == nil ? "settings.token.placeholder" : "ci.token.replace"), text: self.$settings.enteredToken)
-                        .accessibilityIdentifier("gitlab.token")
+                        .mimicInput().accessibilityIdentifier("gitlab.token")
                 }
                 Text(text("ci.token.scope")).mimicFont(.caption).foregroundStyle(.secondary)
             } credential: {

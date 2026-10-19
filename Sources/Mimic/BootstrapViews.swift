@@ -15,6 +15,7 @@ struct BootstrapCard: View {
     @ObservedObject var model: TaskCoordinator
     var mode = BootstrapCardMode.expanded
     var header: AnyView? = nil
+    var hidesDefaultHeader = false
     @State private var analysisVisible = false
     @State private var controlsWidth: CGFloat = 200
     private var record: TaskRecord? {
@@ -28,7 +29,7 @@ struct BootstrapCard: View {
         return self.model.bootstrapRecord
     }
     private var live: Bool { self.record.map { [.queued, .running].contains($0.status) } ?? false }
-    private var collapsedHeight: CGFloat { MimicMetrics.collapsedCardHeight * (self.theme.tiled ? max(1, self.textScale) : 1) - 24 }
+    private var collapsedHeight: CGFloat { MimicMetrics.collapsedCardHeight * (self.theme.tiled ? max(1, self.textScale) : 1) - 24 - (theme.retro ? NativeRetro.titleHeight(theme.appearance) * textScale + 6 : 0) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -64,7 +65,7 @@ struct BootstrapCard: View {
         VStack(alignment: .leading, spacing: self.mode == .expanded ? 12 : 4) {
             VStack(alignment: .leading, spacing: 8) {
                 if let header { header }
-                else { Text("Bootstrap").mimicFont(.heading).accessibilityAddTraits(.isHeader) }
+                else if !hidesDefaultHeader { Text("Bootstrap").mimicFont(.heading).accessibilityAddTraits(.isHeader) }
                 if !self.live, self.mode != .expanded { self.launchers }
                 else if self.mode != .expanded, let record { self.liveControls(record) }
             }
@@ -95,7 +96,7 @@ struct BootstrapCard: View {
                 // Preserve the terminal's insets when Full leaves a narrow controls column.
                 Label(text(self.mode == .full && self.controlsWidth < 160 ? "bootstrap.xcode.launch.narrow" : "bootstrap.xcode.launch.notice"), systemImage: "exclamationmark.circle")
                     .mimicFont(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true).help(text("bootstrap.xcode.notice"))
+                    .fixedSize(horizontal: false, vertical: true).mimicHelp(text("bootstrap.xcode.notice"))
                     .accessibilityElement(children: .ignore).accessibilityLabel(text("bootstrap.xcode.launch.notice"))
                     .accessibilityIdentifier("bootstrap.notice")
             }
@@ -103,7 +104,7 @@ struct BootstrapCard: View {
                 if record.status == .running { BootstrapExecutionProgress(model: self.model, record: record, showClock: false) }
                 else if record.status == .queued { BootstrapPreparationView(model: self.model, record: record, showCancel: false, showState: false, showRetryActions: false) }
                 if let error = record.error {
-                    Text(DiagnosticText.clean(error)).mimicFont(.caption).foregroundStyle(.orange).lineLimit(2).help(error).textSelection(.enabled)
+                    Text(DiagnosticText.clean(error)).mimicFont(.caption).foregroundStyle(.orange).lineLimit(2).mimicHelp(error).textSelection(.enabled)
                 }
             }
         }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
@@ -111,14 +112,14 @@ struct BootstrapCard: View {
     }
 
     private var launchers: some View {
-        (self.theme.tiled && self.textScale <= 1.2 && self.controlsWidth >= 160 ? AnyLayout(HStackLayout(spacing: 6)) : AnyLayout(VStackLayout(spacing: 6))) {
+        (self.theme.tiled && !self.theme.retro && self.textScale <= 1.2 && self.controlsWidth >= 160 ? AnyLayout(HStackLayout(spacing: 6)) : AnyLayout(VStackLayout(spacing: 6))) {
             ForEach(BootstrapPlatform.allCases, id: \.self) { platform in
                 Button { self.model.requestQuickBootstrap(platform: platform) } label: {
                     Label(text("bootstrap.platform.short." + platform.rawValue), systemImage: platform == .ios ? "iphone" : "tv")
                         .frame(maxWidth: .infinity)
                 }.buttonStyle(BootstrapControlStyle(primary: true, fillsWidth: true))
                     .disabled(!self.model.canRequestQuickBootstrap || self.model.checking)
-                    .help(text("quick.bootstrap." + platform.rawValue))
+                    .mimicHelp(text("quick.bootstrap." + platform.rawValue))
                     .accessibilityIdentifier("bootstrap.launch." + platform.rawValue)
                     .background(PanelControlRegion())
             }
@@ -172,7 +173,7 @@ struct BootstrapCard: View {
             }
         }.frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
             .background(self.theme.tiled ? self.theme.color("terminal") : Color(nsColor: BootstrapTerminalTheme.background))
-            .clipShape(RoundedRectangle(cornerRadius: 10)).accessibilityIdentifier("bootstrap.terminal")
+            .clipShape(RoundedRectangle(cornerRadius: theme.retro ? 0 : 10)).accessibilityIdentifier("bootstrap.terminal")
     }
 }
 
@@ -217,7 +218,7 @@ struct BootstrapQuitNotice: View {
             Button { self.source = .current; self.showingDetails.toggle() } label: {
                 Label(text(self.compact ? "bootstrap.xcode.compact" : "bootstrap.xcode.short"), systemImage: "info.circle")
                     .mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }.buttonStyle(.plain).help(text("bootstrap.xcode.notice")).accessibilityLabel(text("bootstrap.xcode.details"))
+            }.buttonStyle(.plain).mimicHelp(text("bootstrap.xcode.notice")).accessibilityLabel(text("bootstrap.xcode.details"))
                 .accessibilityValue(disclosureValue(self.showingDetails))
             MimicCollapse(expanded: self.showingDetails, source: self.source) {
                 Text(text("bootstrap.xcode.notice")).mimicFont(.caption).foregroundStyle(.secondary)

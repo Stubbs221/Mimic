@@ -26,15 +26,18 @@ Mimic brings your team's familiar workflows together: project preparation, tools
 
 ## Explore and share
 
-Three illustrated documents in Russian, using the Mimic palette. **View PDFs on GitHub or download the HTML and open it in a browser.** Styles, screenshots and image zoom work offline.
+Materials for preliminary **candidate 1.6.0/160**, prepared on October 13. Task-card screenshots predate design 02. Three documents in Russian, using the Mimic palette. **View PDFs on GitHub or download the HTML and open it in a browser.** Styles, screenshots and image zoom work offline.
 
 | Document | PDF | HTML |
 | --- | --- | --- |
-| **A 2–3 minute introduction** — the essentials | [View](docs/releases/1.5.0/quick-preview.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/quick-preview.html) |
-| **Full overview** — features, diagrams and security | [View](docs/releases/1.5.0/overview.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/overview.html) |
-| **Guide** — installation, setup and everyday use | [View](docs/releases/1.5.0/guide.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/guide.html) |
+| **A 2–3 minute introduction** — the essentials | [View](docs/releases/1.6.0/quick-preview.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.6.0/quick-preview.html) |
+| **Full overview** — features, diagrams and security | [View](docs/releases/1.6.0/overview.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.6.0/overview.html) |
+| **Guide** — installation, setup and everyday use | [View](docs/releases/1.6.0/guide.pdf) | [Download](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.6.0/guide.html) |
 
-[**All HTML in one ZIP**](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.5.0/Mimic-1.5.0-HTML.zip) — extract the three files together for navigation between documents. [About the materials](docs/releases/1.5.0/README.md).
+[**All HTML in one ZIP**](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.6.0/Mimic-1.6.0-HTML.zip) — extract the three files together for navigation between documents. [About the materials](docs/releases/1.6.0/README.md).
+
+
+Publication of 1.6.0 is being prepared. [Stable 1.5.0 materials](docs/releases/1.5.0/README.md) remain available; the app download below still points to the stable release.
 
 ## Less switching. More doing.
 
@@ -53,6 +56,10 @@ Three illustrated documents in Russian, using the Mimic palette. **View PDFs on 
 Screen, taps, swipes, typing, Home and rotation stay inside the panel. Image and input sources are independent: MCP video or snapshots, continuous HID gestures or Apple MCP. Auto mode uses snapshots when video is unavailable. **The screen requires Xcode 27+** and available native Apple tools. WSS needs a separately configured trusted endpoint. [Connect a Simulator](docs/CodexPlugin.md#экран-симулятора).
 
 <sub>macOS captures show installed 1.5.0/150. Codex and Simulator are fresh previews of bundled 1.5.0 HTML with safe fixtures; the device screen is a demonstration. Working data has opaque pixel redactions. [Image notes](docs/images/README.md).</sub>
+
+## Preparing 1.6.0
+
+Jira/Confluence context, Mini and Full task cards matching design 02, documents on demand, and installed-app resource fixes. Candidate 1.6.0/161 is being prepared; the published stable version below remains 1.5.0. [Changes](CHANGELOG.md).
 
 ## New in 1.5.0
 
@@ -75,7 +82,7 @@ Standalone builds and separate launch of a ready app; a suite catalog and exact 
 - **The panel's private channel** delivers the Simulator screen; an explicit agent observation can return a screenshot and device hierarchy.
 - **A trusted profile** contains executable adapters. Check its source and review logs before sharing: known-secret redaction cannot guarantee removal of every sensitive value.
 
-[Profiles](docs/Profiles.md) · [Codex and access boundaries](docs/CodexPlugin.md) · [Security](SECURITY.md)
+[Profiles](docs/Profiles.md) · [Codex and access boundaries](docs/CodexPlugin.md) · [Jira and Confluence](docs/Atlassian.md) · [Security](SECURITY.md)
 
 ## Install once. Update from the app.
 

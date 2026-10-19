@@ -7,6 +7,51 @@ import MimicCore
 @testable import Mimic
 
 @Suite(.serialized) @MainActor struct PanelGridTests {
+    /// The actual hosted grid's lift/move/end callbacks commit the geometry shown by its placeholder.
+    @Test func fiftyHostedDropsCommitShownPlacement() async throws {
+        let suite = "PanelDrop50-" + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let model = TaskCoordinator(directory: directory, defaults: defaults)
+        model.aiUsage.stop(); model.motionSettings.reduceMotionOverride = false
+        defer { model.records = []; model.stopAndExit(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        func bridge(in view: NSView) -> PanelDragBridge.TrackingView? {
+            if let bridge = view as? PanelDragBridge.TrackingView { return bridge }
+            return view.subviews.lazy.compactMap { bridge(in: $0) }.first
+        }
+        for index in 0..<50 {
+            let layout = PanelLayoutController(defaults: defaults)
+            layout.begin(); layout.reset(); layout.finish()
+            let resizing = index.isMultiple(of: 5)
+            let store = PanelFrameStore(), source: PanelBlockKind = resizing ? .bootstrap : index.isMultiple(of: 2) ? .utils : .ci
+            let destination: PanelBlockKind = index.isMultiple(of: 2) ? .simulators : .builds
+            let root = NSHostingView(rootView: PanelGrid(model: model, layout: layout, frameStore: store)
+                .environment(\.mimicPanelAppearance, .tileGrid).frame(width: 528))
+            let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 528, height: 800), styleMask: .borderless, backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = root; window.orderFront(nil)
+            defer { window.contentView = nil; window.close() }
+            try await Task.sleep(for: .milliseconds(35)); root.layoutSubtreeIfNeeded(); await Task.yield()
+            let input = try #require(bridge(in: root)), sourceFrame = try #require(store.logical[source.rawValue])
+            let targetFrame = try #require(store.logical[destination.rawValue])
+            let press = CGPoint(x: sourceFrame.minX + 28, y: sourceFrame.minY + 20)
+            let point = resizing ? CGPoint(x: 510, y: 28) : CGPoint(x: targetFrame.midX, y: targetFrame.midY)
+            input.callbacks.lift(source, press, press, 10)
+            try await Task.sleep(for: .milliseconds(20)); root.layoutSubtreeIfNeeded(); await Task.yield()
+            input.callbacks.move(point, point, 10.02, true)
+            if resizing { input.callbacks.move(point, point, 10.28, true) }
+            try await Task.sleep(for: .milliseconds(25)); root.layoutSubtreeIfNeeded(); await Task.yield()
+            let shown = layout.layout
+            #expect(layout.dragAccepted && shown.rows != layout.saved.rows, "drop \(index)")
+            let placeholder = try #require(store.logical[source.rawValue])
+            let inset: CGFloat = index.isMultiple(of: 3) ? 1 : placeholder.width / 2
+            let release = CGPoint(x: placeholder.minX + inset, y: placeholder.midY)
+            input.callbacks.move(release, release, resizing ? 10.29 : 10.04, true)
+            input.callbacks.end(release, release, resizing ? 10.3 : 10.05)
+            #expect(layout.saved.rows == shown.rows && layout.dragging == nil, "drop \(index) saves shown placement")
+            #expect(Set(layout.saved.blocks) == Set(PanelLayout.standard(for: .desktop).blocks))
+        }
+    }
+
     // MARK: - Approved B2 tile management
 
     @Test func directRemovalAddAndEscapePreserveExecutionDraftsAndCodexLayout() throws {
@@ -119,7 +164,7 @@ import MimicCore
         controller.beginDrag(.bootstrap)
         controller.previewDrag(at: target, size: .full, miniSlot: 1)
         controller.previewDrag(at: target, size: .mini, miniSlot: 1)
-        #expect(controller.layout.rows.first?.slots == [nil, .bootstrap]); #expect(controller.saved == origin)
+        #expect(controller.layout.rows.first?.slots[1] == .bootstrap); #expect(controller.saved == origin)
         controller.previewDrag(at: nil, size: .mini, miniSlot: 1)
         #expect(controller.layout.size(of: .bootstrap) == .mini)
         controller.previewDrag(at: target, size: .mini, miniSlot: 1)

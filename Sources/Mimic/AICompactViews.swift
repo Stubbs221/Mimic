@@ -170,11 +170,11 @@ private struct AICompactBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 4) {
-                Text(self.summary.name).lineLimit(1).foregroundStyle(.secondary).help(self.summary.metadata)
+                Text(self.summary.name).lineLimit(1).foregroundStyle(.secondary).mimicHelp(self.summary.metadata)
                 Spacer(minLength: 0)
                 if self.summary.stale || self.summary.hasError {
                     Image(systemName: "exclamationmark.circle").foregroundStyle(.secondary)
-                        .help(self.summary.stale ? text("usage.stale") + "\n" + self.summary.metadata : self.summary.metadata)
+                        .mimicHelp(self.summary.stale ? text("usage.stale") + "\n" + self.summary.metadata : self.summary.metadata)
                         .accessibilityLabel(self.summary.stale ? text("usage.stale") : self.summary.emptyStatus)
                 }
             }
@@ -186,7 +186,7 @@ private struct AICompactBody: View {
                 }
                 if self.summary.windows.isEmpty {
                     Text(self.summary.emptyStatus).foregroundStyle(.secondary).lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true).help(self.summary.metadata)
+                        .fixedSize(horizontal: false, vertical: true).mimicHelp(self.summary.metadata)
                 } else {
                     ForEach(self.summary.windows) { window in AICompactWindowView(summary: window, provider: summary.provider, now: self.now) }
                 }
@@ -253,7 +253,7 @@ private struct AICompactTrendView: View, Equatable {
                     .accessibilityIdentifier("usage.compact.trend." + self.summary.provider.rawValue)
                     .accessibilityLabel(text("usage.trend.open")).accessibilityValue(self.description)
             }
-        }.frame(maxWidth: .infinity, alignment: .leading).help(self.description)
+        }.frame(maxWidth: .infinity, alignment: .leading).mimicHelp(self.description)
             .onChange(of: self.summary.points) { _, points in self.hover.replacePoints(points) }
             .transaction { $0.animation = nil }
     }
@@ -277,18 +277,21 @@ private struct AICompactWindowView: View {
             }
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
+                    if theme.retro { NativeRetroArtwork(appearance: theme.appearance, kind: .progress(self.summary.fraction)) }
+                    else {
                     Capsule().fill(Color.primary.opacity(0.06))
                     Capsule().fill(theme.tiled ? theme.usageColor(summary.pace, provider: provider) : self.summary.color).frame(width: geometry.size.width * self.summary.fraction)
                     Capsule().stroke(Color.primary.opacity(self.accessibility.increasedContrast ? 0.6 : 0.15), lineWidth: 0.5)
+                    }
                     if let tick = self.summary.pace.tick {
-                        RoundedRectangle(cornerRadius: 1).fill(Color.secondary).frame(width: 2, height: 6)
-                            .offset(x: max(0, min(geometry.size.width - 2, geometry.size.width * tick - 1)))
+                        RoundedRectangle(cornerRadius: theme.retro ? 0 : 1).fill(Color.secondary).frame(width: 2, height: theme.retro ? 7 : 6)
+                            .offset(x: theme.retro ? 3 + max(0, min(geometry.size.width - 8, (geometry.size.width - 6) * tick - 1)) : max(0, min(geometry.size.width - 2, geometry.size.width * tick - 1)))
                     }
                 }
-            }.frame(height: 6).accessibilityHidden(true)
+            }.frame(height: theme.retro ? 13 : 6).accessibilityHidden(true)
             Text(self.summary.window.resetsAt == nil ? text("usage.reset.unknown") : text("usage.reset") + " " + self.summary.resetText(now: self.now))
                 .foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
-        }.help(self.summary.tooltip)
+        }.mimicHelp(self.summary.tooltip)
             .accessibilityElement(children: .ignore).accessibilityLabel(self.summary.title).accessibilityValue(self.summary.tooltip)
     }
 }

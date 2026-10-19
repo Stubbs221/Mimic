@@ -23,6 +23,8 @@ public struct MimicProfile: Codable, Equatable, Sendable {
     public var sourceExclusions: [String]? = nil
     public var preparation: PreparationRequirement? = nil
     public var simulatorScenarios: [SimulatorScenario]? = nil
+    public var panels: [ProfilePanel]? = nil
+    public var serviceTools: [ServiceTool]? = nil
 }
 
 public struct AppleTarget: Codable, Equatable, Sendable {
@@ -34,6 +36,7 @@ public struct AppleTarget: Codable, Equatable, Sendable {
 }
 
 public struct ProfileServices: Codable, Equatable, Sendable {
+    public var atlassian: [AtlassianPreset]? = nil
     public let gitLabURL: String?
     public let gitLabProject: String?
     public let jenkinsURL: String?
@@ -128,6 +131,10 @@ public struct ProfileExecution: Codable, Equatable, Sendable {
     public func commands(project: ProjectContext) throws -> [CommandSpec] {
         guard let action, action.remote == nil else { throw ProfileError.action }
         let values = try ProfileValidation.parameters(self.parameters, action: action)
+        if let panel = snapshot.profile.panel(forAction: actionID) {
+            guard panel.matches(checkout: project.path) else { throw ProfileError.requirements }
+            try panel.validateRequest(values)
+        }
         let environment = EnvironmentInspector.environment(project: project)
         for path in snapshot.profile.requiredFiles + action.requiredFiles {
             guard FileManager.default.fileExists(atPath: try ProfileValidation.checkoutPath(path, root: project.path)) else { throw ProfileError.requirements }
@@ -188,6 +195,9 @@ public enum ProfileValidation {
         for url in [profile.services?.gitLabURL, profile.services?.jenkinsURL].compactMap({ $0 }) {
             guard let value = URLComponents(string: url), value.scheme == "https", value.host != nil, value.user == nil, value.password == nil else { throw ProfileError.parameter }
         }
+        let atlassian = profile.services?.atlassian ?? []
+        guard atlassian.count <= 20, Set(atlassian.map(\.id)).count == atlassian.count else { throw ProfileError.parameter }
+        for preset in atlassian { try preset.validate() }
         if let template = profile.services?.reportURLTemplate {
             guard template.contains("{id}"), let url = URLComponents(string: template.replacingOccurrences(of: "{id}", with: "1")), url.scheme == "https", url.host != nil, url.user == nil, url.password == nil else { throw ProfileError.parameter }
         }
@@ -200,6 +210,16 @@ public enum ProfileValidation {
                   let action = profile.actions.first(where: { $0.id == requirement.actionID && $0.remote == nil && $0.presentation == .preparation }) else { throw ProfileError.action }
             guard (requirement.stages ?? []).allSatisfy({ action.steps.indices.contains($0) }) else { throw ProfileError.action }
             _ = try parameters(requirement.parameters, action: action)
+        }
+        try ProfilePanel.validate(profile: profile)
+        let serviceTools = profile.serviceTools ?? []
+        guard serviceTools.count <= 16, Set(serviceTools.map(\.id)).count == serviceTools.count,
+              Set(serviceTools.map(\.id)).isDisjoint(with: Set((profile.panels ?? []).map(\.id))) else { throw ProfileError.interface }
+        for tool in serviceTools {
+            try tool.validate()
+            guard let panel = profile.panels?.first(where: { $0.id == tool.source.panelID }),
+                  panel.fields.contains(where: { $0.id == tool.source.namespaceField }),
+                  panel.fields.contains(where: { $0.id == tool.source.appVersionField }) else { throw ProfileError.interface }
         }
         let scenarios = profile.simulatorScenarios ?? []
         guard scenarios.count <= 100, Set(scenarios.map(\.id)).count == scenarios.count else { throw ProfileError.parameter }

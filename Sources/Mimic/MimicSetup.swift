@@ -163,14 +163,14 @@ struct MimicSetupView: View {
     private let steps = ["setup.project", "setup.codex", "setup.gitlab", "setup.jenkins", "setup.options", "setup.summary"]
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(text("setup.title")).font(.title2.bold()).accessibilityAddTraits(.isHeader)
-            Text(text(self.steps[self.setup.step])).font(.headline).accessibilityIdentifier("setup.step")
-            if model.appearance.selection == .tileGrid {
+            Text(text("setup.title")).mimicRetrofittedFont(.title2.bold(), role: .heading, bold: true).accessibilityAddTraits(.isHeader)
+            Text(text(self.steps[self.setup.step])).mimicRetrofittedFont(.headline, role: .heading).accessibilityIdentifier("setup.step")
+            if model.appearance.selection.usesTileGrid {
                 HStack(spacing: 5) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { index, key in
                         VStack(spacing: 5) {
-                            Capsule().fill(index <= setup.step ? Color(nsColor: MimicTheme.adaptive("accent")) : Color(nsColor: MimicTheme.adaptive("line"))).frame(height: 3)
-                            Text(text(key)).font(.system(size: 10)).lineLimit(2)
+                            RoundedRectangle(cornerRadius: theme.retro ? 0 : 2).fill(index <= setup.step ? theme.color("accent") : theme.color("line")).frame(height: 3)
+                            Text(text(key)).mimicRetrofittedFont(.system(size: 10), role: .caption).lineLimit(2)
                         }.accessibilityHidden(true)
                     }
                 }
@@ -195,24 +195,24 @@ struct MimicSetupView: View {
                         case 2: CISettingsView(settings: self.model.ciSettings, hasCheckout: self.model.project != nil)
                         case 3: JenkinsSettingsView(settings: self.model.jenkinsSettings)
                         case 4:
-                            Toggle(text("setup.autoOpen"), isOn: self.$setup.autoOpen).accessibilityIdentifier("setup.autoOpen")
-                            Text(text("setup.autoOpen.detail")).font(.callout).foregroundStyle(.secondary)
-                            Toggle(text("setup.login"), isOn: self.$setup.login).accessibilityIdentifier("setup.login")
-                            Toggle(text("setup.notify"), isOn: self.$setup.notify).accessibilityIdentifier("setup.notify")
-                            Text(text("setup.options.detail")).font(.callout).foregroundStyle(.secondary)
+                            Toggle(text("setup.autoOpen"), isOn: self.$setup.autoOpen).toggleStyle(MimicCheckboxStyle()).accessibilityIdentifier("setup.autoOpen")
+                            Text(text("setup.autoOpen.detail")).mimicRetrofittedFont(.callout, role: .caption).foregroundStyle(.secondary)
+                            Toggle(text("setup.login"), isOn: self.$setup.login).toggleStyle(MimicCheckboxStyle()).accessibilityIdentifier("setup.login")
+                            Toggle(text("setup.notify"), isOn: self.$setup.notify).toggleStyle(MimicCheckboxStyle()).accessibilityIdentifier("setup.notify")
+                            Text(text("setup.options.detail")).mimicRetrofittedFont(.callout, role: .caption).foregroundStyle(.secondary)
                         default:
                             Text(text("setup.summary.detail"))
                             ForEach(self.setup.statuses.keys.sorted(), id: \.self) { key in
                                 VStack(alignment: .leading, spacing: 4) { Text(text(key)).bold(); self.status(key) }
                             }
-                            Text(text("setup.autoOpen.notRun")).font(.callout).foregroundStyle(.secondary)
+                            Text(text("setup.autoOpen.notRun")).mimicRetrofittedFont(.callout, role: .caption).foregroundStyle(.secondary)
                             Button(text("setup.copyReport")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(self.setup.report, forType: .string) }
                             Button(text("setup.systemSettings")) { SMAppService.openSystemSettingsLoginItems() }
                         }
                     }
                     if self.setup.working || self.model.ciSettings.checking || self.model.jenkinsSettings.checking { ProgressView().accessibilityLabel(text("setup.working")) }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.trailing, theme.retro ? 17 : 0)
+            }.scrollIndicators(theme.retro ? .hidden : .automatic).mimicRetroScrollbars()
             Divider()
             HStack {
                 if !self.uninstallMode && self.setup.step > 0 { Button(text("setup.back")) { self.setup.step -= 1 }.disabled(self.setup.working || self.model.ciSettings.checking || self.model.jenkinsSettings.checking) }
@@ -228,11 +228,10 @@ struct MimicSetupView: View {
         }.padding(24).frame(minWidth: 560, minHeight: 520).disabled(self.model.updateReserved)
             .buttonStyle(MimicAuxiliaryButtonStyle())
             .onChange(of: self.model.selectedProjectPath) { _, _ in self.setup.selectionChanged() }
-            .background(model.appearance.selection == .tileGrid ? Color(nsColor: MimicTheme.adaptive("paper")) : Color(nsColor: .windowBackgroundColor))
+            .background(theme.retro ? theme.color("paper") : model.appearance.selection == .tileGrid ? Color(nsColor: MimicTheme.adaptive("paper")) : Color(nsColor: .windowBackgroundColor))
+            .mimicRetrofittedFont(.body).mimicWindowChrome()
             .modifier(MimicAppearanceRoot(store: model.appearance))
-            .confirmationDialog(text("setup.uninstall"), isPresented: self.$confirming) {
-                Button(text("setup.uninstall"), role: .destructive) { Task { await self.setup.uninstall() } }
-            } message: { Text(text("setup.uninstall.detail")) }
+            .mimicConfirmationDialog(text("setup.uninstall"), isPresented: self.$confirming, message: text("setup.uninstall.detail"), confirmation: text("setup.uninstall"), store: model.appearance) { Task { await self.setup.uninstall() } }
     }
     private func status(_ key: String) -> some View {
         Text(text(self.setup.statuses[key] ?? "setup.skipped")).textSelection(.enabled).accessibilityIdentifier("setup.status." + key)

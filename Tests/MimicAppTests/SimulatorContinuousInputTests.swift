@@ -91,6 +91,23 @@ import Testing
         _ = try owner.viewerHeartbeat(viewer, thread: "fixture", visible: true)
         await #expect(throws: AppleSimulatorError.noSession) { try await owner.inputEvent(viewer, thread: "fixture", event: event(access, "move", 2, gesture: gesture)) }
     }
+    @Test func consecutiveGesturesKeepGeometryWithoutReusingAppleObservation() async throws {
+        let (owner, input, apple, project, viewer, access, path) = try await fixture()
+        defer { owner.stop(); try? FileManager.default.removeItem(at: path) }
+        for _ in 0..<100 {
+            let gesture = UUID()
+            _ = try await owner.inputEvent(viewer, thread: "fixture", event: event(access, "down", 1, gesture: gesture))
+            let reply = try await owner.inputEvent(viewer, thread: "fixture", event: event(access, "up", 2, gesture: gesture))
+            #expect(reply["geometry"]["width"] == .number(402))
+            #expect(reply["geometry"]["generation"] == access["generation"])
+            #expect(owner.frame == nil)
+        }
+        #expect(input.phases.count == 200 && apple.performed == 0)
+        let renewed = try await owner.inputAccess(viewer, thread: "fixture")
+        #expect(renewed["generation"] == access["generation"])
+        #expect(owner.viewerMetadata(thread: "fixture", project: project)["session"]["ready"] == .bool(false))
+        await #expect(throws: AppleSimulatorError.noSession) { _ = try owner.viewerAction(viewer, thread: "fixture", request: UUID(), action: .home, revision: 101) }
+    }
     @Test func uncertainSendIsNotReplayedAndRetiresHelper() async throws {
         let (owner, input, _, _, viewer, access, path) = try await fixture()
         defer { owner.stop(); try? FileManager.default.removeItem(at: path) }
@@ -98,5 +115,20 @@ import Testing
         await #expect(throws: AppleSimulatorError.connectionLost) { try await owner.inputEvent(viewer, thread: "fixture", event: event(access, "down", 1, gesture: UUID())) }
         for _ in 0..<100 { if !owner.busy { break }; try await Task.sleep(for: .milliseconds(5)) }
         #expect(input.stopped && input.phases == [.down] && !owner.busy)
+    }
+    @Test func orientationInvalidatesThePreviousGeometryGrant() async throws {
+        let (owner, _, apple, project, viewer, access, path) = try await fixture()
+        defer { owner.stop(); try? FileManager.default.removeItem(at: path) }
+        let record = try await owner.submit(id: UUID(), kind: .action, project: project, device: apple.device, sessionID: owner.descriptor?.id, action: .orientation(.landscapeLeft), revision: 1)
+        owner.start(record)
+        for _ in 0..<200 {
+            if owner.activity(record.id)?.status == .succeeded { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(owner.activity(record.id)?.status == .succeeded)
+        await #expect(throws: AppleSimulatorError.noSession) { _ = try await owner.inputEvent(viewer, thread: "fixture", event: event(access, "down", 1, gesture: UUID())) }
+        let renewed = try await owner.inputAccess(viewer, thread: "fixture")
+        #expect(renewed["generation"] != access["generation"])
+        #expect(renewed["orientation"] == .string("landscapeLeft"))
     }
 }

@@ -14,11 +14,13 @@ public struct AIUsageLocations: Sendable {
     public let claude: URL
     public let claudeDesktop: URL
     public let customClaudeDirectory: String?
+    public let claudeDesktopSupport: URL
     public init(home: URL = URL(fileURLWithPath: NSHomeDirectory()), environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.codex = Self.directory(environment["CODEX_HOME"], fallback: home.appendingPathComponent(".codex"))
         self.claude = Self.directory(environment["CLAUDE_CONFIG_DIR"], fallback: home.appendingPathComponent(".claude"))
         self.customClaudeDirectory = environment["CLAUDE_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : $0 }
         self.claudeDesktop = home.appendingPathComponent("Library/Application Support/Claude/local-agent-mode-sessions")
+        self.claudeDesktopSupport = home.appendingPathComponent("Library/Application Support/Claude")
     }
     private static func directory(_ path: String?, fallback: URL) -> URL {
         guard let path, !path.isEmpty else { return fallback }
@@ -36,6 +38,9 @@ public struct ClaudeUsageCredential: Sendable {
     let expiresAt: Date?
     let plan: String?
     let hasUsageScope: Bool
+    let desktopAccount: String?
+    let desktopOrganization: String?
+    let desktopGeneration: String?
     var identity: String { usageDigest(Data(self.accessToken.utf8)) }
     public init(data: Data) throws {
         let object = try AIUsageDecoder.object(data)
@@ -45,6 +50,11 @@ public struct ClaudeUsageCredential: Sendable {
         self.plan = oauth["rateLimitTier"] as? String ?? oauth["subscriptionType"] as? String
         let scopes = oauth["scopes"] as? [String]
         self.hasUsageScope = scopes == nil || scopes?.isEmpty == true || scopes?.contains("user:profile") == true
+        self.desktopAccount = nil; self.desktopOrganization = nil; self.desktopGeneration = nil
+    }
+    init(desktopToken: String, expiresAt: Date, plan: String?, account: String?, organization: String, generation: String) {
+        self.accessToken = desktopToken; self.expiresAt = expiresAt; self.plan = plan; self.hasUsageScope = true
+        self.desktopAccount = account; self.desktopOrganization = organization; self.desktopGeneration = generation
     }
     func isUsable(at date: Date) -> Bool { self.hasUsageScope && (self.expiresAt.map { $0 > date } ?? true) }
 }
@@ -52,13 +62,22 @@ public struct ClaudeUsageCredential: Sendable {
 @MainActor
 public protocol ClaudeUsageCredentialReading {
     func candidates(manual: Bool) throws -> [ClaudeUsageCredential]
+    /// A borrowed Desktop login must still belong to the same local account and organization after HTTP awaits.
+    func isCurrent(_ credential: ClaudeUsageCredential) -> Bool
 }
 
-/// Reads the selected Claude Code login; background refresh must never prompt for Keychain access.
+extension ClaudeUsageCredentialReading {
+    public func isCurrent(_ credential: ClaudeUsageCredential) -> Bool { true }
+}
+
+/// Reads existing Claude Code and Desktop logins; background refresh must never prompt for Keychain access.
 @MainActor
 public struct NativeClaudeUsageCredentials: ClaudeUsageCredentialReading {
     private let locations: AIUsageLocations
-    public init(locations: AIUsageLocations = AIUsageLocations()) { self.locations = locations }
+    private let desktop: ClaudeDesktopUsageCredentials
+    public init(locations: AIUsageLocations = AIUsageLocations()) {
+        self.locations = locations; self.desktop = ClaudeDesktopUsageCredentials(directory: locations.claudeDesktopSupport)
+    }
     public func candidates(manual: Bool) throws -> [ClaudeUsageCredential] {
         let base = "Claude Code-credentials"
         let services = self.locations.customClaudeDirectory.map { [base + "-" + usageDigest(Data($0.precomposedStringWithCanonicalMapping.utf8)).prefix(8), base] } ?? [base]
@@ -75,9 +94,15 @@ public struct NativeClaudeUsageCredentials: ClaudeUsageCredentialReading {
             }
         }
         if let data = try? Data(contentsOf: self.locations.claude.appendingPathComponent(".credentials.json")), let credential = try? ClaudeUsageCredential(data: data), !candidates.contains(where: { $0.identity == credential.identity }) { candidates.append(credential) }
+        do {
+            if let credential = try self.desktop.read(manual: manual), !candidates.contains(where: { $0.identity == credential.identity }) { candidates.append(credential) }
+        } catch let error as AIUsageError {
+            if candidates.isEmpty { throw error }
+        }
         if candidates.isEmpty { throw blocked ? AIUsageError.keychainAccess : AIUsageError.authentication }
         return candidates
     }
+    public func isCurrent(_ credential: ClaudeUsageCredential) -> Bool { self.desktop.isCurrent(credential) }
 }
 
 /// Only GET requests to Anthropic are constructed by the adapter; no credential refresh is performed.
@@ -129,6 +154,13 @@ public final class ClaudeUsageAdapter: AIUsageFetching {
                     profile = nil
                 }
                 try Task.checkCancellation()
+                guard self.credentials.isCurrent(credential) else { throw AIUsageError.accountChanged }
+                if let expectedOrganization = credential.desktopOrganization {
+                    guard let profile, let object = try? AIUsageDecoder.object(profile),
+                          let organization = object["organization"] as? [String: Any],
+                          (organization["uuid"] as? String)?.lowercased() == expectedOrganization,
+                          credential.desktopAccount == nil || ((object["account"] as? [String: Any])?["uuid"] as? String)?.lowercased() == credential.desktopAccount else { throw AIUsageError.authentication }
+                }
                 let snapshot = try AIUsageDecoder.claude(usage: usage, profile: profile, identity: credential.identity, fallbackPlan: credential.plan, now: self.now())
                 // Account identity is stable across OAuth token refreshes when the profile is available.
                 self.currentRevision = usageDigest(Data(snapshot.accountID.utf8))

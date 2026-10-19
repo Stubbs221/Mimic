@@ -36,6 +36,8 @@ final class AIUsageTrendPopoverController: NSObject, NSPopoverDelegate {
     private let hosting: NSHostingView<AIUsageTrendDetail>
     private weak var anchor: NSView?
     private var presenting = false
+    private var choice = PanelAppearance.legacy
+    private let retro = NativeRetroPopoverController<AIUsageTrendDetail>()
 
     init(provider: AIProvider, state: AIUsageTrendPopoverState) {
         self.provider = provider; self.state = state
@@ -46,27 +48,38 @@ final class AIUsageTrendPopoverController: NSObject, NSPopoverDelegate {
         self.popover.animates = false; self.popover.delegate = self
         self.state.presentationChanged = { [weak self] in self?.synchronize() }
         self.state.contentChanged = { [weak self] in self?.resize() }
+        retro.dismissed = { [weak self] in self?.state.dismiss() }
         Self.live.add(self)
     }
     func appearance(_ value: PanelAppearance) {
+        if choice != value, state.isPresented { state.dismiss() }
+        choice = value
         hosting.rootView = AIUsageTrendDetail(appearance: value, provider: provider, state: state)
     }
-    var detailWindow: NSWindow? { self.popover.isShown ? self.hosting.window : nil }
+    var detailWindow: NSWindow? { retro.panel ?? (self.popover.isShown ? self.hosting.window : nil) }
     func attach(_ view: NSView) { self.anchor = view }
     func dismiss() { self.state.dismiss() }
     func detach() {
         self.state.detach(); self.popover.delegate = nil
         if self.popover.isShown { self.popover.close() }
+        retro.close(notify: false)
         self.anchor = nil
     }
     func synchronize() {
         guard !self.presenting else { return }
         if !self.state.isPresented {
+            retro.close(notify: false)
             if self.popover.isShown { self.popover.close() }
             return
         }
         guard let anchor = self.anchor, let window = anchor.window, window.isVisible, !anchor.bounds.isEmpty else {
             self.state.dismiss(); return
+        }
+        if choice.isRetro {
+            for other in Self.live.allObjects where other !== self { other.dismiss() }
+            let content = AIUsageTrendDetail(appearance: choice, provider: provider, state: state)
+            retro.update(content: AnyView(content), appearance: choice, width: 340, anchor: anchor, presented: true)
+            return
         }
         if !self.popover.isShown {
             for other in Self.live.allObjects where other !== self { other.dismiss() }
@@ -77,6 +90,7 @@ final class AIUsageTrendPopoverController: NSObject, NSPopoverDelegate {
         if self.state.isPinned { self.hosting.window?.makeKey() }
     }
     private func resize() {
+        if choice.isRetro { synchronize(); return }
         let size = self.hosting.fittingSize
         self.popover.contentSize = NSSize(width: 340, height: max(1, ceil(size.height)))
     }

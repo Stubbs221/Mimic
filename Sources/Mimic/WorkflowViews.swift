@@ -16,7 +16,7 @@ struct ToolContent: View {
                 Text(text(tool.descriptionKey)).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let project = model.project {
                     Label(URL(fileURLWithPath: project.path).lastPathComponent + " · " + project.branch, systemImage: "folder")
-                        .mimicFont(.caption).lineLimit(2).help(project.path)
+                        .mimicFont(.caption).lineLimit(2).mimicHelp(project.path)
                 }
                 if action == .generation { GeneratorForm(model: model) }
                 else {
@@ -75,10 +75,10 @@ struct GeneratorForm: View {
                 VStack(alignment: .leading, spacing: MimicMetrics.medium) {
                     Picker(text("generator.type"), selection: self.$model.generatorKind) {
                         ForEach(GeneratorKind.allCases, id: \.self) { Text(text("tools.generator." + $0.rawValue)).tag($0) }
-                    }.pickerStyle(.segmented)
+                    }.pickerStyle(.segmented).mimicSegments(selection: $model.generatorKind, options: GeneratorKind.allCases.map { .init(text("tools.generator." + $0.rawValue), $0) })
                     Text(text(self.model.generatorKind.titleKey + ".description")).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Text(text("generator.name")).mimicFont(.caption, weight: .medium)
-                    TextField(text("generator.name.placeholder"), text: self.$model.generatorName).textFieldStyle(.roundedBorder).accessibilityLabel(text("generator.name"))
+                    TextField(text("generator.name.placeholder"), text: self.$model.generatorName).textFieldStyle(.roundedBorder).mimicInput().accessibilityLabel(text("generator.name"))
                     Text(text("generator.name.hint")).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     if !self.model.generatorName.isEmpty, !GenerationRequest.validName(self.model.generatorName) { Text(text("generator.name.invalid")).mimicFont(.caption).foregroundStyle(.orange) }
                 }.disabled(self.model.switchingBranch)

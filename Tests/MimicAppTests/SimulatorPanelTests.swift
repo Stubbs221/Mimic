@@ -96,6 +96,94 @@ private struct SimulatorPanelGit: GitBranchService {
 
 @Suite(.serialized) @MainActor
 struct SimulatorPanelTests {
+    private func physicalDevice(connected: Bool = true, id: UUID = UUID()) -> SimulatorDevice {
+        .init(id: id, name: "iPad Pro лаборатории · 11 дюймов · 3-е поколение 🧪", runtime: "iPadOS 18.7.8", state: connected ? "connected" : "disconnected",
+              physical: .init(udid: "00008103-TEST", transport: "wired", screenViewingURL: URL(string: "devices://device/open?id=" + id.uuidString)))
+    }
+
+    @Test func connectedPhysicalDeviceLeadsAllActiveAndCompactCatalogues() {
+        let ipad = self.physicalDevice(), simulator = self.device(booted: true), recent = self.device("Recent")
+        var usage = SimulatorUsage(); usage.record(recent.id, developer: "/Xcode")
+        let presentation = SimulatorPresentation(devices: [recent, simulator, ipad], usage: usage, developer: "/Xcode")
+        #expect(presentation.ordered.first == ipad)
+        #expect(presentation.compact(full: false) == [ipad])
+        #expect(presentation.compact(full: true) == [ipad, simulator])
+        #expect(presentation.catalog(filter: .booted, search: "") == [ipad, simulator])
+        #expect(presentation.catalog(filter: .all, search: "00008103-TEST") == [ipad])
+        #expect(presentation.catalog(filter: .all, search: "подключён") == [ipad])
+        let offline = self.physicalDevice(connected: false, id: ipad.id)
+        let disconnected = SimulatorPresentation(devices: [offline, simulator], usage: usage, developer: "/Xcode")
+        #expect(disconnected.catalog(filter: .booted, search: "") == [simulator])
+        #expect(SimulatorPresentation.status(offline) == text("devices.disconnected"))
+    }
+
+    @Test func physicalActivationOpensScreenWithoutEnqueuingSimctl() async throws {
+        let fixture = try SimulatorPanelFixture(); defer { fixture.cleanUp() }
+        let ipad = self.physicalDevice(); fixture.install([ipad])
+        #expect(fixture.model.canActivateSimulator(ipad))
+        fixture.model.activateSimulator(ipad); fixture.model.activateSimulator(ipad)
+        try await self.wait { fixture.opener.opened == [ipad.id] && fixture.model.simulatorOpening.isEmpty }
+        #expect(fixture.model.records.isEmpty && fixture.model.simulatorAdmissions.isEmpty)
+        fixture.model.requestSimulator(.simulatorBoot, device: ipad)
+        fixture.model.requestSimulator(.simulatorShutdown, device: ipad)
+        #expect(fixture.model.records.isEmpty && fixture.model.simulatorAdmissions.isEmpty)
+        #expect(fixture.model.bootedSimulators.isEmpty)
+        let offline = self.physicalDevice(connected: false, id: ipad.id); fixture.install([offline])
+        fixture.model.activateSimulator(offline)
+        #expect(!fixture.model.canActivateSimulator(offline) && fixture.opener.opened == [ipad.id])
+    }
+
+    @Test func coreDeviceFailureRetainsDisabledPhysicalCardsAndUsableSimulators() async throws {
+        let fixture = try SimulatorPanelFixture(); defer { fixture.cleanUp() }
+        let ipad = self.physicalDevice(), simulator = self.device(booted: true); fixture.install([ipad, simulator])
+        fixture.model.refreshSimulators(); try await self.waitForCatalog(fixture, count: 1)
+        await fixture.catalog.finish(.success(.init(devices: [simulator], developer: fixture.project.developerDirectory!, physicalError: "CoreDevice unavailable")))
+        try await self.wait { !fixture.model.loadingSimulators }
+        #expect(fixture.model.simulators.contains(ipad) && !fixture.model.canActivateSimulator(ipad))
+        #expect(fixture.model.canActivateSimulator(simulator) && !fixture.model.simulatorStale)
+        fixture.model.refreshSimulators(); try await self.waitForCatalog(fixture, count: 2)
+        let offline = self.physicalDevice(connected: false, id: ipad.id)
+        await fixture.catalog.finish(.success(.init(devices: [simulator, offline], developer: fixture.project.developerDirectory!)))
+        try await self.wait { !fixture.model.loadingSimulators }
+        #expect(fixture.model.simulatorPanel.physicalError.isEmpty)
+        #expect(fixture.model.simulators.contains(offline) && !fixture.model.simulators.contains(ipad))
+        #expect(!fixture.model.canActivateSimulator(offline))
+    }
+
+    @Test func physicalWindowTargetRequiresSelectedXcodeDeviceHub() throws {
+        let developer = "/Applications/Selected.app/Contents/Developer"
+        #expect(try SimulatorWindowTarget.application(developer: developer, physical: true, exists: { $0.hasSuffix("DeviceHub.app") }).path == "/Applications/Selected.app/Contents/Applications/DeviceHub.app")
+        #expect(throws: MimicError.invalidSimulator) {
+            try SimulatorWindowTarget.application(developer: developer, physical: true, exists: { $0.hasSuffix("Simulator.app") })
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func physicalMiniAndFullExposeWorkingScreenAction(full: Bool) async throws {
+        let fixture = try SimulatorPanelFixture(); defer { fixture.cleanUp() }
+        let ipad = self.physicalDevice(); fixture.install([self.device(booted: true), ipad])
+        let host = NSHostingView(rootView: self.card(fixture.model, full: full).environment(\.mimicPanelAppearance, .tileGrid))
+        let window = NSWindow(contentRect: NSRect(x: 250, y: 300, width: full ? 488 : 238, height: 160), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.makeKeyAndOrderFront(nil); defer { window.close() }
+        try await Task.sleep(for: .milliseconds(50)); host.layoutSubtreeIfNeeded()
+        // SwiftPM can render the view; only a launched AppKit host exposes its AX buttons.
+        if ProcessInfo.processInfo.environment["MIMIC_SIMULATOR_AX_FIXTURE"] == "1" {
+            let action = try #require(self.find(host, "device.openScreen." + ipad.id.uuidString))
+            #expect(self.find(host, "simulator.actions." + ipad.id.uuidString) != nil)
+            #expect(action.accessibilityPerformPress())
+            try await self.wait { fixture.opener.opened == [ipad.id] }
+        }
+        #expect(host.bounds.width == (full ? 488 : 238) && host.bounds.height == 160)
+        #expect(fixture.model.expandedSection == nil && fixture.model.records.isEmpty)
+        if let directory = ProcessInfo.processInfo.environment["MIMIC_DEVICE_SCREENSHOTS"] {
+            for dark in [false, true] {
+                window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua); host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds)); host.cacheDisplay(in: host.bounds, to: bitmap)
+                try #require(bitmap.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: directory).appendingPathComponent("physical-\(full ? "full" : "mini")-\(dark ? "dark" : "light").png"))
+            }
+        }
+    }
+
     @Test func backgroundRefreshDoesNotInvalidateInitialLoadingReaders() {
         let panel = SimulatorPanelState()
         let initial = PanelObservationCounter()

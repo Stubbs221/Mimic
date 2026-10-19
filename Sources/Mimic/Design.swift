@@ -108,7 +108,11 @@ struct MimicCardBackground: ViewModifier {
     private var accessibility = MimicAccessibility()
     private var theme = MimicTheme()
     func body(content: Content) -> some View {
-        content.background(theme.tiled ? theme.color("surface") : Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: theme.tiled ? theme.cardRadius : MimicMetrics.surfaceRadius))
+        content.background {
+            if theme.retro { NativeRetroArtwork(appearance: theme.appearance) }
+            else { RoundedRectangle(cornerRadius: theme.tiled ? theme.cardRadius : MimicMetrics.surfaceRadius)
+                .fill(theme.tiled ? theme.color("surface") : Color(nsColor: .controlBackgroundColor)) }
+        }
             .overlay(RoundedRectangle(cornerRadius: theme.tiled ? theme.cardRadius : MimicMetrics.surfaceRadius)
                 .strokeBorder(.primary.opacity(self.accessibility.increasedContrast ? 0.45 : theme.tiled ? 0 : 0.12), lineWidth: 1))
     }
@@ -148,6 +152,7 @@ struct Surface<Content: View>: View {
 
 /// Semantic press/focus state is immediate; pointer feedback has a short visual transition.
 struct RowButtonStyle: ButtonStyle {
+    private var theme = MimicTheme()
     private let contentInsets: EdgeInsets
     private let showsHoverBackground: Bool
     private var accessibility = MimicAccessibility()
@@ -165,8 +170,8 @@ struct RowButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.padding(self.contentInsets).foregroundStyle(Color.primary)
-            .opacity(!self.enabled ? 0.45 : configuration.isPressed ? 0.75 : 1)
-            .scaleEffect(configuration.isPressed && !self.accessibility.reduceMotion ? 0.99 : 1)
+            .opacity(!self.enabled ? 0.45 : configuration.isPressed && !theme.retro ? 0.75 : 1)
+            .scaleEffect(configuration.isPressed && !theme.retro && !self.accessibility.reduceMotion ? 0.99 : 1)
             .background(.primary.opacity(self.showsHoverBackground && self.enabled && self.hovered ? self.accessibility.increasedContrast ? 0.12 : 0.06 : 0), in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(self.focused ? 0.8 : 0), lineWidth: 2))
             .contentShape(RoundedRectangle(cornerRadius: 8))
@@ -240,7 +245,9 @@ struct MimicButtonStyle: PrimitiveButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         Group {
-            if theme.tiled {
+            if theme.retro {
+                Button(configuration).buttonStyle(NativeRetroPrimitiveButtonStyle(height: min(height, 28), selected: selected))
+            } else if theme.tiled {
                 Button(role: configuration.role, action: configuration.trigger) { configuration.label }
                     .buttonStyle(TileGridButtonStyle(primary: primary, selected: selected, height: height))
             } else if self.primary || self.selected {
@@ -269,7 +276,8 @@ struct MimicChrome<Content: View>: View {
     init(@ViewBuilder content: () -> Content) { self.content = content() }
     var body: some View {
         Group {
-            if theme.tiled { self.content.background(theme.color("paper")) }
+            if theme.retro { self.content.foregroundStyle(.white).frame(minHeight: NativeRetro.titleHeight(theme.appearance)).background(NativeRetroArtwork(appearance: theme.appearance, kind: .title)) }
+            else if theme.tiled { self.content.background(theme.color("paper")) }
             else if #available(macOS 26.0, *), !self.accessibility.reduceTransparency, !self.accessibility.increasedContrast {
                 self.content.glassEffect(.regular, in: Rectangle())
             } else {
@@ -281,11 +289,12 @@ struct MimicChrome<Content: View>: View {
 
 /// Scroll edges separate the document from pinned controls, without more glass.
 struct MimicScrollEdges: ViewModifier {
+    private var theme = MimicTheme()
     private var accessibility = MimicAccessibility()
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
             content.scrollEdgeEffectStyle(.soft, for: .vertical)
-                .scrollEdgeEffectHidden(self.accessibility.reduceTransparency || self.accessibility.increasedContrast, for: .vertical)
+                .scrollEdgeEffectHidden(theme.retro || self.accessibility.reduceTransparency || self.accessibility.increasedContrast, for: .vertical)
         } else { content }
     }
 }

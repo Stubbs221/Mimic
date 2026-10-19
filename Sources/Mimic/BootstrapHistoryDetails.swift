@@ -56,7 +56,7 @@ struct BootstrapHistoryDetails: View {
             }
             if let error = self.record.error {
                 Text(DiagnosticText.clean(error)).mimicFont(.caption).foregroundStyle(.orange)
-                    .lineLimit(2).help(error).textSelection(.enabled)
+                    .lineLimit(2).mimicHelp(error).textSelection(.enabled)
             }
             BootstrapHistoryTerminal(model: self.model, record: self.record).id(self.record.id)
                 .frame(height: 240).clipShape(RoundedRectangle(cornerRadius: 10)).mimicImmediate()
