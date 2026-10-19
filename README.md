@@ -7,7 +7,7 @@
 
 [Русский](README.md) · [English](README.en.md)
 
-<a href="docs/MimicSetup.md"><img src="docs/images/badge-release.svg" alt="Mimic 1.5.0"></a>
+<a href="docs/MimicSetup.md"><img src="docs/images/badge-release.svg" alt="Mimic 1.6.0"></a>
 <a href="docs/MimicSetup.md"><img src="docs/images/badge-macos.svg" alt="macOS 14+"></a>
 <a href="docs/MimicSetup.md"><img src="docs/images/badge-architecture.svg" alt="Apple Silicon"></a>
 <a href="LICENSE"><img src="docs/images/badge-license.svg" alt="MIT"></a>
@@ -15,12 +15,12 @@
 <br><br>
 <img src="docs/images/readme-hero-ru.png" alt="Mimic: Tile Grid в приложении macOS и панели Codex; рабочие данные скрыты" width="1040">
 
-[**Скачать Mimic 1.5.0**](https://github.com/Stubbs221/Mimic/releases/tag/v1.5.0) · [**Установка за несколько шагов**](docs/MimicSetup.md) · [Что нового](CHANGELOG.md)
+[**Скачать Mimic 1.6.0**](https://github.com/Stubbs221/Mimic/releases/tag/v1.6.0) · [**Установка за несколько шагов**](docs/MimicSetup.md) · [Что нового](CHANGELOG.md)
 
 </div>
 
 > [!TIP]
-> **Mimic 1.5.0 · build 150 · 9 октября 2026.** Подписан Developer ID и прошёл нотарификацию Apple. Установи готовое приложение или обновись с 1.4.0 через **Настройки → Основные**.
+> **Mimic 1.6.0 · build 161 · 19 октября 2026.** Подписан Developer ID и прошёл нотарификацию Apple. Установи готовое приложение или обновись через **Настройки → Основные**.
 
 Mimic собирает привычные сценарии команды в одном месте: подготовку проекта, инструменты, сборки, выбранные тесты и CI. Открывай панель из строки меню или работай рядом с агентом в Codex. **Один исполнитель, общая очередь и история; у каждого чата свой контекст проекта.**
 
@@ -37,7 +37,7 @@ Mimic собирает привычные сценарии команды в о�
 [**Все HTML одним архивом**](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.6.0/Mimic-1.6.0-HTML.zip) — распакуй три файла рядом для переходов между документами. [О материалах](docs/releases/1.6.0/README.md).
 
 
-Публикация 1.6.0 готовится. [Материалы стабильной 1.5.0](docs/releases/1.5.0/README.md) сохранены; ссылка на загрузку приложения ниже по-прежнему ведёт на стабильный выпуск.
+[Релиз 1.6.0](https://github.com/Stubbs221/Mimic/releases/tag/v1.6.0) опубликован. Иллюстрации выше относятся к предварительной сборке 160. [Материалы 1.5.0](docs/releases/1.5.0/README.md) сохранены.
 
 ## Меньше переключений. Больше дела.
 
@@ -57,9 +57,9 @@ Mimic собирает привычные сценарии команды в о�
 
 <sub>macOS — реальные экраны установленной 1.5.0/150. Codex и Simulator — свежие preview bundled HTML 1.5.0 с безопасными фикстурами; экран устройства демонстрационный. Рабочие данные скрыты непрозрачно. [Об изображениях](docs/images/README.md).</sub>
 
-## Готовится 1.6.0
+## Новое в 1.6.0
 
-Контекст Jira/Confluence, карточки задачи Mini и Full по макету 02, документы по запросу и исправление ресурсов установленного приложения. Кандидат 1.6.0/161 проходит подготовку; опубликованная стабильная версия ниже остаётся 1.5.0. [Изменения](CHANGELOG.md).
+Контекст Jira/Confluence, карточки задачи Mini и Full по макету 02, документы по запросу и исправление ресурсов установленного приложения. [Mimic 1.6.0/161 доступен для загрузки](https://github.com/Stubbs221/Mimic/releases/tag/v1.6.0). [Изменения](CHANGELOG.md).
 
 ## Новое в 1.5.0
 

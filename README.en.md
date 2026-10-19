@@ -7,7 +7,7 @@
 
 [Русский](README.md) · [English](README.en.md)
 
-<a href="docs/MimicSetup.md"><img src="docs/images/badge-release.svg" alt="Mimic 1.5.0"></a>
+<a href="docs/MimicSetup.md"><img src="docs/images/badge-release.svg" alt="Mimic 1.6.0"></a>
 <a href="docs/MimicSetup.md"><img src="docs/images/badge-macos.svg" alt="macOS 14+"></a>
 <a href="docs/MimicSetup.md"><img src="docs/images/badge-architecture.svg" alt="Apple Silicon"></a>
 <a href="LICENSE"><img src="docs/images/badge-license.svg" alt="MIT"></a>
@@ -15,12 +15,12 @@
 <br><br>
 <img src="docs/images/readme-hero-en.png" alt="Mimic Tile Grid on macOS and in Codex, with working data redacted" width="1040">
 
-[**Download Mimic 1.5.0**](https://github.com/Stubbs221/Mimic/releases/tag/v1.5.0) · [**Get started**](docs/MimicSetup.md) · [What's new](CHANGELOG.md)
+[**Download Mimic 1.6.0**](https://github.com/Stubbs221/Mimic/releases/tag/v1.6.0) · [**Get started**](docs/MimicSetup.md) · [What's new](CHANGELOG.md)
 
 </div>
 
 > [!TIP]
-> **Mimic 1.5.0 · build 150 · October 9, 2026.** Developer ID signed and Apple notarized. Install the ready-to-use app or update from 1.4.0 in **Настройки → Основные**.
+> **Mimic 1.6.0 · build 161 · October 19, 2026.** Developer ID signed and Apple notarized. Install the ready-to-use app or update in **Настройки → Основные**.
 
 Mimic brings your team's familiar workflows together: project preparation, tools, builds, selected tests and CI. Open it from the menu bar or work beside your agent in Codex. **One executor, a shared queue and history, and a separate project context for each chat.**
 
@@ -37,7 +37,7 @@ Materials for preliminary **candidate 1.6.0/160**, prepared on October 13. Task-
 [**All HTML in one ZIP**](https://github.com/Stubbs221/Mimic/raw/refs/heads/main/docs/releases/1.6.0/Mimic-1.6.0-HTML.zip) — extract the three files together for navigation between documents. [About the materials](docs/releases/1.6.0/README.md).
 
 
-Publication of 1.6.0 is being prepared. [Stable 1.5.0 materials](docs/releases/1.5.0/README.md) remain available; the app download below still points to the stable release.
+[Release 1.6.0](https://github.com/Stubbs221/Mimic/releases/tag/v1.6.0) is published. The illustrations above show preliminary build 160. [Version 1.5.0 materials](docs/releases/1.5.0/README.md) remain available.
 
 ## Less switching. More doing.
 
@@ -57,9 +57,9 @@ Screen, taps, swipes, typing, Home and rotation stay inside the panel. Image and
 
 <sub>macOS captures show installed 1.5.0/150. Codex and Simulator are fresh previews of bundled 1.5.0 HTML with safe fixtures; the device screen is a demonstration. Working data has opaque pixel redactions. [Image notes](docs/images/README.md).</sub>
 
-## Preparing 1.6.0
+## New in 1.6.0
 
-Jira/Confluence context, Mini and Full task cards matching design 02, documents on demand, and installed-app resource fixes. Candidate 1.6.0/161 is being prepared; the published stable version below remains 1.5.0. [Changes](CHANGELOG.md).
+Jira/Confluence context, Mini and Full task cards matching design 02, documents on demand, and installed-app resource fixes. [Mimic 1.6.0/161 is available for download](https://github.com/Stubbs221/Mimic/releases/tag/v1.6.0). [Changes](CHANGELOG.md).
 
 ## New in 1.5.0
 
