@@ -1,10 +1,32 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
 --><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-  <!-- Created by Василий Маслов on 09.10.2026. -->
+  <!-- Created by Василий Маслов on 19.10.2026. -->
   <channel>
     <title>Mimic</title>
     <link>https://github.com/Stubbs221/Mimic</link>
+    <item>
+      <title>Mimic 1.6.0</title>
+      <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 19.10.2026. --&gt;
+# Mimic 1.6.0
+
+- Задача Jira и связанные документы Confluence рядом с рабочими инструментами: определение задачи из ветки, поиск и ручной выбор.
+- Карточки задачи Mini и Full по макету 02 сохраняют общую высоту. Контекст копируется прямо из карточки; документы открываются по запросу, дополнительные действия доступны в меню ключа.
+- В Codex исправлены размеры и оформление кнопок, сохранение клавиатурного фокуса при обновлении и поведение списка документов.
+- Черновик отчёта собирает выбранные результаты проверок для ручной отправки. Mimic не публикует комментарии и не изменяет Jira или Confluence.
+- Исправлены ресурсы установленного приложения и блокировка переключения ветки фоновым снимком симулятора. Улучшены статистика AI, обнаружение физических устройств, ввод терминала и наблюдение CI при простое.
+
+Apple Silicon · macOS 14+ · build 161. Профиль команды устанавливается отдельно. Для экрана Simulator требуется Xcode 27+.
+
+[Установка](https://github.com/Stubbs221/Mimic/blob/v1.6.0/docs/MimicSetup.md) · [Jira и Confluence, включая ограничения Cloud](https://github.com/Stubbs221/Mimic/blob/v1.6.0/docs/Atlassian.md) · [Изменения](https://github.com/Stubbs221/Mimic/blob/v1.6.0/CHANGELOG.md)
+</description>
+      <pubDate>Mon, 19 Oct 2026 13:44:53 GMT</pubDate>
+      <sparkle:version>161</sparkle:version>
+      <sparkle:shortVersionString>1.6.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <enclosure url="https://github.com/Stubbs221/Mimic/releases/download/v1.6.0/Mimic-1.6.0.zip" length="19623948" type="application/octet-stream" sparkle:edSignature="ZHHIw+zML+cnVIK+B9tjTJOipVXB8lVzH1RbtHaECjyg3EFo2sCprjusnEcnepyHXcNMeQtbudbAINtNvWreCw=="></enclosure>
+    </item>
     <item>
       <title>Mimic 1.5.0</title>
       <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 09.10.2026. --&gt;
@@ -90,6 +112,6 @@ Apple-разработка под рукой — в macOS и внутри Codex.
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: SyINZw8Y9XbegkFzKlCEx3ZBB8W2Glu4Uo1Y/ZLMxKESNtj0lHTrGttU4tWCb7CqI61U8Mk6KbGNvnFy0vF6AQ==
-length: 11615
+edSignature: 1NRkO490wjqBhmS7wB+CQfrFRGAz2c+G6shchWMt+dfnMonxz03QwMOWt/bXHwqZvpFYQVcAykjQBqTyTIYyBQ==
+length: 14312
 -->
