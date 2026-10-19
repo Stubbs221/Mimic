@@ -60,7 +60,14 @@ BUILD_PATH="${MIMIC_BUILD_PATH:-$PWD/.build}"
 MIMIC_SIGNING_IDENTITY="$MIMIC_SELECTED_IDENTITY"
 MIMIC_SIGN_FLAGS=(--force --sign "$MIMIC_SIGNING_IDENTITY")
 if [ "$MIMIC_SIGNING_IDENTITY" != '-' ]; then
-  MIMIC_SIGN_FLAGS+=(--options runtime --timestamp)
+  # An explicit Apple TSA alias handles local DNS failures while retaining a signed timestamp.
+  case "${MIMIC_TIMESTAMP_URL:-}" in
+    '') MIMIC_TIMESTAMP_FLAG=--timestamp ;;
+    http://timestamp.apple.com/ts01|http://timestamp.v.aaplimg.com/ts01)
+      MIMIC_TIMESTAMP_FLAG="--timestamp=$MIMIC_TIMESTAMP_URL" ;;
+    *) echo 'MIMIC_TIMESTAMP_URL must name an approved Apple timestamp endpoint.' >&2; exit 64 ;;
+  esac
+  MIMIC_SIGN_FLAGS+=(--options runtime "$MIMIC_TIMESTAMP_FLAG")
 fi
 MIMIC_BUILD_FLAGS=(-Xswiftc -debug-prefix-map -Xswiftc "$PWD=./Mimic" -Xcc "-fdebug-prefix-map=$PWD=./Mimic")
 if [ "${MIMIC_SWIFTPM_DISABLE_SANDBOX:-false}" = true ]; then MIMIC_BUILD_FLAGS+=(--disable-sandbox); fi
