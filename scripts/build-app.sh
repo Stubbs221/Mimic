@@ -63,7 +63,7 @@ if [ "$MIMIC_SIGNING_IDENTITY" != '-' ]; then
   # An explicit Apple TSA alias handles local DNS failures while retaining a signed timestamp.
   case "${MIMIC_TIMESTAMP_URL:-}" in
     '') MIMIC_TIMESTAMP_FLAG=--timestamp ;;
-    http://timestamp.apple.com/ts01|http://timestamp.v.aaplimg.com/ts01)
+    http://timestamp.apple.com/ts01|http://timestamp.v.aaplimg.com/ts01|http://17.157.80.35/ts01)
       MIMIC_TIMESTAMP_FLAG="--timestamp=$MIMIC_TIMESTAMP_URL" ;;
     *) echo 'MIMIC_TIMESTAMP_URL must name an approved Apple timestamp endpoint.' >&2; exit 64 ;;
   esac
