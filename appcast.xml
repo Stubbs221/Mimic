@@ -1,10 +1,33 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
 --><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-  <!-- Created by Василий Маслов on 19.10.2026. -->
+  <!-- Created by Василий Маслов on 21.10.2026. -->
   <channel>
     <title>Mimic</title>
     <link>https://github.com/Stubbs221/Mimic</link>
+    <item>
+      <title>Mimic 1.7.0</title>
+      <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 21.10.2026. --&gt;
+# Mimic 1.7.0
+
+- Исправлено применение профильных настроек: контрольная сумма состояния больше не вызывает ошибку `parameter`.
+- Черновики сохраняются при неудачном перечитывании, закрытии представления и потере связи с Codex-панелью.
+- Восстановление связи продолжает наблюдение за исходным запросом без повторной отправки изменений. Поздние ответы не подменяют другую цель или новый контекст.
+- Настройки подтверждаются только после успешного завершения процесса. Сервисные команды больше не используют старое окружение после ошибки чтения.
+- Усилены проверка структурированных результатов и защита от повторного выполнения при повреждении локального журнала запросов.
+- Исправлены зависания MCP при передаче сообщений и ожидание штатного выхода приложения при локальном обновлении.
+
+Apple Silicon · macOS 14+ · build 170. Профиль команды устанавливается отдельно. Для экрана Simulator требуется Xcode 27+.
+
+[Установка](https://github.com/Stubbs221/Mimic/blob/main/docs/MimicSetup.md) · [Все изменения](https://github.com/Stubbs221/Mimic/blob/main/CHANGELOG.md)
+</description>
+      <pubDate>Wed, 21 Oct 2026 16:49:39 GMT</pubDate>
+      <sparkle:version>170</sparkle:version>
+      <sparkle:shortVersionString>1.7.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <enclosure url="https://github.com/Stubbs221/Mimic/releases/download/v1.7.0/Mimic-1.7.0.zip" length="19633401" type="application/octet-stream" sparkle:edSignature="enhUez0rbb5UbT7a/iNLv6R4lPmf+WWzCYqafaSB8bmRRYJ+jKyWQ9puqnZVQWKCyxt0CA6Ew3bL+ul52HqmCg=="></enclosure>
+    </item>
     <item>
       <title>Mimic 1.6.0</title>
       <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 19.10.2026. --&gt;
@@ -112,6 +135,6 @@ Apple-разработка под рукой — в macOS и внутри Codex.
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: 1NRkO490wjqBhmS7wB+CQfrFRGAz2c+G6shchWMt+dfnMonxz03QwMOWt/bXHwqZvpFYQVcAykjQBqTyTIYyBQ==
-length: 14312
+edSignature: zypA/mKe83qtRCHch4mWrussfypOKc2a1BcdEu7Gci4ws4kuS80+ntAUAqw0IxeP0Cfh6PR2YTJWPhsm/4weBA==
+length: 16870
 -->
