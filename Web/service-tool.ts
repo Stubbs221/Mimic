@@ -70,7 +70,7 @@ export class ServiceToolPanel {
   try{let result=await this.call<Result>('panel_service_run',{toolID:this.definition.id,context,requestID,actionID:this.actionID,variantID:this.currentVariant().id,uid:this.uid.value.trim(),parameters});
    while(result.phase==='pending'){await new Promise(resolve=>setTimeout(resolve,200));result=await this.call<Result>('panel_service_result',{toolID:this.definition.id,context,requestID});if(generation!==this.generation)return;}
    if(generation===this.generation){this.result=result;this.pending=false;await this.refresh();this.prefillPhone();}
-  }catch(error){if(generation===this.generation){const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';this.result={requestID,phase:['arguments','context','namespace','updating'].includes(code)?'failed':'unknown'};}}
+  }catch(error){if(generation===this.generation){const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';this.result={requestID,phase:code==='servicePersistence'?'persistence':['arguments','context','namespace','updating'].includes(code)?'failed':'unknown'};}}
   finally{if(generation===this.generation){this.pending=false;this.paint();}}
  }
  private dialog(title:string){this.popup?.remove();const dialog=node('dialog','','service-dialog');const heading=node('div','','service-actions');heading.append(node('strong',title),this.button(this.t('close'),()=>dialog.close()));dialog.append(heading);document.body.append(dialog);dialog.showModal();this.popup=dialog;return dialog;}

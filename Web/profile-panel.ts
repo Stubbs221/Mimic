@@ -6,7 +6,7 @@ type Context={checkoutId:string;profileRevision:string|null;[key:string]:unknown
 const node=<K extends keyof HTMLElementTagNameMap>(tag:K,text='')=>{const n=document.createElement(tag);n.textContent=text;return n;};
 
 export class ProfilePanel {
- readonly host=node('div');private context:Context|null=null;private identity='';private generation=0;private pending=false;private result:PanelResult|null=null;private revision='';private baseline:Record<string,string>={};private values:Record<string,string>={};private conflict=false;private notice='';private activeRequest:{key:string;id:string}|null=null;
+ readonly host=node('div');private context:Context|null=null;private identity='';private generation=0;private pending=false;private result:PanelResult|null=null;private revision='';private baseline:Record<string,string>={};private values:Record<string,string>={};private conflict=false;private notice='';private activeRequest:{id:string;operation:string;field:string;discardDraft:boolean;target:string;draft:Record<string,string>}|null=null;
  private device=node('select');private application=node('select');private inputs=new Map<string,HTMLInputElement>();private resets=new Map<string,HTMLButtonElement>();private controls=node('div');private status=node('span');private apply:HTMLButtonElement;private resetAll:HTMLButtonElement;private reload:HTMLButtonElement;private overwrite:HTMLButtonElement;private retry:HTMLButtonElement;private refresh:HTMLButtonElement;private timer:ReturnType<typeof setInterval>;
  constructor(readonly definition:CustomPanel,private call:(name:string,args:Record<string,unknown>)=>Promise<any>,private t:(key:string)=>string,private draft:()=>Record<string,string>,private save:(value:Record<string,string>)=>void){
   this.host.className='profile-panel';this.host.dataset.panel=definition.id;
@@ -29,30 +29,38 @@ export class ProfilePanel {
  private async select(){if(this.pending)return;this.persistSelection();this.result=null;this.revision='';this.conflict=false;this.restore();this.paint();await this.run('read');}
  private persistSelection(){this.save({...this.draft(),device:this.device.value,application:this.application.value});}
  private async start(){await this.run('catalog');if(this.device.value)await this.select();}
- private valid(){return !!this.device.value&&!!this.application.value&&this.definition.fields.every(field=>{const value=(this.values[field.id]??'').trim();return !value||(field.pattern?value.length<=128&&new RegExp(field.pattern).test(value):/^[1-9][0-9]{0,19}$/.test(value));});}
+ private valid(){return !!this.device.value&&!!this.application.value&&this.definition.fields.every(field=>{const value=(this.values[field.id]??'').trim();return !value||(field.pattern?new TextEncoder().encode(value).length<=128&&new RegExp('^(?:'+field.pattern+')$').test(value):/^[1-9][0-9]{0,19}$/.test(value));});}
  private dirty(){return this.definition.fields.some(field=>(this.values[field.id]??'')!==(this.baseline[field.id]??''));}
- private async reloadValues(){this.values={};this.baseline={};this.revision='';this.conflict=false;await this.run('read');}
- private async run(operation:string,field='',force=false){
+ private async reloadValues(){await this.run('read','',false,true);}
+ private async run(operation:string,field='',force=false,discardDraft=false){
   if(this.pending||!this.context||operation!=='catalog'&&!this.device.value)return;this.pending=true;this.paint();const generation=this.generation,context=this.context;
-  const values=Object.fromEntries(this.definition.fields.map(field=>[field.id,(this.values[field.id]??'').trim()])),parameters={operation,device:this.device.value,application:this.application.value,values:JSON.stringify(operation==='apply'?values:{}),field,expectedRevision:this.revision,force:String(force)},key=JSON.stringify([context,this.definition.actionID,parameters]);
-  if(this.activeRequest&&this.activeRequest.key!==key){this.notice=this.t('customPanel.unknown');this.pending=false;this.paint();return;}
-  this.activeRequest??={key,id:crypto.randomUUID()};
+  const values=Object.fromEntries(this.definition.fields.map(field=>[field.id,(this.values[field.id]??'').trim()])),parameters={operation,device:this.device.value,application:this.application.value,values:JSON.stringify(operation==='apply'?values:{}),field,expectedRevision:this.revision,force:String(force)};
+  // An uncertain mutation is observed by its original ID; it is never submitted again.
+  const resuming=this.activeRequest!==null;
+  this.activeRequest??={id:crypto.randomUUID(),operation,field,discardDraft,target:this.targetKey(),draft:{...this.values}};
+  const active=this.activeRequest;
+  ({operation,field,discardDraft}=this.activeRequest);
   try{
-   let record=await this.call('panel_profile_control',{context,actionID:this.definition.actionID,parameters,requestID:this.activeRequest.id});
+   let record=resuming?await this.call('get_task',{taskID:this.activeRequest.id}):await this.call('panel_profile_control',{context,actionID:this.definition.actionID,parameters,requestID:this.activeRequest.id});
+   if(generation!==this.generation)return;
    while(['queued','running'].includes(record.status)){await new Promise(resolve=>setTimeout(resolve,200));record=await this.call('get_task',{taskID:record.id});if(generation!==this.generation)return;}
-   this.activeRequest=null;if(generation!==this.generation)return;const result=record.panelResult as PanelResult|undefined;if(!result)throw new Error(this.t('customPanel.failed'));
+   if(generation!==this.generation)return;this.activeRequest=null;
+   if(active.target!==this.targetKey()){queueMicrotask(()=>{if(generation===this.generation)void this.run('read');});return;}
+   const edited=new Set(this.definition.fields.filter(field=>(this.values[field.id]??'')!==(active.draft[field.id]??'')).map(field=>field.id));
+   const result=record.panelResult as PanelResult|undefined;if(record.status!=='succeeded'||!result)throw new Error(this.t('customPanel.failed'));
    this.result=result;this.notice=this.t('customPanel.'+result.status);
    if(operation==='catalog'){const selected=this.device.value;this.device.replaceChildren(...result.devices.map(d=>new Option(d.title,d.id)));if(result.devices.some(d=>d.id===selected))this.device.value=selected;this.persistSelection();return;}
-   if(result.status==='conflict'||operation==='read'&&this.revision&&result.revision!==this.revision&&this.dirty()){this.conflict=true;return;}
+   if(result.status==='conflict'||operation==='read'&&!discardDraft&&this.revision&&result.revision!==this.revision&&this.dirty()){this.conflict=true;return;}
    if(!['ready','shutdown','saved','launchFailed'].includes(result.status))return;
    const dirty=this.dirty();this.revision=result.revision;this.baseline=result.values;this.conflict=false;
-   if(operation==='apply'||operation==='resetAll'||operation==='read'&&!dirty)this.values={...result.values};if(operation==='reset')this.values[field]='';this.persist();
-  }catch(error){if(['catalog','read'].includes(operation))this.activeRequest=null;if(generation===this.generation)this.notice=error instanceof Error?error.message:this.t('customPanel.failed');}
+   if(operation==='apply'||operation==='resetAll'){const drafts=this.values;this.values={...result.values};for(const id of edited)this.values[id]=drafts[id]??'';}
+   if(operation==='read'&&(discardDraft||!dirty))this.values={...result.values};if(operation==='reset'&&!edited.has(field))this.values[field]='';this.persist();
+  }catch(error){if(generation===this.generation){if(['catalog','read'].includes(operation))this.activeRequest=null;this.notice=error instanceof Error?error.message:this.t('customPanel.failed');}}
   finally{if(generation===this.generation){this.pending=false;this.paint();}}
  }
  private paint(){
   const unavailable=this.pending||!this.revision;for(const control of [this.device,this.application,this.refresh])control.disabled=this.pending;
-  for(const [id,input]of this.inputs){if(document.activeElement!==input)input.value=this.values[id]??'';input.disabled=this.pending;this.resets.get(id)!.disabled=unavailable||this.conflict;}
+  for(const [id,input]of this.inputs){if(document.activeElement!==input||input.disabled)input.value=this.values[id]??'';input.disabled=this.pending;this.resets.get(id)!.disabled=unavailable||this.conflict;}
   this.apply.disabled=unavailable||!this.valid();this.resetAll.disabled=unavailable;this.overwrite.disabled=this.pending||!this.valid();this.reload.disabled=this.pending;this.retry.disabled=this.pending;
   this.apply.hidden=this.resetAll.hidden=this.conflict||this.result?.status==='launchFailed';this.reload.hidden=this.overwrite.hidden=!this.conflict;this.retry.hidden=this.result?.status!=='launchFailed'||this.conflict;
   this.status.textContent=this.t(this.pending?'customPanel.working':this.conflict?'customPanel.conflict':'')||this.notice;if(!this.pending&&!this.conflict)this.status.textContent=this.notice;this.status.title=this.status.textContent;

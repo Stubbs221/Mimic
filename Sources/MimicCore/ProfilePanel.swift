@@ -11,7 +11,9 @@ public struct ProfilePanel: Codable, Equatable, Sendable, Identifiable {
         public var placeholder: String? = nil
         public func accepts(_ value: String) -> Bool {
             guard !value.isEmpty else { return true }
-            if let pattern { return value.utf8.count <= 128 && value.range(of: pattern, options: .regularExpression) != nil }
+            if let pattern {
+                return value.utf8.count <= 128 && value.range(of: pattern, options: .regularExpression) == value.startIndex..<value.endIndex
+            }
             return ProfilePanel.validValue(value)
         }
     }
@@ -42,7 +44,10 @@ public struct ProfilePanel: Codable, Equatable, Sendable, Identifiable {
         guard panels.count <= 32, Set(panels.map(\.id)).count == panels.count,
               Set(panels.map(\.actionID)).count == panels.count else { throw ProfileError.interface }
         for panel in panels {
-            for field in panel.fields { if let pattern = field.pattern { guard pattern.utf8.count <= 512, field.placeholder?.count ?? 0 <= 80 else { throw ProfileError.parameter }; _ = try NSRegularExpression(pattern: pattern) } }
+            for field in panel.fields {
+                guard field.placeholder?.count ?? 0 <= 80 else { throw ProfileError.parameter }
+                if let pattern = field.pattern { guard pattern.utf8.count <= 512 else { throw ProfileError.parameter }; _ = try NSRegularExpression(pattern: pattern) }
+            }
             guard identifier(profile.id), identifier(panel.id),
                   !panel.title.isEmpty, panel.title.count <= 80, (1...3).contains(panel.fields.count),
                   !panel.requiredFiles.isEmpty, panel.requiredFiles.allSatisfy(ProfileValidation.relativePath),
@@ -105,8 +110,11 @@ public struct ProfilePanelResult: Codable, Equatable, Sendable {
               let result = try? JSONDecoder().decode(Self.self, from: data),
               ["ready", "saved", "launchFailed", "conflict", "failed", "rollbackFailed", "unavailable", "shutdown", "notInstalled"].contains(result.status),
               Set(result.values.keys).isSubset(of: Set(panel.fields.map(\.id))),
-              result.values.values.allSatisfy({ $0.utf8.count <= 128 && DiagnosticText.clean($0) == $0 }),
-              result.revision.utf8.count <= 128, result.devices.count <= 200,
+              result.values.allSatisfy({ key, value in panel.fields.first(where: { $0.id == key })?.accepts(value) == true && DiagnosticText.clean(value) == value }),
+              result.revision.utf8.count <= 128,
+              !result.revision.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+              (result.revision.utf8.count == 64 && result.revision.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }) || DiagnosticText.clean(result.revision) == result.revision,
+              result.devices.count <= 200, Set(result.devices.map { $0.id.uppercased() }).count == result.devices.count,
               result.devices.allSatisfy({ UUID(uuidString: $0.id) != nil && $0.title.utf8.count <= 512 && DiagnosticText.clean($0.title) == $0.title }) else { return nil }
         return result
     }

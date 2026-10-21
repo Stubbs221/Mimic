@@ -1457,7 +1457,8 @@ final class TaskCoordinator: ObservableObject {
         if let pending = self.sanitizedLogPending.removeValue(forKey: id) { try? self.log?.append(Data(DiagnosticText.clean(String(decoding: pending, as: UTF8.self)).utf8)) }
         self.sanitizedLogDropping.remove(id)
         if let execution = self.records[index].profileExecution, let panel = execution.snapshot.profile.panel(forAction: execution.actionID) {
-            self.records[index].panelResult = ProfilePanelResult.parse(self.buffers[id] ?? Data(), panel: panel)
+            // Output from an interrupted or failed adapter cannot confirm saved settings.
+            self.records[index].panelResult = self.records[index].status == .succeeded ? ProfilePanelResult.parse(self.buffers[id] ?? Data(), panel: panel) : nil
             if self.records[index].panelResult == nil, self.records[index].status == .succeeded { self.records[index].status = .failed }
         }
         self.records[index].truncated = (self.log?.truncated ?? false) || self.truncatedBuffers.contains(id)

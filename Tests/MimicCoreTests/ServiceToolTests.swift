@@ -76,6 +76,20 @@ private actor ServiceTransportProbe {
         #expect(try restored.start(owner: "chat", tool: tool, context: context, actionID: "action", variantID: "default", uid: "", values: [:], requestID: id, stillCurrent: { true })["phase"] == .string("unknown"))
         #expect(await probe.count() == 1)
     }
+    @Test func corruptedReceiptsBlockSubmissionWithoutOverwritingIdentity() async throws {
+        let probe = ServiceTransportProbe(), (_, defaults, directory, suite) = try fixture(probe)
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let receipt = directory.appendingPathComponent("receipts.json"), corrupt = Data("{truncated".utf8)
+        try corrupt.write(to: receipt)
+        let coordinator = ServiceToolCoordinator(defaults: defaults, directory: directory, transport: { try await probe.send($0) })
+        let tool = try definition()
+        #expect(throws: ServiceToolError.persistence) {
+            try coordinator.start(owner: "chat", tool: tool, context: context, actionID: "action", variantID: "default", uid: "", values: [:], requestID: UUID(), stillCurrent: { true })
+        }
+        #expect(await probe.count() == 0)
+        #expect(try Data(contentsOf: receipt) == corrupt)
+    }
     @Test func sameUserSerializesAcrossChatsAndBusinessFailureIsNotSuccess() async throws {
         let probe = ServiceTransportProbe(), (coordinator, defaults, directory, suite) = try fixture(probe)
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }

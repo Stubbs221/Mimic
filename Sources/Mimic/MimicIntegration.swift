@@ -105,6 +105,7 @@ import MimicCore
             catch let error as AppleSimulatorError { let code = String(describing: error); return .init(id: request.id, error: code, message: text("simulator.error." + code)) }
             catch let error as JenkinsConnectionError { return .init(id: request.id, error: error.localizationKey, message: text(error.localizationKey)) }
             catch let error as CIError { return .init(id: request.id, error: error.localizationKey, message: text(error.localizationKey)) }
+            catch ServiceToolError.persistence { return .init(id: request.id, error: "servicePersistence", message: text("service.persistence")) }
             catch { return .init(id: request.id, error: "unavailable", message: text("mcp.error.unavailable")) }
         } } catch { self.connectionMessage = text("mcp.error.unavailable") }
     }

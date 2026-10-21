@@ -286,7 +286,10 @@ public enum ProfileValidation {
         var result: [String: String] = [:]
         for parameter in action.parameters {
             let value = supplied[parameter.id] ?? parameter.defaultValue
-            guard DiagnosticText.clean(value) == value, value.utf8.count <= 4096, !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw ProfileError.parameter }
+            // Adapter revisions are SHA-256 identities, not base64 credential material.
+            let revisionDigest = parameter.id == "expectedRevision" && value.utf8.count == 64
+                && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+            guard revisionDigest || DiagnosticText.clean(value) == value, value.utf8.count <= 4096, !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw ProfileError.parameter }
             let visible = parameter.visibleWhen?.allSatisfy { key, expected in (supplied[key] ?? action.parameters.first(where: { $0.id == key })?.defaultValue) == expected } ?? true
             if visible, parameter.required, value.isEmpty { throw ProfileError.parameter }
             if !value.isEmpty {

@@ -19,6 +19,7 @@ private final class ServiceNoRedirect: NSObject, URLSessionTaskDelegate, @unchec
     private let receiptURL: URL
     private let transport: Transport
     private var receipts: [String: Receipt]
+    private let receiptsReadable: Bool
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var tails: [String: Task<Void, Never>] = [:]
     private var tailIDs: [String: UUID] = [:]
@@ -28,7 +29,14 @@ private final class ServiceNoRedirect: NSObject, URLSessionTaskDelegate, @unchec
     public init(defaults: UserDefaults = .standard, directory: URL? = nil, transport: @escaping Transport = ServiceToolCoordinator.http) {
         self.defaults = defaults; self.transport = transport
         receiptURL = (directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mimic/ServiceTools")).appendingPathComponent("receipts.json")
-        receipts = (try? Data(contentsOf: receiptURL)).flatMap { try? JSONDecoder().decode([String: Receipt].self, from: $0) } ?? [:]
+        do {
+            receipts = try JSONDecoder().decode([String: Receipt].self, from: Data(contentsOf: receiptURL))
+            receiptsReadable = true
+        } catch {
+            receipts = [:]
+            // Losing durable request identity must never turn a retry into another HTTP mutation.
+            receiptsReadable = (error as? CocoaError)?.code == .fileReadNoSuchFile
+        }
     }
 
     // MARK: - Per-surface ordinary state
@@ -66,6 +74,7 @@ private final class ServiceNoRedirect: NSObject, URLSessionTaskDelegate, @unchec
     // MARK: - Admission and non-replayable execution
 
     public func start(owner: String, tool: ServiceTool, context: ServiceToolContext, actionID: String, variantID: String, uid: String, values: [String: String], requestID: UUID, stillCurrent: @escaping @MainActor () -> Bool) throws -> BridgeValue {
+        guard receiptsReadable else { throw ServiceToolError.persistence }
         guard let action = tool.actions.first(where: { $0.id == actionID }), let variant = action.variants.first(where: { $0.id == variantID }),
               !action.usesUID || Self.validUID(uid), Set(values.keys).isSubset(of: Set(variant.fields.map(\.id))) else { throw ServiceToolError.arguments }
         let scope = Self.scope(owner: owner, tool: tool.id, context: context)

@@ -10,9 +10,12 @@ extension TaskCoordinator {
             record.project.path == project.path && record.profileExecution?.snapshot.revision == snapshot.revision &&
             record.profileExecution?.actionID == panel?.actionID && record.profileExecution?.parameters["device"] == selection[0] &&
             record.profileExecution?.parameters["application"] == selection[1] &&
-            ["ready", "shutdown", "saved", "launchFailed"].contains(record.panelResult?.status ?? "")
+            ![.queued, .running].contains(record.status)
         } : nil
-        let value = record?.panelResult
+        // A newer failed/unavailable read invalidates routing from an older successful read.
+        let value = record.flatMap { record in
+            record.status == .succeeded && ["ready", "shutdown", "saved", "launchFailed"].contains(record.panelResult?.status ?? "") ? record.panelResult : nil
+        }
         let raw = value?.values[tool.source.namespaceField] ?? ""
         let namespace = raw.hasSuffix(".ing") || raw.hasSuffix(".svc") ? String(raw.dropLast(4)) : raw
         return .init(checkout: project.path, profileRevision: snapshot.revision, namespace: ServiceTool.validNamespace(namespace) ? namespace : "", appVersion: value?.values[tool.source.appVersionField] ?? "", sourceRevision: (value?.revision ?? "") + ":" + selection.joined(separator: ":"))

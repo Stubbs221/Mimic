@@ -1,11 +1,11 @@
 <!-- Created by Василий Маслов on 05.10.2026. -->
 # Установка Mimic
 
-Mimic 1.6.0 (сборка 161) для Apple Silicon. Пакет подписан Developer ID и прошёл нотарификацию Apple; Gatekeeper принимает нотарифицированный пакет. Минимальная версия системы — macOS 14; запуск на macOS 14 и Intel пока не проверен. Интерфейс — на русском.
+Mimic 1.7.0 (сборка 170) для Apple Silicon. Пакет подписан Developer ID и прошёл нотарификацию Apple; Gatekeeper принимает нотарифицированный пакет. Минимальная версия системы — macOS 14; запуск на macOS 14 и Intel пока не проверен. Интерфейс — на русском.
 
 ## Установка и первый запуск
 
-1. Скачайте `MimicSetup-1.6.0.zip` на [странице выпуска 1.6.0](https://github.com/Stubbs221/Mimic/releases/tag/v1.6.0) и распакуйте архив.
+1. Скачайте `MimicSetup-1.7.0.zip` на [странице выпуска 1.7.0](https://github.com/Stubbs221/Mimic/releases/tag/v1.7.0) и распакуйте архив.
 2. Запустите `setup-mimic.command`: по умолчанию он устанавливает приложение в `~/Applications`. Можно также перенести `Mimic.app` в Applications вручную.
 3. Откройте Mimic из Applications. Приложение появится в строке меню.
 4. Выберите Git checkout, импортируйте доверенный `.mimicprofile` вашей команды и задайте Xcode и Apple target.

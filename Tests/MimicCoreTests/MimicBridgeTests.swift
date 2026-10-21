@@ -4,10 +4,37 @@
 //
 //  Created by Василий Маслов on 04.10.2026.
 import Foundation
+import Darwin
 import Testing
 @testable import MimicCore
 
 struct MimicBridgeTests {
+    @Test func aPeerWhichStopsReadingCannotBlockReplyDeliveryForever() throws {
+        var descriptors: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+        defer { close(descriptors[0]); close(descriptors[1]) }
+        var budget: Int32 = 1024
+        try #require(setsockopt(descriptors[1], SOL_SOCKET, SO_SNDBUF, &budget, socklen_t(MemoryLayout<Int32>.size)) == 0)
+        #expect(throws: MimicBridgeError.timeout) {
+            try MimicSocket.send(Data(repeating: 65, count: MimicSocket.maximumBytes), to: descriptors[1], timeout: 100)
+        }
+    }
+    @Test func partialMessagesCannotExtendTheReceiveDeadline() throws {
+        var descriptors: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &descriptors) == 0)
+        let reader = descriptors[0], writer = descriptors[1], finished = DispatchSemaphore(value: 0)
+        MimicSocket.configure(writer)
+        defer { close(reader); finished.wait() }
+        DispatchQueue.global().async {
+            defer { close(writer); finished.signal() }
+            for byte: UInt8 in [65, 66, 67, 68, 69, 10] {
+                usleep(30_000)
+                var value = byte
+                if write(writer, &value, 1) != 1 { break }
+            }
+        }
+        #expect(throws: MimicBridgeError.timeout) { try MimicSocket.receive(reader, timeout: 100) }
+    }
     @Test @MainActor func videoPipelinesLeaveRoomForLiveness() async throws {
         let directory = URL(fileURLWithPath: "/private/tmp/mcp-" + UUID().uuidString.prefix(8))
         let path = directory.appendingPathComponent("m.sock").path

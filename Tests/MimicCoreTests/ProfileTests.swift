@@ -28,6 +28,22 @@ struct ProfileTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
     }
+    @Test func revisionDigestSurvivesParameterValidationWithoutAllowingCredentials() throws {
+        var object = try #require(JSONSerialization.jsonObject(with: manifest()) as? [String: Any])
+        var actions = try #require(object["actions"] as? [[String: Any]])
+        actions[0]["parameters"] = [["id": "expectedRevision", "title": "Revision", "kind": "text", "defaultValue": "", "required": true]]
+        object["actions"] = actions
+        let profile = try JSONDecoder().decode(MimicProfile.self, from: JSONSerialization.data(withJSONObject: object))
+        let action = try #require(profile.actions.first)
+        let digest = String(repeating: "abcdef0123456789", count: 4)
+        #expect(DiagnosticText.clean(digest) != digest)
+        #expect(try ProfileValidation.parameters(["expectedRevision": digest], action: action)["expectedRevision"] == digest)
+        for value in [String(repeating: "A", count: 64), "ghp_fixturecredential", digest + "\n"] {
+            #expect(throws: ProfileError.parameter) { try ProfileValidation.parameters(["expectedRevision": value], action: action) }
+        }
+        let ordinary = try JSONDecoder().decode(MimicProfile.self, from: manifest())
+        #expect(throws: ProfileError.parameter) { try ProfileValidation.parameters(["name": digest], action: ordinary.actions[0]) }
+    }
     @Test func atomicImportPinsRevisionAndArgumentsWithoutShellExpansion() throws {
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
         let store = ProfileStore(directory: root.appendingPathComponent("Profiles"))

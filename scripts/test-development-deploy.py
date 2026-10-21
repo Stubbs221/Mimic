@@ -41,6 +41,20 @@ class DevelopmentDeployTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 deploy.wait_for_exit(30)
 
+    def test_reply_timeout_waits_for_confirmed_owner_disappearance(self):
+        with patch.object(deploy, 'process_ids', side_effect=[['123'], [], [], [], [], []]), \
+             patch.object(deploy, 'prepare_exit', side_effect=TimeoutError()) as quit_owner, \
+             patch.object(deploy.time, 'sleep'):
+            deploy.wait_for_exit(30)
+            quit_owner.assert_called_once()
+
+    def test_reply_timeouts_do_not_extend_the_original_deadline(self):
+        with patch.object(deploy, 'process_ids', return_value=['123']), \
+             patch.object(deploy, 'prepare_exit', side_effect=TimeoutError()), \
+             patch.object(deploy.time, 'monotonic', side_effect=[0, 0, 31]), patch.object(deploy.time, 'sleep'):
+            with self.assertRaises(RuntimeError):
+                deploy.wait_for_exit(30)
+
     def test_socket_disappears_before_owner_exit(self):
         for failure in [FileNotFoundError(), ConnectionRefusedError()]:
             with self.subTest(failure=type(failure).__name__), \

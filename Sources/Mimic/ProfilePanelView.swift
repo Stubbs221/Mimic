@@ -18,6 +18,7 @@ import MimicCore
     private let defaults: UserDefaults
     private var baseline: [String: String] = [:]
     private var revision = ""
+    private var operationTask: Task<Void, Never>?
     private var storageKey: String { "customPanel.draft." + project.path + ":" + panel.block(profileID: snapshot.id).rawValue + ":" + device + ":" + application }
     private var selectionKey: String { "customPanel.target." + project.path + ":" + panel.id }
     var valid: Bool { !device.isEmpty && !application.isEmpty && panel.fields.allSatisfy { $0.accepts(values[$0.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)) } }
@@ -29,6 +30,7 @@ import MimicCore
     }
     func saveDraft() { defaults.set(["values": values, "baseline": baseline, "revision": revision], forKey: storageKey) }
     func select() async {
+        guard !busy else { return }
         defaults.set([device, application], forKey: selectionKey)
         result = nil; revision = ""; baseline = [:]; conflict = false
         let saved = defaults.dictionary(forKey: storageKey) ?? [:]
@@ -43,10 +45,19 @@ import MimicCore
         if !device.isEmpty { await select() }
     }
     func refresh() async { if model.panelVisible && model.panelPage == .home && !busy && !device.isEmpty { await run("read") } }
-    func run(_ operation: String, field: String = "", force: Bool = false) async {
+    /// The form owns observation independently of the SwiftUI task which displayed it.
+    func run(_ operation: String, field: String = "", force: Bool = false, discardDraft: Bool = false) async {
         guard !busy, model.project == project, model.activeProfile == snapshot,
               operation == "catalog" || !device.isEmpty else { return }
-        busy = true; defer { busy = false }
+        busy = true
+        let task = Task { await self.execute(operation, field: field, force: force, discardDraft: discardDraft) }
+        operationTask = task
+        await task.value
+    }
+
+    private func execute(_ operation: String, field: String, force: Bool, discardDraft: Bool) async {
+        defer { busy = false; operationTask = nil }
+        let target = [device, application]
         let submitted = values.mapValues { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         let all = Dictionary(uniqueKeysWithValues: panel.fields.map { ($0.id, submitted[$0.id, default: ""]) })
         let parameters = ["operation": operation, "device": device, "application": application,
@@ -61,21 +72,22 @@ import MimicCore
         while let record = model.records.first(where: { $0.id == id }), [.queued, .running].contains(record.status) {
             do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
         }
-        guard model.project == project, model.activeProfile == snapshot,
-              let next = model.records.first(where: { $0.id == id })?.panelResult else { message = text("customPanel.failed"); return }
+        guard model.project == project, model.activeProfile == snapshot, target == [device, application],
+              let record = model.records.first(where: { $0.id == id }), record.status == .succeeded,
+              let next = record.panelResult else { message = text("customPanel.failed"); return }
         result = next; message = text("customPanel." + next.status)
         if operation == "catalog" { return }
-        if next.status == "conflict" || operation == "read" && !revision.isEmpty && revision != next.revision && dirty {
+        if next.status == "conflict" || operation == "read" && !discardDraft && !revision.isEmpty && revision != next.revision && dirty {
             conflict = true; return
         }
         guard ["ready", "shutdown", "saved", "launchFailed"].contains(next.status) else { return }
         let wasDirty = dirty
         baseline = next.values; revision = next.revision; conflict = false
-        if operation == "apply" || operation == "resetAll" || operation == "read" && !wasDirty { values = next.values }
+        if operation == "apply" || operation == "resetAll" || operation == "read" && (discardDraft || !wasDirty) { values = next.values }
         if operation == "reset" { values[field] = "" }
         saveDraft()
     }
-    func reload() async { values = [:]; baseline = [:]; revision = ""; conflict = false; await run("read") }
+    func reload() async { await run("read", discardDraft: true) }
 }
 
 struct ProfilePanelView: View {

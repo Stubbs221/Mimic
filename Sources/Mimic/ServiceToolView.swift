@@ -70,7 +70,8 @@ import MimicCore
             refresh(); guard context == captured else { return }
             result = next; load()
             if let selected = recent.first(where: { $0["uid"].string == uid }) { chooseRecent(selected) }
-        } catch { message = text("service.invalid") }
+        } catch ServiceToolError.persistence { message = text("service.persistence") }
+        catch { message = text("service.invalid") }
     }
 }
 

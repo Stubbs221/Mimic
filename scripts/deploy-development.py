@@ -74,6 +74,10 @@ def wait_for_exit(seconds):
                 # The socket can disappear before the exiting owner, or appear after a new launch.
                 # Keep waiting within the same deadline; never bypass the installer's idle checks.
                 pass
+            except TimeoutError:
+                # Backup or a busy UI may outlive one reply deadline. Only confirmed
+                # process disappearance permits replacement; retain the original wait budget.
+                pass
             except (OSError, RuntimeError):
                 # Exit can race sending the reply. Accept only independently proven process disappearance.
                 if process_ids('Mimic') or process_ids('Mimic'):

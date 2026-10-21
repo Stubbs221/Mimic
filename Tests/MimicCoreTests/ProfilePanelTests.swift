@@ -60,6 +60,18 @@ import Testing
         #expect(ProfilePanelResult.parse(Data(("untrusted output\n" + valid + "\r\n").utf8), panel: panel)?.values["first"] == "123")
         #expect(ProfilePanelResult.parse(Data(valid.replacingOccurrences(of: "first", with: "foreign").utf8), panel: panel) == nil)
         #expect(ProfilePanelResult.parse(Data(valid.replacingOccurrences(of: "saved", with: "arbitrary").utf8), panel: panel) == nil)
+        #expect(ProfilePanelResult.parse(Data(valid.replacingOccurrences(of: "123", with: "0").utf8), panel: panel) == nil)
+        for revision in ["ghp_fixturecredential", "r1\\ncontrol"] {
+            #expect(ProfilePanelResult.parse(Data(valid.replacingOccurrences(of: "r1", with: revision).utf8), panel: panel) == nil)
+        }
+        let digest = String(repeating: "abcdef0123456789", count: 4)
+        #expect(ProfilePanelResult.parse(Data(valid.replacingOccurrences(of: "r1", with: digest).utf8), panel: panel)?.revision == digest)
+    }
+    @Test func scalarPatternsMatchTheEntireValue() throws {
+        let field = try JSONDecoder().decode(ProfilePanel.Field.self, from: Data(#"{"id":"target","title":"Target","pattern":"[a-z]+"}"#.utf8))
+        #expect(field.accepts("testing"))
+        #expect(!field.accepts("123testing"))
+        #expect(!field.accepts("testing\n"))
     }
     @Test func descriptorIsOptionalAndCannotBindBuiltInRoles() throws {
         let path = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/Mimic11/profile.json")

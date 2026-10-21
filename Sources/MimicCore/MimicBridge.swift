@@ -104,9 +104,14 @@ public enum MimicSocket {
         guard p.revents & events != 0 else { throw MimicBridgeError.unavailable }
     }
     static func receive(_ fd: Int32, timeout: Int32 = 30_000) throws -> Data {
+        let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(0, timeout)) * 1_000_000
         var result = Data(), bytes = [UInt8](repeating: 0, count: 4096)
         while result.count <= maximumBytes {
-            try wait(fd, Int16(POLLIN), timeout: timeout)
+            // Progress cannot extend the request indefinitely and occupy every listener slot.
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else { throw MimicBridgeError.timeout }
+            let remaining = Int32(clamping: (deadline - now + 999_999) / 1_000_000)
+            try wait(fd, Int16(POLLIN), timeout: remaining)
             let count = Darwin.read(fd, &bytes, bytes.count)
             guard count > 0 else { throw MimicBridgeError.unavailable }
             if let newline = bytes.prefix(count).firstIndex(of: 10) {
@@ -118,13 +123,21 @@ public enum MimicSocket {
         }
         throw MimicBridgeError.invalidMessage
     }
-    static func send(_ data: Data, to fd: Int32) throws {
+    static func send(_ data: Data, to fd: Int32, timeout: Int32 = 30_000) throws {
         guard data.count <= maximumBytes else { throw MimicBridgeError.invalidMessage }
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else { throw MimicBridgeError.unavailable }
+        defer { _ = fcntl(fd, F_SETFL, flags) }
+        let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(0, timeout)) * 1_000_000
         let bytes = Array(data) + [10]
         var offset = 0
         while offset < bytes.count {
-            try wait(fd, Int16(POLLOUT))
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else { throw MimicBridgeError.timeout }
+            try wait(fd, Int16(POLLOUT), timeout: Int32(clamping: (deadline - now + 999_999) / 1_000_000))
+            // A writable socket can still fill partway through a large response.
             let count = bytes.withUnsafeBytes { Darwin.write(fd, $0.baseAddress!.advanced(by: offset), bytes.count - offset) }
+            if count < 0 && [EINTR, EAGAIN, EWOULDBLOCK].contains(errno) { continue }
             guard count > 0 else { throw MimicBridgeError.unavailable }
             offset += count
         }
