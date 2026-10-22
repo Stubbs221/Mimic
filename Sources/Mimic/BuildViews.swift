@@ -6,6 +6,7 @@ import MimicCore
 
 func buildTitle(_ record: BuildActivity) -> String { text(record.actionKey) }
 func buildInitiator(_ record: BuildActivity) -> String { ["Codex", "Claude Code", "MCP"].contains(record.source) ? text("build.initiator.agent") + " · " + record.source : record.source }
+func buildStopLabel(_ record: BuildActivity) -> String { record.parameters.backend == .xcodeMCP && record.xcodeRequestID != nil ? "build.stop.request" : "build.stop" }
 func buildDuration(_ record: BuildActivity) -> String { let seconds = Int(record.duration); return String(format: "%02d:%02d", seconds / 60, seconds % 60) }
 func buildColor(_ record: BuildActivity) -> SwiftUI.Color { record.status == .failed || record.status == .unknown || record.status == .interrupted ? .orange : record.status == .succeeded ? .green : .secondary }
 

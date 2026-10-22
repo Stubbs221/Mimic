@@ -50,6 +50,8 @@ public enum BuildBridge {
         result["completedStages"] = record.completedStages.map { .number(Double($0)) } ?? .null
         result["progressTotal"] = .number(Double(record.progressTotal))
         result["progressFraction"] = record.progressFraction.map(BridgeValue.number) ?? .null
+        result["debuggerAttached"] = record.debuggerAttached.map(BridgeValue.bool) ?? .null
+        result["debuggerProcessID"] = record.debuggerProcessID.map { .number(Double($0)) } ?? .null
         result["products"] = (try? BridgeValue.encode(record.products)) ?? .null
         result["selectedProductID"] = record.selectedProductID.map(BridgeValue.string) ?? .null
         result["destinationName"] = record.destinationName.map(BridgeValue.string) ?? .null

@@ -14,13 +14,20 @@ import XcodeMCPTransport
     @Published private(set) var version = ""
     @Published private(set) var connecting = false
     @Published private(set) var message = ""
+    /// Unlocalized cause of the last failed connection, bounded for activity diagnostics.
+    private(set) var connectionFailure = ""
     private(set) var developerDirectory: String?
     private var client: Client?
     private var requestSequence = 0
     private var process: Process?
     private var pipes: [Pipe] = []
     private var supported = Set<String>()
+    private var xcodeProcessID: pid_t?
+    private let automation = XcodeRunAutomation()
+    private var ownedDebug: (workspace: String, processID: Int?, actionID: String?)?
     private var progressHandlers: [String: (String) async -> Void] = [:]
+    private var executionHandlers: [String: (BuildExecutionProgress) async -> Void] = [:]
+    private var cancellableRequests: [String: (Client, MCP.ID)] = [:]
     struct Result { let status: BuildStatus; let text: String; let errors: Int?; let warnings: Int?; let summaryPath: String?; let truncated: Bool }
     func supports(_ operation: BuildOperation) -> Bool { client != nil && supported.contains(operation == .build ? "BuildProject" : "RunSomeTests") }
     func hasWorkspace(_ tab: String, path: String) -> Bool {
@@ -28,7 +35,7 @@ import XcodeMCPTransport
         return URL(fileURLWithPath: actual).resolvingSymlinksInPath() == URL(fileURLWithPath: path).resolvingSymlinksInPath()
     }
     func connect(project: ProjectContext) async {
-        guard !connecting else { return }; connecting = true; message = ""
+        guard !connecting else { return }; connecting = true; message = ""; connectionFailure = ""
         defer { connecting = false }
         await disconnect()
         do {
@@ -40,6 +47,7 @@ import XcodeMCPTransport
             let instances = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.resolvingSymlinksInPath() == app }
             guard instances.count == 1, let instance = instances.first else { throw BuildError.configuration }
             environment["MCP_XCODE_PID"] = String(instance.processIdentifier)
+            xcodeProcessID = instance.processIdentifier
             environment["DEVELOPER_DIR"] = developer; developerDirectory = developer
             child.environment = environment
             let input = Pipe(), output = Pipe(); pipes = [input, output]
@@ -55,7 +63,8 @@ import XcodeMCPTransport
                 }
             }
             try child.run()
-            let deadline = Task { try? await Task.sleep(for: .seconds(120)); if !Task.isCancelled { await connection.disconnect(); if child.isRunning { child.terminate() } } }
+            // Xcode holds a new agent binary until the user answers its trust prompt.
+            let deadline = Task { try? await Task.sleep(for: .seconds(300)); if !Task.isCancelled { await connection.disconnect(); if child.isRunning { child.terminate() } } }
             defer { deadline.cancel() }
             let initialized = try await connection.connect(transport: XcodeRPCTransport(base: StdioTransport(input: .init(rawValue: output.fileHandleForReading.fileDescriptor), output: .init(rawValue: input.fileHandleForWriting.fileDescriptor))))
             version = initialized.serverInfo.version
@@ -71,29 +80,221 @@ import XcodeMCPTransport
             } while cursor != nil
             guard supported.contains("XcodeListWindows"), supported.contains("BuildProject") else { throw BuildError.unsupported }
             await connection.onNotification(ProgressNotification.self) { [weak self] notification in
-                guard case let .string(token) = notification.params.progressToken, let message = notification.params.message else { return }
-                await self?.progress(token: token, message: message)
+                guard case let .string(token) = notification.params.progressToken else { return }
+                let fraction = notification.params.total.flatMap { total in total > 0 && notification.params.progress >= 0 && notification.params.progress <= total ? notification.params.progress / total : nil }
+                await self?.executionProgress(token: token, value: .init(operation: notification.params.message.map { String(DiagnosticText.clean($0).prefix(240)) }, fraction: fraction))
+                if let message = notification.params.message { await self?.progress(token: token, message: message) }
             }
             let result = try await call(name: "XcodeListWindows", arguments: [:])
             windows = XcodeBuildProfile.windows(result.value["message"].string ?? "")
             guard windows.values.contains(where: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path == URL(fileURLWithPath: project.workspace).resolvingSymlinksInPath().path }) else { throw BuildError.configuration }
             self.project = project
-        } catch { await disconnect(); message = text("build.error." + ((error as? BuildError)?.rawValue ?? "unavailable")) }
+        } catch {
+            await disconnect(); message = text("build.error." + ((error as? BuildError)?.rawValue ?? "unavailable"))
+            connectionFailure = String(DiagnosticText.clean(String(describing: error)).prefix(300))
+        }
     }
     func disconnect() async {
         let old = client; client = nil; project = nil; supported = []; windows = [:]
-        developerDirectory = nil
+        developerDirectory = nil; executionHandlers = [:]; cancellableRequests = [:]
+        xcodeProcessID = nil
         await old?.disconnect()
         if let process, process.isRunning { process.terminate() }; process = nil; pipes = []
     }
     func refreshWindows() async throws {
         let result = try await call(name: "XcodeListWindows", arguments: [:]); windows = XcodeBuildProfile.windows(result.value["message"].string ?? "")
     }
+
+    // MARK: - Native Run action
+
+    /// Opens the exact pinned Xcode and workspace, preserving its incremental build storage and Run settings.
+    func runWithDebugger(_ record: BuildActivity, requestStarted: @escaping (String) -> Void,
+                         progress: @escaping (BuildExecutionProgress) async -> Void,
+                         authorize: @escaping () async throws -> Void,
+                         stage: @escaping (BuildStage, Int) -> Void,
+                         phase: @escaping (String) -> Void = { _ in }) async throws -> (processID: Int?, detail: String) {
+        try Task.checkCancellation()
+        guard let developer = record.selectedDeveloperDirectory else { throw XcodeRunFailure(step: "context.developer", code: .configuration, detail: "No pinned Xcode") }
+        let application = URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent()
+        let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = false
+        _ = try await NSWorkspace.shared.open([URL(fileURLWithPath: record.project.workspace)], withApplicationAt: application, configuration: configuration)
+        let target = XcodeRunAutomation.Target(application: application.path, workspace: record.project.workspace, scheme: record.parameters.scheme, destinationID: record.parameters.destinationID)
+        // A freshly opened large workspace takes a while to get its window; connecting earlier is rejected by Xcode.
+        var attempts = 0
+        while let pending = try await automation.workspaceNotReady(target) {
+            attempts += 1
+            guard attempts < 240 else { throw XcodeRunFailure(step: "automation.workspace", code: .configuration, detail: pending) }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        try Task.checkCancellation()
+        if project != record.project || developerDirectory != developer {
+            // Unnotarized agents get Xcode's "Allow Mimic" prompt per binary; a slow handshake brings that prompt forward.
+            let prompt = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3)); guard !Task.isCancelled else { return }
+                phase("build.phase.xcodeApproval")
+                NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dt.Xcode")
+                    .first { $0.bundleURL?.resolvingSymlinksInPath() == application.resolvingSymlinksInPath() }?.activate()
+            }
+            await connect(project: record.project)
+            prompt.cancel(); phase("build.phase.running")
+        }
+        guard project == record.project, developerDirectory == developer, let pid = xcodeProcessID else {
+            throw XcodeRunFailure(step: "mcp.connect", code: .xcodeAccess, detail: connectionFailure.isEmpty ? message : connectionFailure)
+        }
+        try await refreshWindows()
+        let candidates = windows.filter { URL(fileURLWithPath: $0.value).resolvingSymlinksInPath().path == URL(fileURLWithPath: record.project.workspace).resolvingSymlinksInPath().path }
+        guard candidates.count == 1, let tab = candidates.keys.first else { throw XcodeRunFailure(step: "mcp.workspaceWindow", code: .configuration, detail: "\(candidates.count) matching of \(windows.count) windows") }
+        let native = supported.contains("RunProject") && supported.contains("InvokeDebuggerCommand")
+        guard !native || supported.contains("XcodeListRunDestinations") else { throw XcodeRunFailure(step: "mcp.tools", code: .unsupported, detail: "XcodeListRunDestinations is unavailable") }
+        try await authorize()
+        let token = record.id.uuidString
+        executionHandlers[token] = progress
+        defer { executionHandlers[token] = nil }
+        // A repeat may replace our own debug session, never an unrelated session started in Xcode.
+        if let owned = ownedDebug, owned.workspace == record.project.workspace {
+            if let expected = owned.processID, supported.contains("InvokeDebuggerCommand"), supported.contains("StopProject") {
+                let current = try await call(name: "InvokeDebuggerCommand", arguments: ["tabIdentifier": .string(tab), "command": .string("process status"), "timeout": .int(5)])
+                if current.value["debugSessionActive"] != .bool(false) {
+                    guard !current.isError, current.value["debugSessionActive"] == .bool(true), current.value["processIdentifier"].integer == expected else { throw BuildError.xcodeBusy }
+                    _ = try await call(name: "StopProject", arguments: ["tabIdentifier": .string(tab)])
+                }
+            } else if let actionID = owned.actionID {
+                do {
+                    let status = try await automation.debugStatus(target, actionID: actionID)
+                    if status == "running" { try await automation.stopOwnedDebug(target, actionID: actionID) }
+                } catch { try await automation.requireIdle(target) }
+            }
+            for attempt in 0..<20 {
+                do { try await automation.requireIdle(target); break }
+                catch let failure as XcodeRunFailure where failure.code == .xcodeBusy { if attempt == 19 { throw failure }; try await Task.sleep(for: .milliseconds(250)) }
+            }
+            ownedDebug = nil
+        }
+        try await automation.requireIdle(target)
+        try await authorize()
+        let destinationTitle = try await automation.select(target)
+        if native { try await verifyDestination(tab: tab, scheme: record.parameters.scheme, title: destinationTitle, step: "mcp.selection") }
+        else { try await automation.verify(target) }
+        if !XcodeCompilationProgress.requestAccess() {
+            for _ in 0..<240 {
+                try Task.checkCancellation()
+                if XcodeCompilationProgress.hasAccess { break }
+                try await Task.sleep(for: .milliseconds(500))
+            }
+            guard XcodeCompilationProgress.hasAccess else { throw BuildError.xcodeAccess }
+        }
+        try Task.checkCancellation()
+        guard self.project == record.project, xcodeProcessID == pid else { throw BuildError.context }
+        let workspace = record.project.workspace
+        let deadline = Task { try? await Task.sleep(for: .seconds(1800)); if !Task.isCancelled { await self.disconnect() } }
+        defer { deadline.cancel() }
+        let monitor = Task {
+            // Until the bar drops below full it still shows the previous action, not this build.
+            var fresh = false
+            while !Task.isCancelled {
+                let snapshot = await Task.detached { XcodeCompilationProgress.read(processID: pid, workspace: workspace) }.value
+                if let fraction = snapshot?.fraction, fraction < 1 { fresh = true }
+                if fresh, let snapshot { await progress(snapshot) }
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+            }
+        }
+        defer { monitor.cancel() }
+        if native {
+            try await verifyDestination(tab: tab, scheme: record.parameters.scheme, title: destinationTitle, step: "mcp.beforeRun")
+            try await authorize()
+            let result = try await call(name: "RunProject", arguments: ["tabIdentifier": .string(tab), "attachDebugger": .bool(true)], token: record.id.uuidString, requestStarted: requestStarted)
+            let processID: Int
+            do { processID = try XcodeRunVerification.launchedProcess(result.value, isError: result.isError) }
+            catch {
+                let errors = result.value["buildErrors"].array ?? []
+                throw XcodeRunFailure(step: "mcp.runProject", code: .debuggerUnavailable, detail: result.value["runResult"].string ?? result.text,
+                                      buildFailed: errors.contains { $0["classification"].string?.lowercased() == "error" }, issues: XcodeRunVerification.issues(errors))
+            }
+            stage(.launch, 2)
+            // The launched host process is the only evidence that names the simulator by UUID after Run.
+            let executable = Self.executablePath(processID) ?? ""
+            guard XcodeRunVerification.processBelongsToSimulator(executablePath: executable, deviceID: record.parameters.destinationID) else {
+                throw XcodeRunFailure(step: "launch.device", code: .configuration, detail: "Process \(processID) is not in simulator \(record.parameters.destinationID): " + (executable.isEmpty ? "no executable path" : executable))
+            }
+            try await verifyDestination(tab: tab, scheme: record.parameters.scheme, title: destinationTitle, step: "mcp.afterRun")
+            let verified = try await call(name: "InvokeDebuggerCommand", arguments: ["tabIdentifier": .string(tab), "command": .string("process status"), "timeout": .int(5)])
+            guard XcodeRunVerification.debuggerMatches(verified.value, process: processID, isError: verified.isError) else {
+                throw XcodeRunFailure(step: "lldb.processStatus", code: .debuggerUnavailable, detail: "debugSessionActive \(verified.value["debugSessionActive"] == .bool(true)), process \(verified.value["processIdentifier"].integer.map(String.init) ?? "missing"), expected \(processID)")
+            }
+            ownedDebug = (workspace, processID, nil)
+            return (processID, result.value["runResult"].string ?? "")
+        }
+        let version = Bundle(url: application)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        guard version.hasPrefix("26."), supports(.build) else { throw BuildError.unsupported }
+        try await authorize()
+        let result = try await call(name: "BuildProject", arguments: ["tabIdentifier": .string(tab)], token: record.id.uuidString, requestStarted: requestStarted)
+        let built = XcodeBuildProfile.status(operation: .build, result: result.value, isError: result.isError)
+        guard built == .succeeded else {
+            throw XcodeRunFailure(step: "mcp.buildProject", code: .configuration, detail: result.value["buildResult"].string ?? result.text,
+                                  buildFailed: built == .failed, issues: XcodeRunVerification.issues(result.value["errors"].array))
+        }
+        stage(.launch, 1)
+        try await automation.verify(target)
+        try await authorize()
+        let action = try await automation.debugWithoutBuilding(target)
+        ownedDebug = (workspace, nil, action)
+        for _ in 0..<120 {
+            try Task.checkCancellation()
+            let status = try await automation.debugStatus(target, actionID: action)
+            if status == "running" || status == "succeeded" {
+                let attached = await Task.detached { XcodeCompilationProgress.debuggerIsAttached(processID: pid, workspace: workspace) }.value
+                if attached { return (nil, "Xcode debug action: " + action) }
+            }
+            guard status != "failed", status != "error occurred", status != "cancelled" else { throw BuildError.debuggerUnavailable }
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        throw BuildError.debuggerUnavailable
+    }
+    /// Evidence that nothing Mimic may have started is still running: the pinned Xcode is gone, the workspace is closed,
+    /// or Xcode reports no unfinished scheme action and its toolbar shows no build in progress.
+    func confirmsIdle(developer: String, workspace: String) async -> Bool {
+        let application = URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent().resolvingSymlinksInPath()
+        guard let instance = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.resolvingSymlinksInPath() == application }) else { return true }
+        let target = XcodeRunAutomation.Target(application: application.path, workspace: workspace, scheme: "", destinationID: "")
+        do {
+            if let pending = try await automation.workspaceNotReady(target) { return pending.contains("Workspace identity changed") }
+            try await automation.requireIdle(target)
+        } catch { return false }
+        let pid = instance.processIdentifier
+        let toolbar = await Task.detached { XcodeCompilationProgress.read(processID: pid, workspace: workspace) }.value
+        return toolbar?.fraction.map { $0 >= 1 } ?? true
+    }
+    /// Cancels only the exact MCP request or pinned legacy debug action. Neither implies Xcode stopped.
+    func requestRunCancellation(_ record: BuildActivity) async throws {
+        if let (client, id) = cancellableRequests[record.id.uuidString] {
+            try await client.cancelRequest(id, reason: "User requested cancellation in Mimic")
+            return
+        }
+        guard let owned = ownedDebug, owned.workspace == record.project.workspace, let action = owned.actionID,
+              let developer = record.selectedDeveloperDirectory else { throw BuildError.unsupported }
+        let application = URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent().path
+        try await automation.stopOwnedDebug(.init(application: application, workspace: record.project.workspace, scheme: record.parameters.scheme, destinationID: record.parameters.destinationID), actionID: action)
+    }
+    /// Xcode 27 picker state; its scripting dictionary reports no active run destination.
+    private func verifyDestination(tab: String, scheme: String, title: String, step: String) async throws {
+        let result = try await call(name: "XcodeListRunDestinations", arguments: ["tabIdentifier": .string(tab)])
+        guard XcodeRunVerification.destinationMatches(result.value, scheme: scheme, title: title, isError: result.isError) else {
+            throw XcodeRunFailure(step: step, code: .configuration, detail: "active \(result.value["activeSchemeName"].string ?? "none") / \(result.value["activeDestinationDisplayTitle"].string ?? "none"), expected \(scheme) / \(title)")
+        }
+    }
+    private nonisolated static func executablePath(_ processID: Int) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid_t(processID), &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        return String(cString: buffer)
+    }
     private func progress(token: String, message: String) async { await progressHandlers[token]?(message) }
+    private func executionProgress(token: String, value: BuildExecutionProgress) async { await executionHandlers[token]?(value) }
     private func call(name: String, arguments: [String: Value], token: String? = nil, requestStarted: ((String) -> Void)? = nil) async throws -> (value: BridgeValue, text: String, isError: Bool) {
         guard let client, supported.contains(name) else { throw BuildError.unsupported }
         requestSequence += 1
         let request = try await client.send(CallTool.request(id: .number(requestSequence), .init(name: name, arguments: arguments, meta: token.map { Metadata(progressToken: .string($0)) })))
+        if let token { cancellableRequests[token] = (client, request.requestID) }
+        defer { if let token { cancellableRequests[token] = nil } }
         requestStarted?(String(describing: request.requestID))
         let result = try await request.value
         let strings = result.content.compactMap { content -> String? in if case let .text(text, _, _) = content { return text }; return nil }

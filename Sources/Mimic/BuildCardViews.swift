@@ -37,7 +37,9 @@ struct BuildCardView: View {
                 compactControls
                 Spacer(minLength: 0)
             }
-            if let record = builds.panelActivity {
+            if !extended, builds.loading, builds.panelActivity?.status.isPending != true, let progress = builds.catalogueProgress {
+                BuildCatalogueProgressView(progress: progress)
+            } else if let record = builds.panelActivity {
                 BuildInlineStatus(builds: builds, record: record, compact: !extended, chooseProduct: { popup = "products" })
                 if extended, record.stage == .products, record.status.isPending, record.products?.count ?? 0 > 1 {
                     Button(text("build.chooseProduct")) { popup = "products" }.buttonStyle(MimicAuxiliaryButtonStyle())
@@ -97,7 +99,7 @@ struct BuildCardView: View {
         Button {
             action = value
             if value == "tests" { popup = "tests" }
-            else if builds.draft.scheme.isEmpty && builds.draft.backend == .cli || value == "run" && builds.draft.backend != .cli { popup = "execute" }
+            else if builds.draft.scheme.isEmpty && (builds.draft.backend == .cli || value == "run") { popup = "execute" }
             else { builds.perform(intent: value == "run" ? .run : nil); popup = "" }
         } label: { Text(text("build.action." + value)).multilineTextAlignment(.center).frame(maxWidth: .infinity).fixedSize(horizontal: false, vertical: true) }
             .buttonStyle(MimicAuxiliaryButtonStyle(primary: primary, height: extended ? 32 : 28, horizontalPadding: extended ? 12 : 8)).disabled(builds.panelBusy || model.project == nil)
@@ -111,13 +113,16 @@ struct BuildCardView: View {
             Picker(text("build.destination"), selection: parameter(\.destinationID)) { Text(text("build.chooseDevice")).tag(""); ForEach(builds.catalogue.destinations) { Text($0.name).tag($0.id) } }
                 .mimicSelection(text("build.destination"), selection: parameter(\.destinationID), options: [.init(text("build.chooseDevice"), "")] + builds.catalogue.destinations.map { .init($0.name, $0.id) })
                 .accessibilityIdentifier("build.destination")
-        }.disabled(builds.panelBusy || builds.loading)
+        }.disabled(builds.panelBusy || builds.loading && builds.catalogue.schemes.isEmpty)
     }
     private var settings: some View {
         VStack(alignment: .leading, spacing: 10) {
             selections
             if builds.catalogueLoadedAt != nil && builds.catalogueStale { Text(text("build.catalogue.stale")).mimicFont(.caption).foregroundStyle(.secondary) }
-            if builds.loading { ProgressView(text("build.loadingSettings")).controlSize(.small) }
+            if builds.loading, let progress = builds.catalogueProgress {
+                BuildCatalogueProgressView(progress: progress)
+                Text(text(builds.catalogue.schemes.isEmpty ? "build.catalogue.progress.cold" : "build.catalogue.progress.saved")).mimicFont(.caption).foregroundStyle(.secondary)
+            }
             if !builds.draftCompatible { Text(text("build.settings.required")).mimicFont(.caption).foregroundStyle(.secondary) }
             Button(text("build.refreshSettings")) { Task { if let project = model.project { await builds.refreshCatalogue(project: project, force: true) } } }.disabled(builds.loading || builds.panelBusy)
             DisclosureGroup(text("build.moreSettings")) {
@@ -186,6 +191,27 @@ struct BuildCardView: View {
     }
 }
 
+/// The timer is local to this label; progress advances only after a discovery step succeeds.
+struct BuildCatalogueProgressView: View {
+    let progress: BuildCatalogueProgress
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(text("build.catalogue.progress." + progress.phase.rawValue)).lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 0)
+                if progress.total > 0 { Text("\(progress.step)/\(progress.total)").monospacedDigit().fixedSize() }
+                MimicActivityClock(running: true) { now in
+                    let seconds = max(0, Int(now.timeIntervalSince(progress.startedAt)))
+                    Text(String(format: "%02d:%02d", seconds / 60, seconds % 60)).monospacedDigit().fixedSize()
+                }
+            }.mimicFont(.caption).foregroundStyle(.secondary)
+            MimicProgressBar(value: progress.fraction, color: .accentColor, label: text("build.catalogue.progress.label"))
+                .accessibilityValue(progress.total > 0 ? String(format: text("build.catalogue.progress.completed"), progress.completed, progress.total) : text("build.catalogue.progress." + progress.phase.rawValue))
+        }.mimicHelp(text("build.catalogue.progress." + progress.phase.rawValue))
+            .accessibilityIdentifier("build.catalogue.progress")
+    }
+}
+
 struct BuildInlineStatus: View {
     @ObservedObject var builds: BuildCoordinator
     let record: BuildActivity
@@ -209,7 +235,7 @@ struct BuildInlineStatus: View {
                     if compact, record.stage == .products, record.status.isPending, record.products?.count ?? 0 > 1 {
                         Button(text("build.chooseProduct")) { chooseProduct?() }.buttonStyle(MimicAuxiliaryButtonStyle(height: 28, horizontalPadding: 8))
                     }
-                    if record.canCancel { Button(text("build.stop")) { builds.cancel(record.id) }.buttonStyle(MimicAuxiliaryButtonStyle(height: compact ? 28 : 32)).accessibilityIdentifier("build.cancel") }
+                    if record.canCancel { Button(text(buildStopLabel(record))) { builds.cancel(record.id) }.buttonStyle(MimicAuxiliaryButtonStyle(height: compact ? 28 : 32)).accessibilityIdentifier("build.cancel") }
                 }
             }
         }.accessibilityElement(children: .contain)

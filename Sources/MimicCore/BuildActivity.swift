@@ -31,10 +31,10 @@ public struct BuildParameters: Codable, Equatable, Sendable {
         self.destinationID = destinationID; self.platform = platform; self.testPlan = testPlan; self.testIdentifiers = testIdentifiers; self.workspaceTab = workspaceTab
     }
     public func validate() throws {
-        if intent != nil, backend != .cli || operation != .build { throw BuildError.arguments }
+        if intent != nil, operation != .build || backend != .cli && intent != .run { throw BuildError.arguments }
         let fields = [scheme, configuration, destinationID, testPlan, workspaceTab] + testIdentifiers
         guard fields.allSatisfy({ $0.utf8.count <= 1024 && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }), testIdentifiers.count <= 100 else { throw BuildError.arguments }
-        if backend == .cli {
+        if backend == .cli || intent == .run {
             guard !scheme.isEmpty, !configuration.isEmpty, UUID(uuidString: destinationID) != nil, workspaceTab.isEmpty else { throw BuildError.arguments }
         } else {
             guard !workspaceTab.isEmpty, scheme.isEmpty, configuration.isEmpty, destinationID.isEmpty, testPlan.isEmpty else { throw BuildError.arguments }
@@ -67,7 +67,7 @@ public struct BuildParameters: Codable, Equatable, Sendable {
 }
 
 public enum BuildError: String, Error, Sendable {
-    case sourceChanged, sourceUnavailable, preparationRequired, selectionExpired, arguments, testsRequired, context, unavailable, unsupported, catalogue, catalogueTimeout, catalogueProcess, catalogueResponse, configuration, duplicate, capacity, notFound, diagnostic, stopped
+    case xcodeAccess, xcodeBusy, debuggerUnavailable, sourceChanged, sourceUnavailable, preparationRequired, selectionExpired, arguments, testsRequired, context, unavailable, unsupported, catalogue, catalogueTimeout, catalogueProcess, catalogueResponse, configuration, duplicate, capacity, notFound, diagnostic, stopped
 }
 
 /// Execution and observation have separate states: a broken connection never proves build failure.
@@ -88,8 +88,17 @@ public struct BuildActivity: Codable, Identifiable, Sendable {
     public var destinationName: String?
     public var testCatalogue: BuildTestCatalogue?
     public var completedTestCount: Int?
+    /// Optional live observations preserve compatibility with older build history.
+    public var executionProgress: BuildExecutionProgress?
     /// Owner-supplied cache from an exactly matching catalogue preparation; never a request argument.
     public var preparedDerivedDataPath: String?
+    /// Native-owned incremental cache; never accepted from a public request.
+    public var compilationDerivedDataPath: String?
+    /// Present only after the native Xcode debug action was accepted and verified.
+    public var debuggerProcessID: Int?
+    public var debuggerAttached: Bool?
+    /// Sending MCP cancellation does not confirm that Xcode's operation has terminated.
+    public var xcodeCancellationRequested: Bool?
     public let id: UUID
     public let project: ProjectContext
     public let parameters: BuildParameters
@@ -123,7 +132,7 @@ public struct BuildActivity: Codable, Identifiable, Sendable {
     public init(id: UUID = UUID(), project: ProjectContext, parameters: BuildParameters, source: String, createdAt: Date = Date()) {
         self.id = id; self.project = project; self.parameters = parameters; self.source = source; self.createdAt = createdAt
     }
-    public var canCancel: Bool { status == .queued || status == .preparing || (parameters.backend == .cli && status == .running) }
+    public var canCancel: Bool { xcodeCancellationRequested != true && (status == .queued || status == .preparing || (status == .running && (parameters.backend == .cli || parameters.intent == .run))) }
     public var duration: TimeInterval { startedAt.map { (finishedAt ?? Date()).timeIntervalSince($0) } ?? 0 }
     public var diagnosticAvailable: Bool { hasPrivateInput != true && [.failed, .interrupted, .unknown].contains(status) }
 }
@@ -142,13 +151,13 @@ public struct BuildCatalogue: Codable, Sendable {
     public var destinations: [BuildDestination] = []
     public var testPlans: [String] = []
     public init() { }
-    public static func inspect(project: ProjectContext, scheme: String = "", includeTestPlans: Bool = false, timeout: TimeInterval = 120, baseCatalogue: Self? = nil) throws -> Self {
-        try inspect(project: project, scheme: scheme, includeTestPlans: includeTestPlans, timeout: timeout, baseCatalogue: baseCatalogue) { arguments, environment, remaining in
+    public static func inspect(project: ProjectContext, scheme: String = "", includeTestPlans: Bool = false, timeout: TimeInterval = 120, baseCatalogue: Self? = nil, progress: (@Sendable (BuildCatalogueProgress.Phase, Int, Int) -> Void)? = nil) throws -> Self {
+        try inspect(project: project, scheme: scheme, includeTestPlans: includeTestPlans, timeout: timeout, baseCatalogue: baseCatalogue, progress: progress) { arguments, environment, remaining in
             ReadOnlyProcess.capture("/usr/bin/xcrun", ["xcodebuild"] + arguments, directory: project.path, environment: environment, timeout: remaining)
         }
     }
     /// All child queries consume one absolute budget; a slow first query cannot restart the deadline.
-    static func inspect(project: ProjectContext, scheme: String, includeTestPlans: Bool, timeout: TimeInterval, baseCatalogue: Self? = nil,
+    static func inspect(project: ProjectContext, scheme: String, includeTestPlans: Bool, timeout: TimeInterval, baseCatalogue: Self? = nil, progress: ((BuildCatalogueProgress.Phase, Int, Int) -> Void)? = nil,
                         capture run: ([String], [String: String], TimeInterval) throws -> (Int32, String)) throws -> Self {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         var env = EnvironmentInspector.environment(project: project)
@@ -169,39 +178,54 @@ public struct BuildCatalogue: Codable, Sendable {
         guard let target = project.appleTarget else { throw BuildError.configuration }
         let targetFlag = target.path.hasSuffix(".xcodeproj") ? "-project" : "-workspace"
         _ = try ProfileValidation.checkoutPath(target.path, root: project.path)
+        let total = (baseCatalogue == nil ? (targetFlag == "-project" ? 1 : 2) : 0) + (scheme.isEmpty ? 0 : (includeTestPlans ? 2 : 1))
+        var completed = 0
+        func begin(_ phase: BuildCatalogueProgress.Phase) { progress?(phase, completed, total) }
+        func finish() { completed += 1 }
         if let baseCatalogue {
             value.schemes = baseCatalogue.schemes; value.configurations = baseCatalogue.configurations
         } else {
+            begin(targetFlag == "-project" ? .metadata : .schemes)
             let json = try object(capture(["-list", "-json", targetFlag, project.workspace]))
             guard let schemes = (json[targetFlag == "-project" ? "project" : "workspace"] as? [String: Any])?["schemes"] as? [String], !schemes.isEmpty else { throw BuildError.catalogueResponse }
             value.schemes = schemes.sorted()
             guard let configurationPath = targetFlag == "-project" ? Optional(target.path) : target.configurationProject else { throw BuildError.configuration }
+            if targetFlag != "-project" { finish(); begin(.configurations) }
             let projectObject = targetFlag == "-project" ? json : try object(capture(["-list", "-json", "-project", try ProfileValidation.checkoutPath(configurationPath, root: project.path)]))
             guard let configurations = (projectObject["project"] as? [String: Any])?["configurations"] as? [String], !configurations.isEmpty else { throw BuildError.catalogueResponse }
             value.configurations = configurations.sorted()
+            finish()
         }
         if !scheme.isEmpty {
             guard value.schemes.contains(scheme) else { throw BuildError.configuration }
+            begin(.destinations)
             value.destinations = destinations(from: try capture(["-showdestinations", targetFlag, project.workspace, "-scheme", scheme]))
+            finish()
             if includeTestPlans {
+                begin(.testPlans)
                 let plans = try capture(["-showTestPlans", targetFlag, project.workspace, "-scheme", scheme])
                 if let range = plans.range(of: "Test plans associated with the scheme") {
                     value.testPlans = plans[range.upperBound...].components(separatedBy: "\n").dropFirst().map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
                 } else { throw BuildError.catalogueResponse }
+                finish()
             }
         }
+        progress?(.verifying, completed, total)
         return value
     }
     public static func destinations(from text: String) -> [BuildDestination] {
-        let available = text.components(separatedBy: "Ineligible destinations").first ?? ""
-        let regex = try? NSRegularExpression(pattern: #"\{[^\n}]*platform:(iOS|tvOS) Simulator,[^\n}]*id:([A-Fa-f0-9-]{36}),[^\n}]*name:([^,}\n]+)"#)
+        // Xcode 27 renamed the ineligible section; neither format may supply launch choices.
+        let boundary = text.range(of: #"\b(?:Ineligible destinations|Destinations incompatible with)\b"#, options: [.regularExpression, .caseInsensitive])
+        let available = boundary.map { String(text[..<$0.lowerBound]) } ?? text
+        let regex = try? NSRegularExpression(pattern: #"\{[^\n}]*platform:(iOS|tvOS) Simulator,[^\n}]*id:([A-Fa-f0-9-]{36}),[^\n}]*name:([^,}\n]+)[^\n}]*\}"#)
         let matches = regex?.matches(in: available, range: NSRange(available.startIndex..., in: available)) ?? []
         var seen = Set<String>()
         return matches.compactMap { m in
             guard let idRange = Range(m.range(at: 2), in: available), let nameRange = Range(m.range(at: 3), in: available) else { return nil }
+            let entry = String(available[Range(m.range, in: available)!])
+            guard entry.range(of: #",\s*error\s*:"#, options: .regularExpression) == nil else { return nil }
             let id = String(available[idRange]); guard seen.insert(id).inserted else { return nil }
             let name = available[nameRange].trimmingCharacters(in: .whitespaces)
-            let entry = String(available[Range(m.range, in: available)!])
             let osPattern = #"OS:([^,}]+)"#
             let osRegex = try! NSRegularExpression(pattern: osPattern)
             let os = osRegex.firstMatch(in: entry, range: NSRange(entry.startIndex..., in: entry)).flatMap { Range($0.range(at: 1), in: entry) }.map { entry[$0].trimmingCharacters(in: .whitespaces) }

@@ -10,10 +10,19 @@ public enum XcodeBuildProfile {
         switch name {
         case "XcodeListWindows": return required.isEmpty && output["properties"]["message"]["type"].string == "string"
         case "BuildProject":
-            return required == ["tabIdentifier"] && properties["tabIdentifier"]["type"].string == "string" && output["properties"]["buildResult"]["type"].string == "string" && output["properties"]["errors"]["type"].string == "array"
+            return required.isSubset(of: ["tabIdentifier"]) && properties["tabIdentifier"]["type"].string == "string" && output["properties"]["buildResult"]["type"].string == "string" && output["properties"]["errors"]["type"].string == "array"
         case "RunSomeTests":
             let item = properties["tests"]["items"]
-            return required == ["tabIdentifier", "tests"] && properties["tabIdentifier"]["type"].string == "string" && properties["tests"]["type"].string == "array" && Set(item["required"].array?.compactMap(\.string) ?? []) == ["targetName", "testIdentifier"] && item["properties"]["targetName"]["type"].string == "string" && item["properties"]["testIdentifier"]["type"].string == "string" && output["properties"]["counts"]["type"].string == "object"
+            return required.contains("tests") && required.isSubset(of: ["tabIdentifier", "tests"]) && properties["tabIdentifier"]["type"].string == "string" && properties["tests"]["type"].string == "array" && Set(item["required"].array?.compactMap(\.string) ?? []) == ["targetName", "testIdentifier"] && item["properties"]["targetName"]["type"].string == "string" && item["properties"]["testIdentifier"]["type"].string == "string" && output["properties"]["counts"]["type"].string == "object"
+        case "RunProject":
+            return required.isSubset(of: ["tabIdentifier"]) && properties["tabIdentifier"]["type"].string == "string" && properties["attachDebugger"]["type"].string == "boolean" && output["properties"]["runResult"]["type"].string == "string" && output["properties"]["processIdentifier"]["type"].string == "integer"
+        case "InvokeDebuggerCommand":
+            return required.contains("command") && required.isSubset(of: ["tabIdentifier", "command"]) && properties["command"]["type"].string == "string" && output["properties"]["debugSessionActive"]["type"].string == "boolean" && output["properties"]["processIdentifier"]["type"].string == "integer"
+        case "StopProject":
+            return required.isSubset(of: ["tabIdentifier"]) && properties["tabIdentifier"]["type"].string == "string" && output["properties"]["stopResult"]["type"].string == "string"
+        case "XcodeListRunDestinations":
+            let item = output["properties"]["destinations"]["items"]["properties"]
+            return required.isSubset(of: ["tabIdentifier"]) && properties["tabIdentifier"]["type"].string == "string" && output["properties"]["activeSchemeName"]["type"].string == "string" && output["properties"]["activeDestinationDisplayTitle"]["type"].string == "string" && output["properties"]["destinations"]["type"].string == "array" && item["displayTitle"]["type"].string == "string" && item["isActive"]["type"].string == "boolean" && item["isSimulator"]["type"].string == "boolean" && item["platformIdentifier"]["type"].string == "string"
         default: return false
         }
     }

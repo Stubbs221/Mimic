@@ -12,6 +12,38 @@ public struct BuildProduct: Codable, Equatable, Sendable, Identifiable {
     public let bundleIdentifier: String
     public init(name: String, path: String, bundleIdentifier: String) { self.name = name; self.path = path; self.bundleIdentifier = bundleIdentifier }
 
+    /// Xcode diagnostics share the PTY with JSON; PID and subsystem brackets are not payload boundaries.
+    /// Only complete build-settings arrays starting on their own line are accepted.
+    public static func parse(output: String, derivedData: URL, exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) throws -> [Self] {
+        var remaining = output.startIndex..<output.endIndex
+        while let candidate = output.range(of: #"(?m)^[ \t\r]*\["#, options: .regularExpression, range: remaining) {
+            let start = output.index(before: candidate.upperBound)
+            remaining = candidate.upperBound..<output.endIndex
+            var depth = 0, quoted = false, escaped = false
+            for index in output[start...].indices {
+                let character = output[index]
+                if quoted {
+                    if escaped { escaped = false }
+                    else if character == "\\" { escaped = true }
+                    else if character == "\"" { quoted = false }
+                } else if character == "\"" { quoted = true }
+                else if character == "[" { depth += 1 }
+                else if character == "]" {
+                    depth -= 1
+                    if depth == 0 {
+                        let data = Data(output[start...index].utf8)
+                        if let targets = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]],
+                           !targets.isEmpty, targets.allSatisfy({ $0["buildSettings"] is [String: Any] }) {
+                            return try parse(settings: data, derivedData: derivedData, exists: exists)
+                        }
+                        break
+                    }
+                }
+            }
+        }
+        throw BuildError.catalogueResponse
+    }
+
     public static func parse(settings: Data, derivedData: URL, exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) throws -> [Self] {
         guard let targets = try JSONSerialization.jsonObject(with: settings) as? [[String: Any]] else { throw BuildError.catalogueResponse }
         var products: [Self] = []
@@ -113,6 +145,12 @@ public extension BuildActivity {
     var progressFraction: Double? {
         if status == .succeeded { return 1 }
         if let count = completedTestCount, let total = selectedTestCount, total > 0 { return Double(count) / Double(total) }
+        if parameters.backend == .xcodeMCP, parameters.intent == .run,
+           let fraction = executionProgress?.fraction, fraction.isFinite, (0...1).contains(fraction) {
+            // Xcode owns the Run scale; reserve completion until launch and debugger verification finish.
+            return max(min(fraction, 0.99), Double(completedStages ?? 0) / Double(progressTotal))
+        }
+        if stage == .compilation, let fraction = executionProgress?.fraction, fraction.isFinite, (0...1).contains(fraction) { return fraction / Double(progressTotal) }
         return completedStages.flatMap { $0 > 0 ? Double($0) / Double(progressTotal) : nil }
     }
 }

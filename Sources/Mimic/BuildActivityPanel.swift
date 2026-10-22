@@ -5,6 +5,7 @@ import MimicCore
 
 /// An independent nonactivating overlay. Hiding it only detaches presentation.
 @MainActor final class BuildActivityPanel: NSObject, NSWindowDelegate {
+    static let preferredWidth: CGFloat = 360
     let window = BuildFloatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
     private let model: TaskCoordinator
     private let defaults: UserDefaults
@@ -44,10 +45,10 @@ import MimicCore
         if model.builds.pinned { timer?.cancel(); timer = nil; deadlineID = nil }
         guard hiddenID != record.id else { return }
         let visible = anchor() ?? NSScreen.main?.visibleFrame ?? .zero
-        var origin = window.isVisible ? window.frame.origin : defaults.string(forKey: "build.card.origin").map(NSPointFromString) ?? NSPoint(x: visible.maxX - 520 - 16, y: visible.minY + 16)
+        var origin = window.isVisible ? window.frame.origin : defaults.string(forKey: "build.card.origin").map(NSPointFromString) ?? NSPoint(x: visible.maxX - Self.preferredWidth - 16, y: visible.minY + 16)
         let screen = NSScreen.screens.first { $0.visibleFrame.contains(origin) }?.visibleFrame ?? visible
         let height = min(self.naturalHeight, screen.height)
-        let width = min(520, screen.width)
+        let width = min(Self.preferredWidth, screen.width)
         if model.builds.overlayWidth != width { model.builds.overlayWidth = width }
         if window.isVisible { origin.y = window.frame.maxY - height }
         updating = true
@@ -80,47 +81,88 @@ final class BuildFloatingPanel: NSPanel {
 }
 
 struct BuildOverlayView: View {
+    @ObservedObject var builds: BuildCoordinator
+    let hide: () -> Void
+    var measured: (CGFloat) -> Void = { _ in }
+    var body: some View {
+        if let record = builds.overlayActivity {
+            BuildOverlayContent(builds: builds, record: record, hide: hide, measured: measured)
+        }
+    }
+}
+
+/// Presentation accepts an immutable activity; observing or hiding it never starts build work.
+struct BuildOverlayContent: View {
     private var theme = MimicTheme()
     @Environment(\.mimicTextScale) private var textScale
     @ObservedObject var builds: BuildCoordinator
+    @ObservedObject private var accessibility = AccessibilityTrustObserver.shared
+    let record: BuildActivity
     let hide: () -> Void
     var measured: (CGFloat) -> Void = { _ in }
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     var body: some View {
-        if let record = builds.overlayActivity {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack { Text(buildTitle(record)).mimicRetrofittedFont(.system(size: 13, weight: .semibold), role: .heading); Spacer(); Button { builds.pinned.toggle() } label: { Image(systemName: builds.pinned ? "pin.fill" : "pin") }.buttonStyle(MimicCaptionButtonStyle(caption: "action")).accessibilityLabel(text("build.pin")).accessibilityValue(text(builds.pinned ? "build.pinned" : "build.unpinned")); Button(action: hide) { Image(systemName: "xmark") }.buttonStyle(MimicCaptionButtonStyle(caption: "close")).accessibilityLabel(text("build.hide")) }.mimicRetroHeading()
-                ViewThatFits(in: .horizontal) {
-                    HStack { Text(text(record.phase)).fixedSize(horizontal: true, vertical: false); Spacer(); clock(record) }
-                    VStack(alignment: .leading, spacing: 4) { Text(text(record.phase)); clock(record) }
-                }.mimicFont(.body).foregroundStyle(buildColor(record))
-                BuildProgressView(record: record)
-                if let count = record.completedStages, record.parameters.intent == .run { Text(String(format: text("build.progress.stages"), count, record.progressTotal)).mimicFont(.caption).foregroundStyle(.secondary) }
-                if let count = record.completedTestCount, let total = record.selectedTestCount { Text(String(format: text("build.progress.tests"), count, total)).mimicFont(.caption).foregroundStyle(.secondary) }
-                Text(URL(fileURLWithPath: record.project.path).lastPathComponent + " · " + record.project.branch).mimicFont(.caption).fixedSize(horizontal: false, vertical: true).mimicHelp(record.project.path)
-                Text([record.parameters.scheme, record.destinationName ?? text("build.destination.selected"), buildInitiator(record)].filter { !$0.isEmpty }.joined(separator: " · ")).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                if let error = record.errorCode { Text(text("build.error." + error)).mimicFont(.caption).foregroundStyle(.orange) }
-                HStack {
-                    if record.canCancel { Button(text("build.stop")) { builds.cancel(record.id) } }
-                    if record.stage == .products, let products = record.products, products.count > 1 {
-                        Menu(text("build.chooseProduct")) { ForEach(products) { product in Button(product.name) { try? builds.chooseProduct(product.id, activityID: record.id) } } }
-                            .mimicMenu(text("build.chooseProduct"), items: products.map { product in .init(product.name, id: product.id, enabled: { builds.overlayActivity?.id == record.id && builds.overlayActivity?.stage == .products }) { try? builds.chooseProduct(product.id, activityID: record.id) } })
-                    }
-                    Spacer(minLength: 0)
-                    Button(text("build.output")) { builds.showResult(record.id) }
-                }.controlSize(.small).buttonStyle(MimicAuxiliaryButtonStyle())
-            }.padding(MimicMetrics.cardInsets).frame(width: builds.overlayWidth).fixedSize(horizontal: false, vertical: true)
-                .background { if theme.retro || theme.tiled { theme.color("surface") } else if reduceTransparency || contrast == .increased { Color(nsColor: .windowBackgroundColor) } else if #available(macOS 26.0, *) { Rectangle().fill(.clear).glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12)) } else { Rectangle().fill(.regularMaterial) } }
-                .clipShape(RoundedRectangle(cornerRadius: theme.retro ? 0 : theme.tiled ? 18 : 12)).overlay(RoundedRectangle(cornerRadius: theme.retro ? 0 : theme.tiled ? 18 : 12).stroke(.primary.opacity(contrast == .increased ? 0.5 : 0.12)))
-                .modifier(NativeRetroSurface())
-                .accessibilityIdentifier("build.overlay")
-                .background(GeometryReader { proxy in Color.clear.preference(key: BuildOverlayHeight.self, value: proxy.size.height) })
-                .onPreferenceChange(BuildOverlayHeight.self) { self.measured($0) }
-        }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(buildTitle(record)).mimicRetrofittedFont(.system(size: 13, weight: .semibold), role: .heading).lineLimit(1).mimicHelp(buildTitle(record))
+                Spacer(minLength: 4)
+                Button { builds.pinned.toggle() } label: { Image(systemName: builds.pinned ? "pin.fill" : "pin") }
+                    .buttonStyle(MimicCaptionButtonStyle(caption: "action"))
+                    .accessibilityLabel(text(builds.pinned ? "build.pin.autoHide" : "build.pin.keep"))
+                    .accessibilityValue(text(builds.pinned ? "build.pinned" : "build.unpinned"))
+                    .mimicHelp(text(builds.pinned ? "build.pin.autoHide.help" : "build.pin.keep.help"))
+                    .accessibilityIdentifier("build.overlay.pin")
+                Button(action: hide) { Image(systemName: "xmark") }.buttonStyle(MimicCaptionButtonStyle(caption: "close")).accessibilityLabel(text("build.hide"))
+            }.mimicRetroHeading()
+            HStack(spacing: 8) {
+                Text(status(record)).lineLimit(1).truncationMode(.middle).mimicHelp(status(record))
+                Spacer(minLength: 0)
+                clock(record).fixedSize()
+            }.mimicFont(.body).foregroundStyle(buildColor(record))
+            // Compilation uses Xcode's reported fraction, never elapsed time or a previous build estimate.
+            MimicProgressBar(value: record.progressFraction ?? 0, color: buildColor(record), label: text("build.overlay.progress"))
+                .mimicHelp(text("build.overlay.progress.help"))
+                .accessibilityIdentifier("build.overlay.progress")
+            if record.status.isPending, record.stage == .compilation, let fraction = record.executionProgress?.fraction {
+                Text(String(format: text("build.progress.compilation"), fraction * 100)).mimicFont(.caption).foregroundStyle(.secondary)
+            } else if record.status.isPending, record.stage == .compilation, record.parameters.backend == .xcodeMCP {
+                // The grant is observed live; without a missing grant the absence of data only means Xcode has not reported yet.
+                Text(text(accessibility.trusted ? "build.progress.xcodeWaiting" : "build.progress.xcodeUnavailable")).mimicFont(.caption).foregroundStyle(.secondary)
+            } else if let count = record.completedTestCount, let total = record.selectedTestCount {
+                Text(String(format: text("build.progress.tests"), count, total)).mimicFont(.caption).foregroundStyle(.secondary)
+            } else if record.status.isPending, record.stage == .compilation, let count = record.executionProgress?.completedOperations, count > 0 {
+                Text(String(format: text("build.progress.operations"), count)).mimicFont(.caption).foregroundStyle(.secondary)
+            } else if record.parameters.intent == .run {
+                Text(String(format: text("build.progress.stages"), record.status == .succeeded ? record.progressTotal : record.completedStages ?? 0, record.progressTotal)).mimicFont(.caption).foregroundStyle(.secondary)
+            }
+            Text(URL(fileURLWithPath: record.project.path).lastPathComponent + " · " + record.project.branch).mimicFont(.caption).lineLimit(1).truncationMode(.middle).mimicHelp(record.project.path + " · " + record.project.branch)
+            Text([record.parameters.scheme, record.destinationName ?? text("build.destination.selected"), buildInitiator(record)].filter { !$0.isEmpty }.joined(separator: " · ")).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                .mimicHelp([record.parameters.scheme, record.destinationName ?? text("build.destination.selected"), buildInitiator(record)].joined(separator: " · "))
+            if let error = record.errorCode { Text(text("build.error." + error)).mimicFont(.caption).foregroundStyle(.orange) }
+            if record.stage == .products, let products = record.products, products.count > 1 {
+                Menu(text("build.chooseProduct")) { ForEach(products) { product in Button(product.name) { try? builds.chooseProduct(product.id, activityID: record.id) } } }
+                    .mimicMenu(text("build.chooseProduct"), items: products.map { product in .init(product.name, id: product.id, enabled: { builds.overlayActivity?.id == record.id && builds.overlayActivity?.stage == .products }) { try? builds.chooseProduct(product.id, activityID: record.id) } })
+            }
+            HStack {
+                if record.canCancel { Button(text(buildStopLabel(record))) { builds.cancel(record.id) } }
+                Spacer(minLength: 0)
+                Button(text("build.output")) { builds.showResult(record.id) }
+            }.controlSize(.small).buttonStyle(MimicAuxiliaryButtonStyle())
+        }.padding(MimicMetrics.cardInsets).frame(width: builds.overlayWidth).fixedSize(horizontal: false, vertical: true)
+            .background { if theme.retro || theme.tiled { theme.color("surface") } else if reduceTransparency || contrast == .increased { Color(nsColor: .windowBackgroundColor) } else if #available(macOS 26.0, *) { Rectangle().fill(.clear).glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12)) } else { Rectangle().fill(.regularMaterial) } }
+            .clipShape(RoundedRectangle(cornerRadius: theme.retro ? 0 : theme.tiled ? 18 : 12)).overlay(RoundedRectangle(cornerRadius: theme.retro ? 0 : theme.tiled ? 18 : 12).stroke(.primary.opacity(contrast == .increased ? 0.5 : 0.12)))
+            .modifier(NativeRetroSurface())
+            .accessibilityIdentifier("build.overlay")
+            .background(GeometryReader { proxy in Color.clear.preference(key: BuildOverlayHeight.self, value: proxy.size.height) })
+            .onPreferenceChange(BuildOverlayHeight.self) { self.measured($0) }
     }
     private func clock(_ record: BuildActivity) -> some View {
         MimicActivityClock(running: record.status.isPending) { _ in Text(buildDuration(record)).monospacedDigit() }
+    }
+    private func status(_ record: BuildActivity) -> String {
+        if record.status.isPending, record.stage == .compilation, let operation = record.executionProgress?.operation, !operation.isEmpty { return operation }
+        return text(record.phase)
     }
 
 }

@@ -50,7 +50,7 @@ import MimicCore
     }
 
     /// Measure the production grid beside another tile; isolated content can hide a broken height contract.
-    @Test(arguments: ["empty", "running", "succeeded", "failed"])
+    @Test(arguments: ["empty", "running", "succeeded", "failed", "loading", "refreshing"])
     func compactCardsKeepNeighbourHeightAndVisibleControls(state: String) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("BuildCardRender-" + UUID().uuidString)
         let suite = "BuildCardRender-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
@@ -58,15 +58,17 @@ import MimicCore
         let destination = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
         let project = ProjectContext(path: root.path, branch: "feature/very-long-branch-layout", commit: "fixture", developerDirectory: "/fixture/Developer")
         var parameters = BuildParameters(scheme: scheme, destinationID: destination); parameters.intent = .run
-        if state == "succeeded" || state == "failed" {
+        if state == "succeeded" || state == "failed" || state == "refreshing" {
             var record = BuildActivity(project: project, parameters: parameters, source: "Codex")
             record.status = state == "succeeded" ? .succeeded : .failed; record.phase = "build.phase." + state
             record.startedAt = Date().addingTimeInterval(-268); record.finishedAt = Date(); record.completedStages = state == "succeeded" ? 3 : 1
             if state == "failed" { record.errorCode = "stage.installation" }
             try BuildHistoryStore(directory: root).save([record])
         }
+        let gate = BuildCardCatalogueGate()
         let helper = URL(fileURLWithPath: ProcessInfo.processInfo.environment["MIMIC_HOST"]!)
         let builds = BuildCoordinator(directory: root, helper: helper, defaults: defaults, inspect: { $0 }, resolveDeveloper: { $0.developerDirectory! }, makeCommand: { _, _ in .init(executable: "/bin/bash", arguments: ["-c", "printf 'FIXTURE\\n'; sleep 30"], directory: "/private/tmp", environment: ["PATH": "/usr/bin:/bin"]) }, discover: { _, _, _, _, _ in
+            if state == "loading" || state == "refreshing" { await gate.wait() }
             var catalogue = BuildCatalogue(); catalogue.schemes = [scheme]; catalogue.configurations = ["Debug"]
             catalogue.destinations = [.init(id: destination, name: "iPhone с длинным названием устройства Simulator")]; return catalogue
         })
@@ -74,6 +76,13 @@ import MimicCore
         model.projects = [project]; model.selectedProjectPath = project.path; model.aiUsage.stop()
         defer { model.stopAndExit(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
         builds.savePanelDraft(parameters, project: project, developer: "/fixture/Developer")
+        await builds.restoreDraft(project: project)
+        let refresh: Task<Void, Never>?
+        if state == "loading" || state == "refreshing" {
+            refresh = Task { await builds.refreshCatalogue(project: project) }
+            for _ in 0..<100 { if builds.catalogueProgress != nil { break }; try await Task.sleep(for: .milliseconds(2)) }
+            #expect(builds.loading && builds.catalogueProgress != nil)
+        } else { refresh = nil }
         if state == "running" {
             let record = try await builds.submit(id: UUID(), project: project, parameters: parameters, source: "Codex")
             builds.start(record)
@@ -93,6 +102,7 @@ import MimicCore
                 window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: dark ? .accessibilityHighContrastDarkAqua : .accessibilityHighContrastAqua); window.contentView = view
                 view.frame = .init(origin: .zero, size: .init(width: width, height: view.fittingSize.height)); view.layoutSubtreeIfNeeded()
                 try await Task.sleep(for: .milliseconds(30))
+                if state == "loading" || state == "refreshing" { #expect(builds.loading && builds.catalogueProgress != nil) }
                 let frame = try #require(frames.logical["builds"]), neighbour = try #require(frames.logical["derivedDataCleanup"]), bootstrap = try #require(frames.logical["bootstrap"])
                 #expect(abs(frame.height - 160 * scale) < 1)
                 #expect(abs(frame.height - neighbour.height) < 1)
@@ -105,6 +115,8 @@ import MimicCore
                 try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appendingPathComponent("\(state)-\(full ? "full" : "mini")-\(Int(width))-\(scale)-\(dark ? "dark" : "light").png")); window.contentView = nil; window.close()
             } }
         }
+        await gate.finish()
+        await refresh?.value
         if let active = builds.active {
             builds.cancel(active.id)
             for _ in 0..<200 { if !builds.busy { break }; try await Task.sleep(for: .milliseconds(10)) }
@@ -121,4 +133,10 @@ private actor BuildCardDiscoveryProbe {
         var result = BuildCatalogue(); result.schemes = ["Fixture"]; result.configurations = ["Debug"]
         return result
     }
+}
+
+private actor BuildCardCatalogueGate {
+    private var ready = false
+    func wait() async { while !ready { try? await Task.sleep(for: .milliseconds(10)) } }
+    func finish() { ready = true }
 }

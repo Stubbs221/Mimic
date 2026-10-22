@@ -29,7 +29,12 @@ private actor CatalogueGate {
         let start = try await integration.buildRequest(.init(method: "start_build_configuration", parameters: ["context": context, "scheme": .string("Fixture"), "includeTestPlans": .bool(false)]))
         let query = try #require(start["queryID"].string)
         let poll = MimicBridgeRequest(method: "get_build_configuration_state", parameters: ["queryID": .string(query)])
-        #expect(try await integration.buildRequest(poll)["status"] == .string("pending"))
+        let pending = try await integration.buildRequest(poll)
+        #expect(pending["status"] == .string("pending"))
+        #expect(pending["progress"]["phase"] == .string("checking"))
+        #expect(pending["progress"]["completed"] == .number(0))
+        #expect(pending["progress"]["total"] == .number(0))
+        #expect(pending["progress"]["startedAt"].string != nil)
         for _ in 0..<100 { if await gate.started { break }; try await Task.sleep(for: .milliseconds(2)) }
         await gate.finish()
         var ready = BridgeValue.null

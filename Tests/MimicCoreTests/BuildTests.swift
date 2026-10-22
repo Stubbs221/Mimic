@@ -37,6 +37,23 @@ struct BuildTests {
         """
         #expect(BuildCatalogue.destinations(from: text) == [.init(id: destination, name: "iPhone 17 · iOS 26.5", platform: .ios), .init(id: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", name: "Apple TV", platform: .tvos)])
     }
+    @Test(arguments: ["Ineligible destinations for the scheme:", "Destinations incompatible with the \"Fixture\" scheme:"])
+    func incompatibleDestinationSectionsAreExcluded(header: String) {
+        let text = """
+        Destinations compatible with the "Fixture" scheme:
+        { platform:iOS Simulator, id:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA, OS:27.0, name:iPhone }
+        \(header)
+        { platform:tvOS Simulator, id:BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB, OS:27.0, name:Apple TV }
+        """
+        #expect(BuildCatalogue.destinations(from: text) == [.init(id: destination, name: "iPhone · iOS 27.0", platform: .ios)])
+    }
+    @Test func destinationsWithExplicitErrorsAreExcludedWithoutSectionHeader() {
+        let text = """
+        { platform:iOS Simulator, id:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA, OS:27.0, name:iPhone, error:Runtime unavailable }
+        { platform:tvOS Simulator, id:BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB, name:Apple TV }
+        """
+        #expect(BuildCatalogue.destinations(from: text) == [.init(id: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB", name: "Apple TV", platform: .tvos)])
+    }
     @Test func streamRedactsAcrossChunksAndPreservesValidUnicodeAndColour() {
         var output = BuildOutput()
         #expect(output.append(Data("TOKEN=glpat-fixture".utf8)).isEmpty)

@@ -42,6 +42,7 @@ import MimicCore
         let thread: String?
         let scheme: String
         let includeTestPlans: Bool
+        let startedAt = Date()
         var result: Result<BuildCatalogue, BuildError>?
     }
     private var catalogueQueries: [UUID: CatalogueQuery] = [:]
@@ -541,6 +542,9 @@ extension MimicIntegration {
     }
 
     /// Keeps the legacy successful payload stable for both asynchronous and synchronous clients.
+    private func catalogueProgressPayload(_ progress: BuildCatalogueProgress) -> BridgeValue {
+        .object(["phase": .string(progress.phase.rawValue), "completed": .number(Double(progress.completed)), "total": .number(Double(progress.total)), "startedAt": .string(progress.startedAt.formatted(.iso8601))])
+    }
     private func cataloguePayload(_ catalogue: BuildCatalogue, context: BridgeValue, project: ProjectContext) throws -> BridgeValue {
         .object(["context": context, "cli": try BridgeValue.encode(catalogue), "backends": .array([.string("cli")] + (model.builds.xcode.project == project ? [.string("xcodeMCP")] : [])), "xcode": .object(["version": .string(model.builds.xcode.version), "workspaces": .object(model.builds.xcode.windows.mapValues(BridgeValue.string)), "settings": .string(text("build.xcode.settings")), "liveLog": .bool(false), "canCancel": .bool(false)])])
     }
@@ -577,7 +581,7 @@ extension MimicIntegration {
             let pinned = try await BuildDiscovery.pinned(project)
             _ = try self.expected(context, threadID: threadID)
             if method == "get_build_configuration" {
-                let catalogue = try await self.discovery.catalogue(project: pinned, scheme: scheme, includeTestPlans: tests, profileID: context["profileID"].string, profileRevision: context["profileRevision"].string)
+                let catalogue = try await self.discovery.catalogue(project: pinned, scheme: scheme, includeTestPlans: tests, profileID: context["profileID"].string, profileRevision: context["profileRevision"].string, useCache: true)
                 _ = try self.expected(context, threadID: threadID)
                 guard try await BuildDiscovery.pinned(project) == pinned else { throw BuildError.context }
                 return try cataloguePayload(catalogue, context: context, project: project)
@@ -586,19 +590,23 @@ extension MimicIntegration {
             if catalogueQueries.count >= 64 { catalogueQueries = catalogueQueries.filter { if case .none = $0.value.result { return true }; return false } }
             guard catalogueQueries.count < 64 else { throw BuildError.capacity }
             let id = UUID()
-            catalogueQueries[id] = CatalogueQuery(context: context, project: project, pinned: pinned, thread: threadID, scheme: scheme, includeTestPlans: tests)
+            let query = CatalogueQuery(context: context, project: project, pinned: pinned, thread: threadID, scheme: scheme, includeTestPlans: tests)
+            catalogueQueries[id] = query
             Task {
                 let result: Result<BuildCatalogue, BuildError>
-                do { result = .success(try await self.discovery.catalogue(project: pinned, scheme: scheme, includeTestPlans: tests, profileID: context["profileID"].string, profileRevision: context["profileRevision"].string)) }
+                do { result = .success(try await self.discovery.catalogue(project: pinned, scheme: scheme, includeTestPlans: tests, profileID: context["profileID"].string, profileRevision: context["profileRevision"].string, useCache: true)) }
                 catch { result = .failure(error as? BuildError ?? .catalogueProcess) }
                 self.catalogueQueries[id]?.result = result
             }
-            return .object(["queryID": .string(id.uuidString), "status": .string("pending")])
+            return .object(["queryID": .string(id.uuidString), "status": .string("pending"), "progress": catalogueProgressPayload(BuildCatalogueProgress(startedAt: query.startedAt))])
         case "get_build_configuration_state":
             guard let id = p["queryID"]?.string.flatMap(UUID.init(uuidString:)), let query = catalogueQueries[id], query.thread == threadID else { throw BuildError.notFound }
             _ = try expected(query.context, threadID: threadID)
             guard try await BuildDiscovery.pinned(query.project) == query.pinned else { throw BuildError.context }
             var payload: [String: BridgeValue] = ["queryID": .string(id.uuidString), "status": .string("pending")]
+            let progress = await discovery.progress(project: query.pinned, scheme: query.scheme, includeTestPlans: query.includeTestPlans, profileID: query.context["profileID"].string, profileRevision: query.context["profileRevision"].string)
+            _ = try expected(query.context, threadID: threadID)
+            payload["progress"] = catalogueProgressPayload(progress ?? BuildCatalogueProgress(startedAt: query.startedAt))
             if let result = query.result {
                 switch result {
                 case let .success(catalogue): payload["status"] = .string("ready"); payload["result"] = try cataloguePayload(catalogue, context: query.context, project: query.project)

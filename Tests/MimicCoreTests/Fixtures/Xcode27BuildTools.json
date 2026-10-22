@@ -1,0 +1,561 @@
+{
+  "author": "Василий Маслов",
+  "capturedAt": "2026-10-22",
+  "xcodeVersion": "27.0 (27A266a)",
+  "tools": [
+    {
+      "description": "Builds an Xcode project and waits until the build completes.",
+      "inputSchema": {
+        "properties": {
+          "buildForTesting": {
+            "description": "Whether to also build test targets that would not usually be included in a regular build",
+            "type": "boolean"
+          },
+          "tabIdentifier": {
+            "description": "The workspace tab identifier.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "BuildProject",
+      "outputSchema": {
+        "properties": {
+          "buildResult": {
+            "description": "The message indicating the result of the build operation",
+            "type": "string"
+          },
+          "elapsedTime": {
+            "description": "The time it took to finish the build, in seconds",
+            "type": "number"
+          },
+          "errors": {
+            "description": "List of build errors",
+            "items": {
+              "properties": {
+                "classification": {
+                  "description": "The type of error (error, warning, etc.)",
+                  "type": "string"
+                },
+                "filePath": {
+                  "description": "The file path where the error occurred",
+                  "type": "string"
+                },
+                "lineNumber": {
+                  "description": "The line number where the error occurred",
+                  "type": "integer"
+                },
+                "message": {
+                  "description": "The error message",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "classification",
+                "message"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "fullLogPath": {
+            "description": "Path of the full log in textual format, containing the complete command lines and any output from the build tasks",
+            "type": "string"
+          }
+        },
+        "required": [
+          "buildResult",
+          "errors",
+          "fullLogPath"
+        ],
+        "type": "object"
+      },
+      "title": "Build Project"
+    },
+    {
+      "description": "Sends an lldb command to Xcode's active debugging session and returns the output.\nThe process must already be running with the debugger attached. You can use the\nRunProject tool with attachDebugger=true, if it isn't running and debugged already.\n\nSend any lldb command: 'bt', 'po variable', 'breakpoint set -n main', 'continue',\n'thread step-over', 'frame variable', etc. The command runs in the same lldb session\nas Xcode's debug console, so the agent and Xcode UI share the same debugging state.\n\nWhen you start using a debug session, you should call 'process status' to determine\nwhether the process is stopped or not, before calling any commands that require\nthe process to be stopped (like expressions). Do this unless you're already confident\nabout the running state.",
+      "inputSchema": {
+        "properties": {
+          "command": {
+            "description": "The lldb command to execute in Xcode's active debug session (e.g., 'bt', 'po self', 'breakpoint set -n viewDidLoad', 'continue', 'thread step-over', 'frame variable').",
+            "type": "string"
+          },
+          "tabIdentifier": {
+            "description": "The workspace tab identifier.",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Maximum seconds to wait for the command to complete. Default: 30. Increase for commands that resume execution (e.g., 'continue').",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "name": "InvokeDebuggerCommand",
+      "outputSchema": {
+        "properties": {
+          "debugSessionActive": {
+            "description": "Whether an active debug session exists. False if no app is being debugged.",
+            "type": "boolean"
+          },
+          "isWaitingForMore": {
+            "description": "True if the command timed out before completing. The command may still be executing (e.g., after 'continue'). Call again with a simple command like 'thread list' to check the state.",
+            "type": "boolean"
+          },
+          "output": {
+            "description": "The lldb output from the command. This is the same output that appears in Xcode's debug console.",
+            "type": "string"
+          },
+          "processIdentifier": {
+            "description": "The process identifier (PID) of the debugged process, if available.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "output",
+          "debugSessionActive",
+          "isWaitingForMore"
+        ],
+        "type": "object"
+      },
+      "title": "Invoke a Debugger Command"
+    },
+    {
+      "description": "Builds and runs the current scheme in Xcode, equivalent to pressing the Run button (Cmd+R).\nReturns when the app has launched and is running.\nUse the InvokeDebuggerCommand tool to debug the app (make sure to run with attachDebugger=true).\nUse the GetConsoleOutput tool to read the app's console output.\nUse the StopProject tool to stop the app, when finished.",
+      "inputSchema": {
+        "properties": {
+          "attachDebugger": {
+            "description": "Whether to attach the debugger to the launched process. Defaults to false.",
+            "type": "boolean"
+          },
+          "tabIdentifier": {
+            "description": "The workspace tab identifier.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "RunProject",
+      "outputSchema": {
+        "properties": {
+          "buildErrors": {
+            "description": "List of build errors, if the build failed",
+            "items": {
+              "properties": {
+                "classification": {
+                  "description": "The type of error (error, warning, etc.)",
+                  "type": "string"
+                },
+                "filePath": {
+                  "description": "The file path where the error occurred",
+                  "type": "string"
+                },
+                "lineNumber": {
+                  "description": "The line number where the error occurred",
+                  "type": "integer"
+                },
+                "message": {
+                  "description": "The error message",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "classification",
+                "message"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "elapsedTime": {
+            "description": "The time it took to build and launch, in seconds",
+            "type": "number"
+          },
+          "fullLogPath": {
+            "description": "Path of the full build log in textual format",
+            "type": "string"
+          },
+          "launchSessionReference": {
+            "description": "A reference to the launch session that can be passed to GetConsoleOutput to read the app's output",
+            "type": "string"
+          },
+          "processIdentifier": {
+            "description": "The process identifier (PID) of the launched app",
+            "type": "integer"
+          },
+          "runResult": {
+            "description": "The message indicating the result of the run operation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runResult",
+          "buildErrors",
+          "fullLogPath"
+        ],
+        "type": "object"
+      },
+      "title": "Run Project"
+    },
+    {
+      "description": "Runs specific tests using the active scheme's active test plan",
+      "inputSchema": {
+        "properties": {
+          "tabIdentifier": {
+            "description": "The workspace tab identifier.",
+            "type": "string"
+          },
+          "tests": {
+            "description": "Array of test specifiers to run. Each specifier contains 'targetName' and 'testIdentifier' fields. Use GetTestList action to discover available tests and their identifiers, then extract the 'targetName' and 'identifier' fields from the TestActionInfo results to construct TestActionSpecifier objects.",
+            "items": {
+              "properties": {
+                "targetName": {
+                  "description": "The test target name",
+                  "type": "string"
+                },
+                "testIdentifier": {
+                  "description": "Test identifier in XCTestIdentifier format",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "targetName",
+                "testIdentifier"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tests"
+        ],
+        "type": "object"
+      },
+      "name": "RunSomeTests",
+      "outputSchema": {
+        "properties": {
+          "activeTestPlanName": {
+            "description": "Active test plan name",
+            "type": "string"
+          },
+          "counts": {
+            "description": "Test execution counts",
+            "properties": {
+              "expectedFailures": {
+                "description": "Number of expected failures",
+                "type": "integer"
+              },
+              "failed": {
+                "description": "Number of failed tests",
+                "type": "integer"
+              },
+              "notRun": {
+                "description": "Number of tests not run",
+                "type": "integer"
+              },
+              "passed": {
+                "description": "Number of passed tests",
+                "type": "integer"
+              },
+              "skipped": {
+                "description": "Number of skipped tests",
+                "type": "integer"
+              },
+              "total": {
+                "description": "Total test count",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "passed",
+              "failed",
+              "skipped",
+              "expectedFailures",
+              "notRun"
+            ],
+            "type": "object"
+          },
+          "fullConsoleLogsPath": {
+            "description": "A text file path containing all logs that would be printed in the console from `print`, `NSLog`, etc. during test build and execution.",
+            "type": "string"
+          },
+          "fullSummaryPath": {
+            "description": "A text file path containing all test results and complete issue details in textual form",
+            "type": "string"
+          },
+          "message": {
+            "description": "Additional information about truncation",
+            "type": "string"
+          },
+          "results": {
+            "description": "Results for each test (truncated at 100, failures shown first)",
+            "items": {
+              "properties": {
+                "displayName": {
+                  "description": "Human-readable test name",
+                  "type": "string"
+                },
+                "errorMessages": {
+                  "description": "Error messages",
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "identifier": {
+                  "description": "Test identifier in XCTestIdentifier format",
+                  "type": "string"
+                },
+                "state": {
+                  "description": "Execution state",
+                  "type": "string"
+                },
+                "targetName": {
+                  "description": "The test target name",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "targetName",
+                "identifier",
+                "displayName",
+                "state",
+                "errorMessages"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "schemeName": {
+            "description": "Active scheme name",
+            "type": "string"
+          },
+          "summary": {
+            "description": "Test execution summary",
+            "type": "string"
+          },
+          "totalResults": {
+            "description": "Total number of test results before truncation",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "Whether results were truncated due to exceeding 100 results",
+            "type": "boolean"
+          },
+          "xcresultBundlePath": {
+            "description": "Path to the .xcresult bundle produced by the test run. Can be parsed with xcresulttool. If code coverage is enabled, xccov can extract coverage data from this bundle.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "summary",
+          "counts",
+          "results",
+          "schemeName",
+          "truncated",
+          "totalResults",
+          "fullSummaryPath"
+        ],
+        "type": "object"
+      },
+      "title": "Run Some Tests"
+    },
+    {
+      "description": "Stops the currently running app in Xcode, equivalent to pressing the Stop button (Cmd+.).\nIf no app is currently running, reports that there is nothing to stop.",
+      "inputSchema": {
+        "properties": {
+          "tabIdentifier": {
+            "description": "The workspace tab identifier.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "StopProject",
+      "outputSchema": {
+        "properties": {
+          "processIdentifier": {
+            "description": "The process identifier (PID) of the app that was stopped",
+            "type": "integer"
+          },
+          "stopResult": {
+            "description": "The result of the stop operation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stopResult"
+        ],
+        "type": "object"
+      },
+      "title": "Stop Project"
+    },
+    {
+      "description": "Lists run destinations available for the currently active scheme, grouped the same way the Xcode picker groups them (Devices, Simulators, Build, Incompatible, etc.), and identifies which one is active. Each entry includes the destination's `displayTitle` (matching the Xcode toolbar label and the unambiguous handle for XcodeSwitchRunDestination), its group, eligibility status, platform, OS version, architecture, and SDK display name. By default, destinations in the 'Incompatible' group are omitted from the inline list to save context (the `groups` summary still reports their count and the full file at fullRunDestinationListPath still contains them). Pass `includeIncompatible: true` to include them inline. The inline list is capped at 40 entries in both modes, with the active destination listed first; the complete list is always available via fullRunDestinationListPath.",
+      "inputSchema": {
+        "properties": {
+          "includeIncompatible": {
+            "description": "When true, destinations in the 'Incompatible' group are included in the inline `destinations` array. When false or omitted (the default), they are skipped to save context but are still counted in the `groups` summary and listed in fullRunDestinationListPath.",
+            "type": "boolean"
+          },
+          "tabIdentifier": {
+            "description": "The workspace tab identifier.",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "XcodeListRunDestinations",
+      "outputSchema": {
+        "properties": {
+          "activeDestinationDisplayTitle": {
+            "description": "The disambiguated displayTitle of the currently active run destination, or null if no destination is active. This value round-trips: pass it back to XcodeSwitchRunDestination to re-select the same destination.",
+            "type": "string"
+          },
+          "activeSchemeName": {
+            "description": "The name of the currently active scheme, or null if no scheme is active. Run destinations are scoped to the active scheme.",
+            "type": "string"
+          },
+          "destinations": {
+            "description": "Inline run destination entries. By default the 'Incompatible' group is omitted; pass `includeIncompatible: true` to include it. Always capped at 40 entries, with the active destination listed first.",
+            "items": {
+              "properties": {
+                "architecture": {
+                  "description": "The destination's target architecture (for example, 'arm64' or 'x86_64').",
+                  "type": "string"
+                },
+                "displayTitle": {
+                  "description": "The destination's name as shown in the Xcode picker, including any disambiguation suffix when needed. This is the handle to pass back to XcodeSwitchRunDestination — it always round-trips.",
+                  "type": "string"
+                },
+                "group": {
+                  "description": "The destination's group as shown in the picker (for example: 'Devices', 'Simulators', 'Virtual Machines', 'Build', 'Incompatible').",
+                  "type": "string"
+                },
+                "ineligibilityMessage": {
+                  "description": "Human-readable explanation of why this destination is ineligible, if any.",
+                  "type": "string"
+                },
+                "isActive": {
+                  "description": "True if this is the currently active run destination.",
+                  "type": "boolean"
+                },
+                "isEligible": {
+                  "description": "True if this destination can be used to build, run, or test the active scheme. Destinations in the 'Incompatible' group return false.",
+                  "type": "boolean"
+                },
+                "isGenericDevice": {
+                  "description": "True if this destination represents a generic build target such as 'Any iOS Device'.",
+                  "type": "boolean"
+                },
+                "isSimulator": {
+                  "description": "True if this destination represents a simulator device.",
+                  "type": "boolean"
+                },
+                "osVersion": {
+                  "description": "The operating system version of the destination's device (for example, '18.4'), if known.",
+                  "type": "string"
+                },
+                "platformIdentifier": {
+                  "description": "The platform identifier of the destination's device (for example, 'com.apple.platform.iphonesimulator').",
+                  "type": "string"
+                },
+                "sdkDisplayName": {
+                  "description": "The display name of the destination's target SDK (for example, 'iOS 18.4 Simulator').",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "displayTitle",
+                "group",
+                "isActive",
+                "isEligible",
+                "isSimulator",
+                "isGenericDevice"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "fullRunDestinationListPath": {
+            "description": "Path to a file containing every destination — including incompatible ones — in grep-friendly format.",
+            "type": "string"
+          },
+          "groups": {
+            "description": "Summary of every destination group in picker order, each with a name and total count (independent of any inline filtering).",
+            "items": {
+              "properties": {
+                "count": {
+                  "description": "The number of run destinations in this group (independent of inline filtering).",
+                  "type": "integer"
+                },
+                "name": {
+                  "description": "The group's display name as shown in the picker.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "count"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "message": {
+            "description": "Optional message explaining why the inline list differs from totalDestinations or noting other context (such as no active scheme).",
+            "type": "string"
+          },
+          "totalDestinations": {
+            "description": "Total number of destinations available for the active scheme, before any filtering or truncation.",
+            "type": "integer"
+          },
+          "truncated": {
+            "description": "True if the inline `destinations` array contains fewer entries than `totalDestinations` (because of incompatible filtering, the 40-entry cap, or both).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "destinations",
+          "groups",
+          "truncated",
+          "totalDestinations",
+          "fullRunDestinationListPath"
+        ],
+        "type": "object"
+      },
+      "title": "List Run Destinations"
+    },
+    {
+      "description": "Lists the current Xcode windows and their workspace information",
+      "inputSchema": {
+        "properties": {},
+        "required": [],
+        "type": "object"
+      },
+      "name": "XcodeListWindows",
+      "outputSchema": {
+        "properties": {
+          "message": {
+            "description": "Description of all open Xcode windows",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      },
+      "title": "List Windows"
+    }
+  ]
+}

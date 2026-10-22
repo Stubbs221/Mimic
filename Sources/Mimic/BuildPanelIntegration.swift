@@ -12,6 +12,11 @@ extension MimicIntegration {
         let pinned = try await BuildDiscovery.pinned(project)
         _ = try expected(context, threadID: request.threadID)
         let developer = pinned.developerDirectory ?? ""
+        if operation == "refresh" {
+            await discovery.invalidate(project: pinned, profileID: context["profileID"].string, profileRevision: context["profileRevision"].string)
+            _ = try expected(context, threadID: request.threadID)
+            return .object(["invalidated": .bool(true)])
+        }
         if operation == "get" {
             let draft = model.builds.panelDraft(project: project, developer: developer)
             let cached = await discovery.cachedCatalogue(project: pinned, scheme: draft.scheme, profileID: context["profileID"].string, profileRevision: context["profileRevision"].string)
@@ -33,10 +38,12 @@ extension MimicIntegration {
         guard model.builds.records.contains(where: { $0.id == id }) || model.builds.admittingCount == 0 && !model.builds.records.contains(where: { $0.project == project && $0.status.isPending }) else { throw BuildError.capacity }
         parameters.operation = operation == "tests" ? .test : .build
         parameters.intent = operation == "run" ? .run : operation == "catalogue" ? .catalogue : nil
+        if operation == "run", parameters.backend == .cli { parameters.backend = .xcodeMCP }
+        if operation == "run" { parameters.workspaceTab = "" }
         if parameters.operation == .build { parameters.testIdentifiers = []; if operation != "catalogue" { parameters.testPlan = "" } }
-        if parameters.backend == .xcodeMCP { parameters.scheme = ""; parameters.configuration = ""; parameters.destinationID = ""; parameters.testPlan = ""; parameters.platform = nil }
+        if parameters.backend == .xcodeMCP, parameters.intent != .run { parameters.scheme = ""; parameters.configuration = ""; parameters.destinationID = ""; parameters.testPlan = ""; parameters.platform = nil }
         try parameters.validate()
-        let record = try await model.builds.submit(id: id, project: project, parameters: parameters, source: "Codex · вручную", simulatorConfirmed: fields["simulatorConfirmed"] == .bool(true))
+        let record = try await model.builds.submit(id: id, project: project, parameters: parameters, source: "Codex · вручную", simulatorConfirmed: operation == "run" || fields["simulatorConfirmed"] == .bool(true))
         _ = try expected(context, threadID: request.threadID)
         return BuildBridge.summary(record)
     }

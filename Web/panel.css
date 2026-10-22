@@ -455,3 +455,10 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 /* Interactive forms keep the approved row geometry; text-summary clamping must not overlap controls. */
 .block-summary:has(>.profile-panel),.block-summary:has(>.service-tool){display:block;-webkit-line-clamp:unset;overflow:visible}
 :root .panel-block .profile-panel button{min-height:0}
+
+/* Catalogue steps share the build bar and keep all compact actions in place. */
+.build-catalogue-progress{display:flex;flex-direction:column;gap:4px;font-size:calc(11px * var(--bootstrap-text-scale,1));color:var(--muted)}
+.build-catalogue-progress[hidden],.build-catalogue-note[hidden]{display:none}
+.build-catalogue-progress .build-catalogue-label{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.build-catalogue-progress .build-catalogue-counter{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}
+.build-catalogue-progress .build-phase{gap:8px}

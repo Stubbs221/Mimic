@@ -15,9 +15,10 @@ import os
     @Published var draft = BuildParameters()
     @Published private(set) var catalogue = BuildCatalogue()
     @Published private(set) var loading = false
+    @Published private(set) var catalogueProgress: BuildCatalogueProgress?
     @Published var message = ""
     @Published var pinned = false
-    @Published var overlayWidth: CGFloat = 520
+    @Published var overlayWidth: CGFloat = BuildActivityPanel.preferredWidth
     @Published private(set) var manualSubmitting = false
     @Published var selectedID: UUID?
     @Published private(set) var revision = UUID()
@@ -32,6 +33,9 @@ import os
     private let makeStageCommand: @Sendable (BuildActivity, BuildStage, CommandSpec) throws -> CommandSpec
     private let presentationDiscover: @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue
     private let discover: @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue
+    private let validateSelection: @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue
+    private let discoveryService: BuildDiscovery
+    private let usesDiscoveryService: Bool
     var artifactLeases: Set<UUID> = []
     var checkPreparation: (ProjectContext, BuildParameters) async throws -> Void = { _, _ in }
     var artifactRoot: URL { store.directory }
@@ -39,6 +43,8 @@ import os
     private var changeSnapshots: [UUID: GitActivitySnapshot] = [:]
     private var outputs: [UUID: BuildOutput] = [:]
     private var testProgress: [UUID: BuildTestProgress] = [:]
+    private var buildEvents: BuildEventStream?
+    private var buildEventsMonitor: Task<Void, Never>?
     private var savedTails: [UUID: [String]] = [:]
     private var workers: [UUID: BuildOutputWorker] = [:]
     private var logTruncation = Set<UUID>()
@@ -56,6 +62,7 @@ import os
     private var restoredContext: ProjectContext?
     private var restoredProfile = ""
     private var presentationRequest: (profile: String, project: ProjectContext, scheme: String, tests: Bool, task: Task<Void, Never>)?
+    private var preloadTask: Task<Void, Never>?
     @Published private(set) var catalogueLoadedAt: Date?
     var catalogueStale: Bool { catalogueLoadedAt.map { Date().timeIntervalSince($0) >= 600 } ?? true }
 
@@ -72,6 +79,9 @@ import os
     var mayAdmit: () -> Bool = { true }
     var showResult: (UUID) -> Void = { _ in }
     var showSimulator: (BuildActivity) -> Void = { _ in }
+    /// Fresh evidence that the Xcode owning an uncertain activity is idle; unset keeps the manual acknowledgement only.
+    var confirmsXcodeIdle: ((BuildActivity) async -> Bool)?
+    private var unknownResolver: Task<Void, Never>?
     var terminalOutput: ((UUID, Data) -> Void)?
     private var terminalOwner: UUID?
     struct Admission: Codable { let project: ProjectContext; let parameters: BuildParameters; let source: String; var record: BuildActivity? = nil }
@@ -85,11 +95,15 @@ import os
     }, makeCommand: @escaping @Sendable (BuildActivity, String?) throws -> CommandSpec = { record, resultPath in
         var project = record.project; project.developerDirectory = record.selectedDeveloperDirectory
         let base = resultPath.map { URL(fileURLWithPath: $0).deletingPathExtension().path }
-        return try record.parameters.command(project: project, resultBundlePath: resultPath, derivedDataPath: record.preparedDerivedDataPath ?? base.map { $0 + "-DerivedData" }, enumerationPath: base.map { $0 + ".tests.json" })
-    }, makeStageCommand: @escaping @Sendable (BuildActivity, BuildStage, CommandSpec) throws -> CommandSpec = { _, _, command in command }, discover: (@Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue)? = nil) {
+        return try record.parameters.command(project: project, resultBundlePath: resultPath, derivedDataPath: record.compilationDerivedDataPath ?? record.preparedDerivedDataPath ?? base.map { $0 + "-DerivedData" }, enumerationPath: base.map { $0 + ".tests.json" })
+    }, makeStageCommand: @escaping @Sendable (BuildActivity, BuildStage, CommandSpec) throws -> CommandSpec = { _, _, command in command }, discover: (@Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue)? = nil,
+       validateSelection: (@Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue)? = nil, discoveryService: BuildDiscovery = .shared) {
         self.store = BuildHistoryStore(directory: directory); self.helper = helper; self.defaults = defaults; self.inspect = inspect
-        self.discover = discover ?? { project, scheme, tests, id, revision in try await BuildDiscovery.shared.catalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: id, profileRevision: revision) };
-        self.presentationDiscover = discover ?? { project, scheme, tests, id, revision in try await BuildDiscovery.shared.catalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: id, profileRevision: revision, useCache: true) }
+        self.discoveryService = discoveryService
+        self.usesDiscoveryService = discover == nil
+        self.discover = discover ?? { project, scheme, tests, id, revision in try await discoveryService.catalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: id, profileRevision: revision) };
+        self.presentationDiscover = discover ?? { project, scheme, tests, id, revision in try await discoveryService.catalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: id, profileRevision: revision, useCache: true) }
+        self.validateSelection = validateSelection ?? discover ?? { project, scheme, tests, id, revision in try await discoveryService.selectionCatalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: id, profileRevision: revision) }
         self.resolveDeveloper = resolveDeveloper; self.makeCommand = makeCommand; self.makeStageCommand = makeStageCommand
         do {
             records = try store.load()
@@ -124,7 +138,8 @@ import os
         var parameters = draft; parameters.operation = operation; parameters.intent = intent
         parameters.platform = catalogue.destinations.first { $0.id == parameters.destinationID }?.platform
         if operation == .build { parameters.testIdentifiers = []; if intent != .catalogue { parameters.testPlan = "" } }
-        if parameters.backend == .xcodeMCP { parameters.scheme = ""; parameters.configuration = ""; parameters.destinationID = ""; parameters.testPlan = ""; parameters.platform = nil }
+        if parameters.backend == .xcodeMCP, intent != .run { parameters.scheme = ""; parameters.configuration = ""; parameters.destinationID = ""; parameters.testPlan = ""; parameters.platform = nil }
+        if intent == .run { parameters.backend = .xcodeMCP; parameters.workspaceTab = "" }
         return parameters
     }
     func perform(_ operation: BuildOperation = .build, intent: BuildIntent? = nil) {
@@ -142,7 +157,7 @@ import os
                 if parameters.backend == .cli, try await resolveDeveloper(project) != catalogueDeveloper {
                     await refreshCatalogue(project: project); throw BuildError.configuration
                 }
-                _ = try await submit(id: UUID(), project: project, parameters: parameters, source: "Mimic", simulatorConfirmed: parameters.backend == .xcodeMCP && xcodeSimulatorConfirmed)
+                _ = try await submit(id: UUID(), project: project, parameters: parameters, source: "Mimic", simulatorConfirmed: parameters.backend == .xcodeMCP && (parameters.intent == .run || xcodeSimulatorConfirmed))
             }
             catch { message = text("build.error." + ((error as? BuildError)?.rawValue ?? "unavailable")) }
         }
@@ -172,7 +187,18 @@ import os
 
     // MARK: - Configuration and admission
 
-    /// User intent owns discovery; view creation only restores local preferences.
+    /// Startup and checkout selection restore saved data before validating the catalogue in the background.
+    func preloadCatalogue(project: ProjectContext) {
+        preloadTask?.cancel()
+        preloadTask = Task { [weak self] in
+            guard let self, !self.stopped else { return }
+            await self.restoreDraft(project: project)
+            guard !Task.isCancelled, self.currentProject() == project, self.draft.backend == .cli else { return }
+            await self.refreshCatalogue(project: project)
+        }
+    }
+
+    /// View creation only restores local preferences. Discovery reuses unchanged saved metadata.
     func refreshCatalogue(project: ProjectContext, scheme: String? = nil, includeTestPlans: Bool = false, force: Bool = false) async {
         let chosen = scheme ?? draft.scheme
         let profile = currentProfile().map { $0.id + ":" + $0.revision } ?? ""
@@ -187,7 +213,9 @@ import os
 
     private func loadCatalogue(project: ProjectContext, scheme: String?, includeTestPlans: Bool, force: Bool) async {
         let token = UUID(), profile = currentProfile(); catalogueRevision = token; loading = true; message = ""
-        defer { if catalogueRevision == token { loading = false } }
+        catalogueProgress = .init()
+        var progressMonitor: Task<Void, Never>?
+        defer { progressMonitor?.cancel(); if catalogueRevision == token { loading = false; catalogueProgress = nil } }
         do {
             let developer = try await resolveDeveloper(project)
             let key = "build.configuration." + project.path + "|" + developer
@@ -199,16 +227,27 @@ import os
             }
             let chosen = scheme ?? draft.scheme
             var captured = project; captured.developerDirectory = developer
+            let tests = includeTestPlans || draft.operation == .test
+            if usesDiscoveryService {
+                progressMonitor = Task { [captured] in
+                    while !Task.isCancelled {
+                        let progress = await discoveryService.progress(project: captured, scheme: chosen, includeTestPlans: tests, profileID: profile?.id, profileRevision: profile?.revision)
+                        guard !Task.isCancelled, catalogueRevision == token, currentProject() == project, currentProfile() == profile else { return }
+                        if let progress, catalogueProgress != progress { catalogueProgress = progress }
+                        do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+                    }
+                }
+            }
             let result = try await (force ? discover : presentationDiscover)(captured, chosen, includeTestPlans || draft.operation == .test, profile?.id, profile?.revision)
             guard catalogueRevision == token, currentProject() == project, currentProfile() == profile else { return }
-            let cached = await BuildDiscovery.shared.cachedCatalogue(project: captured, scheme: chosen, profileID: profile?.id, profileRevision: profile?.revision)
+            let cached = await discoveryService.cachedCatalogue(project: captured, scheme: chosen, includeTestPlans: includeTestPlans || draft.operation == .test, profileID: profile?.id, profileRevision: profile?.revision)
             guard catalogueRevision == token, currentProject() == project, currentProfile() == profile else { return }
             catalogueLoadedAt = cached?.loadedAt ?? Date(); catalogue = result; catalogueContext = project; catalogueScheme = chosen; catalogueDeveloper = developer
             if !result.schemes.contains(draft.scheme) { draft.scheme = "" }
             if !result.configurations.contains(draft.configuration) { draft.configuration = result.configurations.contains("Debug") ? "Debug" : "" }
             if !result.destinations.contains(where: { $0.id == draft.destinationID }) { draft.destinationID = "" }
             if includeTestPlans || draft.operation == .test, !result.testPlans.contains(draft.testPlan) { if !draft.testPlan.isEmpty { draft.testIdentifiers = [] }; draft.testPlan = "" }
-        } catch { if catalogueRevision == token { message = text("build.error." + ((error as? BuildError)?.rawValue ?? "catalogue")); catalogue = .init(); catalogueContext = nil } }
+        } catch { if catalogueRevision == token { message = text("build.error." + ((error as? BuildError)?.rawValue ?? "catalogue")) } }
         if catalogueRevision == token { loading = false }
     }
     func restoreDraft(project: ProjectContext) async {
@@ -217,13 +256,13 @@ import os
         presentationRequest = nil
         restoredContext = project; restoredProfile = profile
         catalogueLoadedAt = nil
-        catalogueRevision = UUID(); loading = false; catalogueContext = nil; catalogue = .init(); xcodeSimulatorConfirmed = false
+        catalogueRevision = UUID(); loading = false; catalogueProgress = nil; catalogueContext = nil; catalogue = .init(); xcodeSimulatorConfirmed = false
         guard let developer = try? await resolveDeveloper(project), currentProject() == project, restoredProfile == profile else { return }
         let key = "build.configuration." + project.path + "|" + developer; draftKey = key
         draft = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(BuildParameters.self, from: $0) } ?? .init()
         if defaults.data(forKey: key + ".selectionContext").flatMap({ try? JSONDecoder().decode(ProjectContext.self, from: $0) }) != project { draft.testIdentifiers = [] }
         var captured = project; captured.developerDirectory = developer
-        let cached = await BuildDiscovery.shared.cachedCatalogue(project: captured, scheme: draft.scheme, profileID: currentProfile()?.id, profileRevision: currentProfile()?.revision)
+        let cached = await discoveryService.cachedCatalogue(project: captured, scheme: draft.scheme, profileID: currentProfile()?.id, profileRevision: currentProfile()?.revision)
         guard currentProject() == project, restoredProfile == profile else { return }
         if let cached { catalogue = cached.value; catalogueLoadedAt = cached.loadedAt; catalogueContext = project; catalogueScheme = draft.scheme; catalogueDeveloper = developer }
     }
@@ -291,6 +330,9 @@ import os
         var record = BuildActivity(id: id, project: project, parameters: parameters, source: source)
         record.sourceProvenance = SourceProvenance(admitted: revision); record.sourceExclusions = exclusions; record.selectionID = selectionID; record.strictSource = sourceRevision != nil; record.requestedTestCases = expectedCases
         record.cleanupArtifacts = cleanupArtifacts; record.cleanupActivityID = cleanupActivityID
+        if parameters.backend == .cli, parameters.operation == .build, parameters.intent == nil || parameters.intent == .run {
+            record.compilationDerivedDataPath = try BuildCompilationCache.directory(root: store.directory, project: project, developer: developer, parameters: parameters, profileRevision: admittedProfile?.revision).path
+        }
         if parameters.operation == .test, parameters.backend == .cli, let prepared = records.last(where: { $0.testCatalogue?.matches(project: project, parameters: parameters, developer: developer) == true && revision != nil && $0.sourceProvenance?.finished == revision && $0.sourceProvenance?.stability == "unchangedObserved" }) {
             let path = store.directory.appendingPathComponent(prepared.id.uuidString + "-DerivedData").path
             if FileManager.default.fileExists(atPath: path) { record.preparedDerivedDataPath = path }
@@ -332,18 +374,27 @@ import os
                 }
                 if record.parameters.backend == .cli {
                     var captured = record.project; captured.developerDirectory = record.selectedDeveloperDirectory
-                    let catalog = try await discover(captured, record.parameters.scheme, record.parameters.operation == .test || record.parameters.intent == .catalogue, record.profileID, record.profileRevision)
+                    let catalog = try await validateSelection(captured, record.parameters.scheme, record.parameters.operation == .test || record.parameters.intent == .catalogue, record.profileID, record.profileRevision)
                     guard !Task.isCancelled, launchID == record.id else { return }
                     try catalog.validate(record.parameters)
                     try await verifyStartContext(record)
                     try await observeStart(record)
                     try await launchCLI(record)
+                } else if record.parameters.intent == .run {
+                    try await verifyStartContext(record)
+                    try await observeStart(record); try await launchXcodeRun(record)
                 } else { try await observeStart(record); try await launchXcode(record) }
             } catch {
                 guard launchID == record.id else { return }
                 let started = records.first { $0.id == record.id }?.startedAt != nil
-                let status: BuildStatus = Task.isCancelled && !started ? .cancelled : started && record.parameters.backend == .xcodeMCP ? .unknown : .failed
-                await finish(record.id, status: status, error: status == .cancelled ? nil : (error as? BuildError)?.rawValue ?? "unavailable")
+                let remoteStarted = active?.xcodeRequestID != nil
+                let failure = error as? XcodeRunFailure
+                // Xcode's explicit build failure is a known outcome even after the remote request started.
+                let status: BuildStatus = Task.isCancelled && (!started || record.parameters.intent == .run && !remoteStarted) ? .cancelled : failure?.buildFailed == true ? .failed : started && record.parameters.backend == .xcodeMCP && (record.parameters.intent != .run || remoteStarted) ? .unknown : .failed
+                // The failed step and Xcode's own error text are the diagnostic; the public code stays coarse.
+                if let failure, started { await consume(record.id, bytes: Data((failure.summary + "\n" + (failure.issues.isEmpty ? "" : failure.issues + "\n")).utf8)) }
+                let code: String? = failure?.buildFailed == true ? nil : failure?.code.rawValue ?? (error as? BuildError)?.rawValue ?? "unavailable"
+                await finish(record.id, status: status, error: active?.xcodeCancellationRequested == true ? "xcodeCancellationUnconfirmed" : status == .cancelled ? nil : code)
             }
         }
     }
@@ -382,7 +433,7 @@ import os
     }
     private func launchCLI(_ record: BuildActivity) async throws {
         let resultPath = store.directory.appendingPathComponent(record.id.uuidString + ".xcresult").path
-        let command = try makeCommand(record, resultPath)
+        var command = try makeCommand(record, resultPath)
         try await begin(record)
         if record.strictSource == true {
             let current = try? await Task.detached { try SourceRevisionReader.capture(path: record.project.path, exclusions: record.sourceExclusions ?? []) }.value
@@ -390,11 +441,27 @@ import os
             try await verifyStartContext(record)
         }
         guard !Task.isCancelled, launchID == record.id else { throw CancellationError() }
+        if let stream = try? BuildEventStream() {
+            if let observed = stream.attaching(to: command) {
+                command = observed; buildEvents = stream
+                buildEventsMonitor = Task { [weak self] in
+                    while !Task.isCancelled {
+                        guard let self, self.launchID == record.id, self.active?.hasPrivateInput != true else { return }
+                        if let progress = stream.snapshot, self.active?.executionProgress != progress {
+                            self.update(record.id) { $0.executionProgress = progress }
+                        }
+                        do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+                    }
+                }
+            } else { stream.stop() }
+        }
         let runner = PTYSession(); session = runner
         runner.onOutputAsync = { [weak self] in await self?.consume(record.id, bytes: $0) }
         runner.onCompletion = { [weak self] event in
             guard let self, self.launchID == record.id else { return }
             continuationTask = Task {
+            await finishBuildEvents(record.id)
+            guard self.launchID == record.id else { return }
             update(record.id) { $0.exitCode = event?.code; $0.signal = event?.signal; if FileManager.default.fileExists(atPath: resultPath) { $0.resultBundlePath = resultPath } }
             let status: BuildStatus = event?.cancelled == true ? .cancelled : event?.code == 0 && event?.signal == 0 && event?.launchError == 0 ? .succeeded : .failed
             guard status == .succeeded, record.parameters.intent != nil else { await finish(record.id, status: status, error: status == .failed && record.parameters.intent != nil ? "stage." + (record.parameters.intent == .catalogue ? "catalogue" : "compilation") : nil); return }
@@ -429,12 +496,12 @@ import os
         }
         update(record.id) { $0.completedStages = 1; $0.stage = .products; $0.phase = "build.phase.products" }; persist()
         var project = record.project; project.developerDirectory = record.selectedDeveloperDirectory
-        let build = try record.parameters.command(project: project, derivedDataPath: base + "-DerivedData")
+        let derived = record.compilationDerivedDataPath ?? base + "-DerivedData"
+        let build = try record.parameters.command(project: project, derivedDataPath: derived)
         let settings = CommandSpec(executable: build.executable, arguments: Array(build.arguments.dropLast()) + ["-showBuildSettings", "-json"], directory: build.directory, environment: build.environment)
         let raw = try await workflowCommand(record, command: settings)
         let output = String(decoding: raw, as: UTF8.self)
-        guard let start = output.firstIndex(of: "["), let end = output.lastIndex(of: "]"), start < end else { throw BuildError.catalogueResponse }
-        let products = try BuildProduct.parse(settings: Data(output[start...end].utf8), derivedData: URL(fileURLWithPath: base + "-DerivedData"))
+        let products = try BuildProduct.parse(output: output, derivedData: URL(fileURLWithPath: derived))
         try await verifyStartContext(record)
         update(record.id) { $0.products = products }; persist()
         let product: BuildProduct
@@ -502,6 +569,35 @@ import os
         update(record.id) { $0.errorCount = result.errors; $0.warningCount = result.warnings; $0.resultSummaryPath = result.summaryPath; $0.truncated = result.truncated }
         await finish(record.id, status: result.status)
     }
+    private func launchXcodeRun(_ record: BuildActivity) async throws {
+        try await begin(record)
+        let result = try await xcode.runWithDebugger(record, requestStarted: { [weak self] requestID in
+            self?.update(record.id) { $0.xcodeRequestID = requestID }; self?.persist()
+        }, progress: { [weak self] progress in
+            guard let self, self.launchID == record.id, self.active?.stage == .compilation else { return }
+            self.update(record.id) {
+                var value = progress
+                if value.fraction == nil { value.fraction = $0.executionProgress?.fraction }
+                if value.operation == nil { value.operation = $0.executionProgress?.operation }
+                $0.executionProgress = value
+            }
+        }, authorize: { [weak self] in
+            guard let self else { throw BuildError.stopped }
+            try Task.checkCancellation(); try await self.verifyStartContext(record)
+        }, stage: { [weak self] stage, completed in
+            guard let self, self.launchID == record.id else { return }
+            self.update(record.id) { $0.stage = stage; $0.completedStages = completed; $0.phase = "build.phase." + stage.rawValue }
+        }, phase: { [weak self] key in
+            guard let self, self.launchID == record.id else { return }
+            self.update(record.id) { $0.phase = key }
+        })
+        guard active?.xcodeCancellationRequested != true else { throw BuildError.stopped }
+        try await verifyStartContext(record)
+        update(record.id) { $0.completedStages = 3; $0.debuggerProcessID = result.processID; $0.debuggerAttached = true }
+        await consume(record.id, bytes: Data((result.detail + "\n").utf8))
+        await finish(record.id, status: .succeeded)
+        showSimulator(record)
+    }
     private func consume(_ id: UUID, bytes: Data, final: Bool = false) async {
         guard let worker = workers[id] else { return }
         let prompt = String(decoding: bytes.suffix(4096), as: UTF8.self)
@@ -551,7 +647,18 @@ import os
         }
         renderBatch.removeAll(keepingCapacity: true)
     }
+    /// The activity, rather than any visible card, owns the event channel through process exit.
+    private func finishBuildEvents(_ id: UUID) async {
+        guard launchID == id else { return }
+        buildEventsMonitor?.cancel(); buildEventsMonitor = nil
+        let stream = buildEvents; buildEvents = nil
+        let progress = await stream?.finish()
+        guard launchID == id, active?.hasPrivateInput != true, let progress else { return }
+        update(id) { $0.executionProgress = progress }
+    }
     private func finish(_ id: UUID, status: BuildStatus, error: String? = nil) async {
+        guard launchID == id else { return }
+        await finishBuildEvents(id)
         guard launchID == id else { return }
         let record = active
         sourceMonitor?.cancel(); sourceMonitor = nil
@@ -576,6 +683,7 @@ import os
         let ids = Set(records.suffix(8).map(\.id)); outputs = outputs.filter { ids.contains($0.key) }
         if records.first(where: { $0.id == id })?.hasPrivateInput == true { outputs[id] = nil; savedTails[id] = nil }
         revision = UUID(); persist(); schedule()
+        if status == .unknown { resolveUnknownWhenIdle() }
         // Products and catalogue caches remain managed outputs until an explicit cleanup.
     }
 
@@ -585,9 +693,38 @@ import os
         else if record.status == .preparing {
             preparation?.cancel(); Task { await finish(id, status: .cancelled) }
         } else {
+            if record.parameters.backend == .xcodeMCP, record.parameters.intent == .run, record.xcodeRequestID == nil { preparation?.cancel(); return }
+            if record.parameters.backend == .xcodeMCP, record.parameters.intent == .run {
+                update(id) { $0.xcodeCancellationRequested = true }; persist()
+                Task { [weak self] in
+                    guard let self else { return }
+                    do { try await self.xcode.requestRunCancellation(record) }
+                    catch {
+                        guard self.launchID == id else { return }
+                        self.update(id) { $0.errorCode = "xcodeCancellationUnconfirmed" }; self.persist()
+                    }
+                }
+                return
+            }
             if record.parameters.intent == .cleanup { preparation?.cancel() }
             continuationTask?.cancel(); session?.cancel()
             if let choice = productChoice { productChoice = nil; choice.resume(throwing: CancellationError()) }
+        }
+    }
+    /// Xcode-owned uncertain outcomes release the queue once Xcode itself shows no work in progress.
+    /// Nothing is retried; other backends keep the manual acknowledgement.
+    func resolveUnknownWhenIdle() {
+        guard unknownResolver == nil, confirmsXcodeIdle != nil else { return }
+        unknownResolver = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, let confirms = self.confirmsXcodeIdle else { return }
+                let pending = self.records.filter { $0.status == .unknown && $0.queueReleased != true && $0.parameters.backend == .xcodeMCP }
+                guard !pending.isEmpty else { self.unknownResolver = nil; return }
+                for record in pending where self.launchID == nil {
+                    if await confirms(record), self.launchID == nil { self.acknowledgeUnknown(record.id) }
+                }
+                try? await Task.sleep(for: .seconds(10))
+            }
         }
     }
     /// Explicit acknowledgement releases an uncertain operation; it never asserts that Xcode stopped.
@@ -596,6 +733,10 @@ import os
         update(id) { $0.queueReleased = true }; persist(); schedule()
     }
     func stop() {
+        buildEventsMonitor?.cancel(); buildEventsMonitor = nil
+        buildEvents?.stop(); buildEvents = nil
+        preloadTask?.cancel(); preloadTask = nil
+        if usesDiscoveryService { let discovery = discoveryService; Task { await discovery.stop() } }
         stopped = true
         for record in records where record.status == .queued { cancel(record.id) }
         if let active, active.canCancel { cancel(active.id) }
@@ -640,14 +781,18 @@ import os
     /// Read-only settings extraction never builds and is restricted to this invocation's managed DerivedData.
     func productsFor(_ id: UUID) async throws -> [BuildProduct] {
         guard let record = activity(id), record.parameters.backend == .cli else { throw BuildError.notFound }
+        if let cache = record.compilationDerivedDataPath {
+            let owner = ledger.values.compactMap(\.record).filter { $0.compilationDerivedDataPath == cache && $0.startedAt != nil }.max { $0.createdAt < $1.createdAt }
+            guard owner?.id == id else { throw BuildError.selectionExpired }
+        }
         if let products = record.products { return products }
         guard record.status == .succeeded, record.parameters.operation == .build, record.parameters.intent != .catalogue else { throw BuildError.context }
         var project = record.project; project.developerDirectory = record.selectedDeveloperDirectory
-        let derived = store.directory.appendingPathComponent(id.uuidString + "-DerivedData")
+        let derived = record.compilationDerivedDataPath.map { URL(fileURLWithPath: $0) } ?? store.directory.appendingPathComponent(id.uuidString + "-DerivedData")
         let command = try record.parameters.command(project: project, derivedDataPath: derived.path)
         let result = await Task.detached { EnvironmentInspector.boundedCapture(command.executable, Array(command.arguments.dropLast()) + ["-showBuildSettings", "-json"], directory: command.directory, environment: command.environment, timeout: 30, maximumBytes: 8 * 1024 * 1024) }.value
-        guard result.0 == 0, let start = result.1.firstIndex(of: "["), let end = result.1.lastIndex(of: "]") else { throw BuildError.catalogueResponse }
-        let products = try BuildProduct.parse(settings: Data(result.1[start...end].utf8), derivedData: derived)
+        guard result.0 == 0 else { throw BuildError.catalogueResponse }
+        let products = try BuildProduct.parse(output: result.1, derivedData: derived)
         guard activity(id)?.stateRevision == record.stateRevision else { throw BuildError.context }
         update(id) { $0.products = products }; persist(); return products
     }
@@ -681,7 +826,9 @@ import os
         guard !stopped, mayAdmit(), accepts(project) else { return .context }
         guard ledger.count < 10_000, pendingCount < 100 else { return .capacity }
         guard parameters.backend != .cli || !simulatorConfirmed else { return .arguments }
-        if parameters.backend == .xcodeMCP {
+        if parameters.backend == .xcodeMCP, parameters.intent == .run {
+            guard simulatorConfirmed, parameters.platform != .tvos else { return .configuration }
+        } else if parameters.backend == .xcodeMCP {
             guard simulatorConfirmed, xcode.supports(parameters.operation), xcode.hasWorkspace(parameters.workspaceTab, path: project.workspace), xcode.project == project else { return .configuration }
         }
         return nil
@@ -698,7 +845,8 @@ import os
         guard canInput(id), let worker = workers[id] else { throw BuildError.notFound }
         try await worker.makePrivate()
         guard canInput(id) else { throw BuildError.stopped }
-        update(id) { $0.hasPrivateInput = true }
+        buildEvents?.makePrivate(); buildEventsMonitor?.cancel(); buildEventsMonitor = nil
+        update(id) { $0.hasPrivateInput = true; $0.executionProgress = nil }
         let accepted = session?.send(bytes) == true
         if accepted { update(id) { $0.needsInput = false } }
         persist()

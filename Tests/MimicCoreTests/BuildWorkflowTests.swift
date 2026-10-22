@@ -43,6 +43,28 @@ struct BuildWorkflowTests {
         #expect(products.count == 1); #expect(products[0].bundleIdentifier == "fixture.app")
         #expect(throws: BuildError.configuration) { try BuildProduct.parse(settings: data, derivedData: URL(fileURLWithPath: "/private/tmp/different"), exists: { _ in true }) }
     }
+    @Test func settingsOutputIgnoresDiagnosticsAndPreservesQuotedBrackets() throws {
+        let root = URL(fileURLWithPath: "/private/tmp/own")
+        let target: [String: Any] = ["target": "App [QA]", "buildSettings": [
+            "WRAPPER_EXTENSION": "app", "TARGET_BUILD_DIR": root.appendingPathComponent("Build/Products/Debug-iphonesimulator").path,
+            "FULL_PRODUCT_NAME": "App.app", "PRODUCT_BUNDLE_IDENTIFIER": "fixture.app", "PLATFORM_NAME": "iphonesimulator",
+            "OTHER_SWIFT_FLAGS": #"-D value=\"[quoted]\\path\""#, "NESTED": ["[", "]"]
+        ]]
+        for options: JSONSerialization.WritingOptions in [[], .prettyPrinted] {
+            let json = String(decoding: try JSONSerialization.data(withJSONObject: [target], options: options), as: UTF8.self)
+            for prefix in ["", "2026-10-22 15:53:33.131 xcodebuild[9959:11309598] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.\r\n", "[MT] diagnostic\n[]\n[{\"unrelated\":true}]\n"] {
+                let products = try BuildProduct.parse(output: prefix + json + "\n2026-10-22 xcodebuild[9959] [MT] trailing diagnostic\n", derivedData: root, exists: { _ in true })
+                #expect(products.map(\.name) == ["App [QA]"])
+                #expect(products.map(\.bundleIdentifier) == ["fixture.app"])
+                #expect(throws: BuildError.configuration) { try BuildProduct.parse(output: prefix + json, derivedData: root, exists: { _ in false }) }
+                #expect(throws: BuildError.configuration) { try BuildProduct.parse(output: prefix + json, derivedData: URL(fileURLWithPath: "/private/tmp/foreign"), exists: { _ in true }) }
+            }
+        }
+    }
+    @Test(arguments: ["[MT] diagnostic only", "[{\"buildSettings\":{}", "[{broken JSON}]", "[{\"unrelated\":true}]", "[]"])
+    func malformedSettingsOutputIsRejected(output: String) {
+        #expect(throws: BuildError.catalogueResponse) { try BuildProduct.parse(output: output, derivedData: URL(fileURLWithPath: "/private/tmp/own"), exists: { _ in true }) }
+    }
     @Test func oldHistoryAndPublicRequestsStayCompatible() throws {
         let record = BuildActivity(project: project, parameters: parameters, source: "fixture")
         var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])

@@ -30,10 +30,13 @@ struct CoreTests {
         try "3.3.10\n".write(to: dir.appendingPathComponent(".ruby-version"), atomically: true, encoding: .utf8)
         let project = ProjectContext(path: dir.path, developerDirectory: "/Some Xcode.app/Contents/Developer")
         // Act
-        let env = EnvironmentInspector.environment(project: project, base: ["CI": "true", "CUSTOM": "value"], home: "/tmp/home")
+        let base = ["CI": "true", "CUSTOM": "value", "SDKROOT": "/Other Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk", "TOOLCHAINS": "swift"]
+        let env = EnvironmentInspector.environment(project: project, base: base, home: "/tmp/home")
         // Assert
         #expect(env["RBENV_VERSION"] == "3.3.10")
         #expect(env["CI"] == nil)
+        #expect(env["SDKROOT"] == nil)
+        #expect(env["TOOLCHAINS"] == nil)
         #expect(env["CUSTOM"] == "value")
         #expect(env["DEVELOPER_DIR"] == project.developerDirectory)
         #expect(env["PATH"]?.hasPrefix(dir.path + "/.gem/bin:") == true)

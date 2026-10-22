@@ -115,6 +115,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>CFBundleDevelopmentRegion</key><string>ru</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSAppleEventsUsageDescription</key><string>Mimic управляет выбранной схемой Xcode и запускает приложение с отладчиком.</string>
 <!-- Trusted profile services may use development HTTP; the native client pins imported origins. -->
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 </dict></plist>
@@ -159,8 +160,8 @@ done
 codesign "${MIMIC_SIGN_FLAGS[@]}" --preserve-metadata=identifier,entitlements "$SPARKLE/Autoupdate"
 codesign "${MIMIC_SIGN_FLAGS[@]}" --preserve-metadata=identifier,entitlements "$SPARKLE/Updater.app"
 codesign "${MIMIC_SIGN_FLAGS[@]}" --preserve-metadata=identifier,entitlements "$APP/Contents/Frameworks/Sparkle.framework"
-codesign "${MIMIC_SIGN_FLAGS[@]}" --identifier local.vmaslov.Mimic "$APP/Contents/MacOS/Mimic"
-codesign "${MIMIC_SIGN_FLAGS[@]}" --identifier local.vmaslov.Mimic "$APP"
+codesign "${MIMIC_SIGN_FLAGS[@]}" --entitlements "$PWD/Distribution/Mimic.entitlements" --identifier local.vmaslov.Mimic "$APP/Contents/MacOS/Mimic"
+codesign "${MIMIC_SIGN_FLAGS[@]}" --entitlements "$PWD/Distribution/Mimic.entitlements" --identifier local.vmaslov.Mimic "$APP"
 codesign --verify --strict "$APP"
 codesign --verify --deep --strict "$APP/Contents/Frameworks/Sparkle.framework"
 for helper in "$APP/Contents/Helpers/"*; do codesign --verify --strict "$helper"; done

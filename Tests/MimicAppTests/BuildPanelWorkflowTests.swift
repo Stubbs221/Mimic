@@ -13,7 +13,7 @@ import MimicCore
     let project: ProjectContext
     let builds: BuildCoordinator
     var parameters: BuildParameters { var value = BuildParameters(scheme: "Fixture", destinationID: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"); value.intent = .run; return value }
-    init(failure: BuildStage? = nil, multiple: Bool = false, delay: BuildStage? = nil, plans: [String] = []) throws {
+    init(failure: BuildStage? = nil, multiple: Bool = false, delay: BuildStage? = nil, plans: [String] = [], noisySettings: Bool = false) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("BuildPanelWorkflow-" + UUID().uuidString)
         self.root = root; suite = "BuildPanelWorkflow-" + UUID().uuidString; defaults = try #require(UserDefaults(suiteName: suite))
         try FileManager.default.createDirectory(at: root.appendingPathComponent("Fixture.xcodeproj"), withIntermediateDirectories: true)
@@ -22,7 +22,7 @@ import MimicCore
         @Sendable func command(_ script: String, _ arguments: [String] = []) -> CommandSpec { .init(executable: "/bin/bash", arguments: ["-c", script, "fixture"] + arguments, directory: root.path, environment: ["PATH": "/usr/bin:/bin"]) }
         builds = BuildCoordinator(directory: root, helper: helper, defaults: defaults, inspect: { $0 }, resolveDeveloper: { $0.developerDirectory! }, makeCommand: { record, resultPath in
             let base = URL(fileURLWithPath: resultPath!).deletingPathExtension().path
-            let directory = URL(fileURLWithPath: base + "-DerivedData").appendingPathComponent("Build/Products/Debug-iphonesimulator")
+            let directory = URL(fileURLWithPath: record.compilationDerivedDataPath ?? base + "-DerivedData").appendingPathComponent("Build/Products/Debug-iphonesimulator")
             var targets: [[String: Any]] = []
             for index in 1...(multiple ? 2 : 1) {
                 let app = directory.appendingPathComponent("App\(index).app")
@@ -30,7 +30,11 @@ import MimicCore
                 try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "fixture.app\(index)"], format: .xml, options: 0).write(to: app.appendingPathComponent("Info.plist"))
                 targets.append(["target": "App\(index)", "buildSettings": ["WRAPPER_EXTENSION": "app", "TARGET_BUILD_DIR": directory.path, "FULL_PRODUCT_NAME": app.lastPathComponent, "PRODUCT_BUNDLE_IDENTIFIER": "fixture.app\(index)", "PLATFORM_NAME": "iphonesimulator"]])
             }
-            try JSONSerialization.data(withJSONObject: targets).write(to: root.appendingPathComponent("settings.json"))
+            let settings = try JSONSerialization.data(withJSONObject: targets, options: .prettyPrinted)
+            // Xcode writes timestamped diagnostics to the same PTY before its valid JSON payload.
+            let prefix = noisySettings ? "2026-10-22 15:53:33.131 xcodebuild[9959:11309598] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.\n" : ""
+            let suffix = noisySettings ? "\n2026-10-22 15:53:33.304 xcodebuild[9959:11309598] [MT] diagnostic after JSON\n" : ""
+            try (Data(prefix.utf8) + settings + Data(suffix.utf8)).write(to: root.appendingPathComponent("settings.json"))
             try Data(#"{"values":[{"name":"Plan","children":[{"name":"FixtureTests","children":[{"name":"Checkout","children":[{"name":"testOne()"},{"name":"testTwo()"}]}]}]}]}"#.utf8).write(to: URL(fileURLWithPath: base + ".tests.json"))
             return command((delay == .compilation ? "sleep 30; " : "") + "printf 'FIXTURE BUILD\\n'; exit $1", [failure == .compilation || failure == .catalogue && record.parameters.intent == .catalogue ? "7" : "0"])
         }, makeStageCommand: { _, stage, original in
@@ -58,6 +62,14 @@ import MimicCore
 }
 
 @Suite(.serialized, .timeLimit(.minutes(3))) @MainActor struct BuildPanelWorkflowTests {
+    @Test func xcodeDiagnosticsAroundSettingsDoNotPreventInstallAndLaunch() async throws {
+        let fixture = try PanelBuildFixture(noisySettings: true); defer { fixture.cleanup() }
+        fixture.builds.showSimulator = { _ in }
+        _ = try await fixture.run(); try await fixture.wait { !fixture.builds.busy }
+        #expect(fixture.builds.records.last?.status == .succeeded)
+        #expect(fixture.builds.records.last?.completedStages == 3)
+        #expect(fixture.calls == ["boot", "bootstatus", "install", "launch"])
+    }
     @Test func completeRunKeepsQueueOwnershipAndOpensSimulatorAfterLaunch() async throws {
         let fixture = try PanelBuildFixture(); defer { fixture.cleanup() }
         var opened = false; fixture.builds.showSimulator = { _ in opened = true }
@@ -152,6 +164,26 @@ import MimicCore
         #expect(fixture.builds.draft.testPlan == "Selected"); #expect(fixture.builds.draft.testIdentifiers == parameters.testIdentifiers)
         #expect(fixture.builds.testsCompatible)
         fixture.builds.draft.testPlan = ""; #expect(!fixture.builds.testsCompatible)
+    }
+    @Test func privateRunUsesXcodeMCPAndRetainsTheSelectedSimulatorOnRetry() async throws {
+        let fixture = try PanelBuildFixture(); defer { fixture.cleanup() }
+        let model = TaskCoordinator(directory: fixture.root, buildCoordinator: fixture.builds, defaults: fixture.defaults)
+        defer { model.stopAndExit() }
+        model.projects = [fixture.project]; model.selectedProjectPath = fixture.project.path; fixture.builds.schedule = { }
+        try PanelWorkspaceStore(defaults: fixture.defaults).save(.init(checkout: fixture.project.path), for: "fixture-chat")
+        let integration = MimicIntegration(model: model, defaults: fixture.defaults)
+        var fields = try #require(BridgeValue.encode(fixture.parameters).object)
+        fields.removeValue(forKey: "intent"); fields["developerDirectory"] = .string("/fixture/Developer")
+        let id = UUID()
+        let payload: [String: BridgeValue] = ["context": MimicIntegration.context(fixture.project), "operation": .string("run"), "parameters": .object(fields), "requestID": .string(id.uuidString), "activityID": .string(""), "productID": .string("")]
+        for _ in 0..<2 { _ = try await integration.handle(.init(method: "panel_build_control", parameters: payload, threadID: "fixture-chat")) }
+        let record = try #require(fixture.builds.activity(id))
+        #expect(record.parameters.backend == .xcodeMCP)
+        #expect(record.parameters.intent == .run)
+        #expect(record.parameters.scheme == "Fixture")
+        #expect(record.parameters.destinationID == fixture.parameters.destinationID)
+        #expect(fixture.builds.records.count == 1)
+        fixture.builds.cancel(id)
     }
     @Test func unverifiedPreparationIsNeverReused() async throws {
         let fixture = try PanelBuildFixture(); defer { fixture.cleanup() }

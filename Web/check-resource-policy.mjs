@@ -19,6 +19,7 @@ export class App {
   if(name==='get_state')value=window.resourceState;
   if(name==='panel_poll_state'&&location.pathname==='/legacy-panel')throw new Error('Unknown tool');
   if(name==='panel_poll_state')value={revision:'fixture-revision',changed:args.afterRevision!=='fixture-revision',state:window.resourceState};
+  if(name==='start_build_configuration')value={status:'ready',result:{context:args.context,cli:{schemes:[],configurations:['Debug'],destinations:[],testPlans:[]},xcode:{workspaces:{}}}};
   if(name==='panel_build_control'&&args.operation==='get')value={draft:{operation:'build',backend:'cli',scheme:'',configuration:'Debug',destinationID:'',testPlan:'',testIdentifiers:[],workspaceTab:''},developerDirectory:'/fixture/Developer'};
   return name.startsWith('panel_')?{content:[],_meta:{'mimic/private':value}}:{content:[],structuredContent:value};
  }
@@ -38,7 +39,7 @@ const buildFixture=wrap(controls.outputFiles[0].text+`
 let holdNextGet=false,releaseHeldGet;const calls=[],context={checkoutId:'/fixture',branch:'main',sha:'one',xcode:'/fixture/Developer',profileID:null,profileRevision:null};
 const draft={operation:'build',backend:'cli',scheme:'Fixture',configuration:'Debug',destinationID:'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',testPlan:'',testIdentifiers:[],workspaceTab:''};
 const tool=async(name,args)=>{calls.push({name,args});if(name==='panel_build_control'&&args.operation==='get'){const value={draft:{...structuredClone(draft),scheme:args.context.sha==='two'?'Current':draft.scheme},developerDirectory:context.xcode};if(holdNextGet){holdNextGet=false;return new Promise(resolve=>releaseHeldGet=()=>resolve(value));}return value;}
- if(name==='start_build_configuration')return{status:'ready',result:{context:args.context,cli:{schemes:['Fixture'],configurations:['Debug'],destinations:[{id:draft.destinationID,name:'Fixture device'}],testPlans:[]},xcode:{workspaces:{}}}};
+ if(name==='start_build_configuration')return{status:'ready',result:{context:args.context,cli:{schemes:['Fixture','Current'],configurations:['Debug'],destinations:[{id:draft.destinationID,name:'Fixture device'}],testPlans:[]},xcode:{workspaces:{}}}};
  return {id:'fixture-operation'};};
 const panel=new resourceBuild.BuildPanel(tool,key=>(${JSON.stringify(strings)})[key]??key,async()=>{},()=>{});
 panel.update(document.querySelector('#app'),'full',context,[]);
@@ -52,7 +53,7 @@ try {
  await page.goto(`http://127.0.0.1:${server.address().port}/build`);
  await page.waitForFunction(()=>window.buildResource&&!window.buildResource.panel.loading);
  await page.evaluate(()=>{const f=window.buildResource;for(let i=0;i<30;i++)f.panel.update(document.querySelector('#app'),'full',{...f.context},[]);});
- assert.equal(await page.evaluate(()=>window.buildResource.calls.filter(c=>c.name==='start_build_configuration').length),0,'mounting and redraws must not discover');
+ assert.equal(await page.evaluate(()=>window.buildResource.calls.filter(c=>c.name==='start_build_configuration').length),1,'mounting checks the catalogue once in the background; redraws must not discover again');
  await page.locator('[data-build-action=build]').click();
  await page.waitForFunction(()=>window.buildResource.calls.some(c=>c.name==='panel_build_control'&&c.args.operation==='build'));
  assert.equal(await page.evaluate(()=>window.buildResource.calls.filter(c=>c.name==='start_build_configuration').length),1,'saved compact action must load once and execute directly');
@@ -62,19 +63,20 @@ try {
  await page.waitForFunction(()=>!window.buildResource.panel.loading&&window.buildResource.panel.draft.scheme==='Current');
  await page.evaluate(()=>window.buildResource.release());
  assert.equal(await page.evaluate(()=>window.buildResource.panel.draft.scheme),'Current','late old-context reply must not block or replace current draft');
- assert.equal(await page.evaluate(()=>window.buildResource.calls.filter(c=>c.name==='start_build_configuration').length),1);
+ assert.equal(await page.evaluate(()=>window.buildResource.calls.filter(c=>c.name==='start_build_configuration').length),2,'only the settled current context is checked in the background');
  await page.close();
 
  const state=await browser.newPage();await state.clock.install();
  await state.goto(`http://127.0.0.1:${server.address().port}/panel`);
  await state.waitForFunction(()=>window.resourceCalls?.some(c=>c.name==='get_state'));
  await state.clock.runFor(1000);
- assert.equal(await state.evaluate(()=>window.resourceCalls.filter(c=>c.name==='start_build_configuration').length),0);
+ assert.equal(await state.evaluate(()=>window.resourceCalls.filter(c=>c.name==='start_build_configuration').length),1,'cold panel checks the catalogue once in the background');
  await state.clock.runFor(30000);
  await state.waitForFunction(()=>window.resourceCalls.some(c=>c.name==='panel_poll_state'));
  await state.evaluate(()=>{window.resourceOriginalControl=document.querySelector('.build-card-controls');});
  await state.clock.runFor(60000);assert.equal(await state.evaluate(()=>window.resourceOriginalControl===document.querySelector('.build-card-controls')),true,'unchanged snapshot must retain controls');
  assert.equal(await state.evaluate(()=>window.resourceCalls.filter(c=>c.name==='get_state').length),1,'unchanged polls must not fetch a full legacy snapshot');
+ assert.equal(await state.evaluate(()=>window.resourceCalls.filter(c=>c.name==='start_build_configuration').length),1,'polling must not repeat the catalogue check');
  await state.evaluate(()=>{window.resourceOffline=true;});await state.clock.runFor(31000);
  await state.waitForFunction(text=>document.querySelector('.error')?.textContent.includes(text),strings.stale);
  await state.evaluate(()=>{window.resourceOffline=false;});await state.clock.runFor(31000);
@@ -93,5 +95,5 @@ try {
  await legacy.waitForFunction(()=>window.resourceCalls.filter(c=>c.name==='get_state').length===3);
  assert.equal(await legacy.evaluate(()=>window.resourceCalls.filter(c=>c.name==='panel_poll_state').length),1,'old helper must fall back after a plain host rejection');
  await legacy.close();
- console.log('PASS: cold/redrawn cards do not discover, saved action executes directly, revision polling skips legacy snapshots, hidden panel stops requests, old helper fallback');
+ console.log('PASS: cold cards check the catalogue once and redraws do not discover again, saved action executes directly, revision polling skips legacy snapshots, hidden panel stops requests, old helper fallback');
 } finally {await browser.close();server.close();}

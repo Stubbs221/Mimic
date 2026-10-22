@@ -416,6 +416,11 @@ final class TaskCoordinator: ObservableObject {
             self.revealSection(.simulators); self.showPanel?()
             Task { await self.pollSimulators(); if let device = self.simulators.first(where: { $0.id.uuidString == record.parameters.destinationID }) { self.selectSimulator(device) } }
         }
+        self.builds.confirmsXcodeIdle = { [weak self] record in
+            guard let self, let developer = record.selectedDeveloperDirectory else { return false }
+            return await self.builds.xcode.confirmsIdle(developer: developer, workspace: record.project.workspace)
+        }
+        self.builds.resolveUnknownWhenIdle()
         self.builds.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
         self.builds.xcode.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
         self.simulatorScreen.currentProject = { [weak self] in self?.project }
@@ -435,10 +440,20 @@ final class TaskCoordinator: ObservableObject {
         self.branchSwitch.onChange = { [weak self] in self?.branchSwitchChanged() }
         self.branchSwitchChanged()
         self.historyPersistence.onError = { [weak self] error in self?.message = text("history.error") + ": " + error.localizedDescription }
+        self.$projects.combineLatest(self.$selectedProjectPath).map { projects, path in projects.first { $0.path == path } }.removeDuplicates().dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in self?.preloadBuildCatalogue() }
+        }.store(in: &self.subscriptions)
         self.persist()
+        self.preloadBuildCatalogue()
     }
 
     var project: ProjectContext? { self.projects.first { $0.path == self.selectedProjectPath } }
+    /// Only changes to the selected checkout warm discovery; unchanged polling does no work.
+    private func preloadBuildCatalogue() {
+        guard let project, let target = project.appleTarget,
+              FileManager.default.fileExists(atPath: project.path + "/" + target.path) else { return }
+        self.builds.preloadCatalogue(project: project)
+    }
     /// Refreshes only Git identity for MCP polling, without probing tools or starting project commands.
     func refreshMCPContext() async {
         guard let current = self.project, !self.switchingBranch, !self.hasGitOperation else { return }
@@ -929,7 +944,7 @@ final class TaskCoordinator: ObservableObject {
             if let updated = result.0, let index = projects.firstIndex(where: { $0.path == current.path }) {
                 self.projects[index] = updated; self.diagnostic = result.1.joined(separator: "\n"); self.gitSummary = result.2; self.saveProjects()
             } else { self.diagnostic = text("project.invalid") }
-            self.checking = false; self.checkReadiness()
+            self.checking = false; self.checkReadiness(); self.preloadBuildCatalogue()
             self.refreshGit()
         }
     }

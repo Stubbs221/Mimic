@@ -602,6 +602,13 @@
 "build.pin" = "Закрепить карточку";
 "build.pinned" = "Закреплена";
 "build.unpinned" = "Не закреплена";
+"build.pin.keep" = "Не скрывать после завершения";
+"build.pin.keep.help" = "Отключить автоскрытие после завершения. Плашка останется до закрытия крестиком.";
+"build.pin.autoHide" = "Включить автоскрытие после завершения";
+"build.pin.autoHide.help" = "После успеха или отмены плашка скроется через 5 секунд.";
+"build.overlay.progress" = "Прогресс этапов или выбранных тестов";
+"build.overlay.progress.help" = "Во время компиляции шкала учитывает фактический прогресс Xcode, затем — завершённые этапы. Время не увеличивает её заполнение.";
+"build.progress.operations" = "Завершено операций Xcode: %d";
 "build.queued" = "В очереди";
 "build.errors" = "Ошибки";
 "build.warnings" = "Предупреждения";
@@ -631,6 +638,7 @@
 "build.phase.preparing" = "Проверка параметров";
 "build.status.preparing" = "Проверка параметров";
 "build.phase.running" = "Выполняется";
+"build.phase.xcodeApproval" = "Подтвердите доступ Mimic в окне Xcode";
 "build.status.running" = "Выполняется";
 "build.phase.succeeded" = "Успешно";
 "build.status.succeeded" = "Успешно";
@@ -1173,7 +1181,7 @@
 "build.loadingSettings" = "Загружаем схемы и устройства…";
 "build.settings.required" = "Выберите совместимые схему и устройство. Если списки пусты — подготовьте проект через Bootstrap и обновите параметры.";
 "build.refreshSettings" = "Обновить схемы и устройства";
-"build.run.cliRequired" = "Полный запуск и подготовка списка тестов доступны через CLI Xcode. Выберите этот способ сборки. Открытый Xcode не требуется.";
+"build.run.cliRequired" = "Для запуска выберите схему и симулятор. Mimic передаст их Xcode и подключит отладчик. Подготовка списка тестов выполняется через CLI.";
 "build.catalogue.explanation" = "Загрузка списка может собрать тестовые продукты. Подготовка не выполняет тесты.";
 "build.catalogue.load" = "Загрузить список тестов";
 "build.tests.search" = "Поиск тестов";
@@ -1350,3 +1358,25 @@
 "customPanel.cached" = "Сохранённые значения · обновление по запросу";
 
 "customPanel.refresh" = "Обновить";
+
+"build.catalogue.progress.label" = "Загрузка схем и устройств";
+"build.catalogue.progress.checking" = "Проверяем кэш";
+"build.catalogue.progress.schemes" = "Схемы";
+"build.catalogue.progress.metadata" = "Схемы и настройки";
+"build.catalogue.progress.configurations" = "Настройки проекта";
+"build.catalogue.progress.destinations" = "Устройства";
+"build.catalogue.progress.testPlans" = "Тест-планы";
+"build.catalogue.progress.verifying" = "Проверяем изменения";
+"build.catalogue.progress.completed" = "Завершено этапов: %d из %d";
+"build.catalogue.progress.cold" = "Xcode получает параметры проекта. Шкала показывает завершённые этапы.";
+"build.catalogue.progress.saved" = "Сохранённые параметры доступны. Проверяем изменения в фоне.";
+
+/* Xcode Run integration. */
+"build.progress.compilation" = "Прогресс Xcode: %.0f%%";
+"build.progress.xcodeUnavailable" = "Нет данных прогресса Xcode. Разрешите Mimic доступ в настройках Универсального доступа.";
+"build.progress.xcodeWaiting" = "Ожидание данных прогресса от Xcode.";
+"build.error.xcodeAccess" = "Разрешите Mimic доступ к выбранному Xcode: окно «Allow “Mimic” to access Xcode?», управление Xcode и Универсальный доступ, затем повторите запуск.";
+"build.error.xcodeBusy" = "В Xcode уже выполняется другое действие. Завершите его перед запуском из Mimic.";
+"build.error.debuggerUnavailable" = "Xcode не подтвердил запуск с подключённым отладчиком. Проверьте состояние в Xcode.";
+"build.stop.request" = "Запросить остановку";
+"build.error.xcodeCancellationUnconfirmed" = "Запрос остановки передан Xcode. Проверьте фактическую остановку в Xcode перед следующим запуском.";

@@ -143,6 +143,20 @@ import MimicCore
         restored.cancel(unknown.id); #expect(restored.records.first?.status == .unknown); #expect(restored.busy)
         restored.acknowledgeUnknown(unknown.id); #expect(!restored.busy); #expect(restored.records.first?.status == .unknown)
     }
+    @Test func xcodeUnknownReleasesTheQueueOnlyOnIdleEvidence() async throws {
+        let fixture = try BuildFixture(); defer { fixture.cleanup() }
+        var unknown = BuildActivity(project: fixture.project, parameters: .init(backend: .xcodeMCP, configuration: "", workspaceTab: "tab1"), source: "fixture")
+        unknown.status = .unknown; unknown.startedAt = Date(); unknown.finishedAt = Date(); unknown.tracking = .lost
+        try BuildHistoryStore(directory: fixture.root).save([unknown])
+        let busy = BuildCoordinator(directory: fixture.root, helper: URL(fileURLWithPath: "/missing"), defaults: fixture.defaults)
+        busy.confirmsXcodeIdle = { _ in false }; busy.resolveUnknownWhenIdle()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(busy.busy && busy.records.first?.queueReleased != true)
+        let idle = BuildCoordinator(directory: fixture.root, helper: URL(fileURLWithPath: "/missing"), defaults: fixture.defaults)
+        idle.confirmsXcodeIdle = { record in record.id == unknown.id }; idle.resolveUnknownWhenIdle()
+        for _ in 0..<40 where idle.busy { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(!idle.busy); #expect(idle.records.first?.status == .unknown); #expect(idle.records.first?.queueReleased == true)
+    }
     @Test func buildBridgeQueuesBehindOldToolsAndKeepsOutputLocal() async throws {
         let fixture = try BuildFixture(script: "printf 'TOKEN=glpat-fixture-secret\\nFAILURE\\n'; exit 7"); defer { fixture.cleanup() }
         let model = TaskCoordinator(directory: fixture.root.appendingPathComponent("native"), buildCoordinator: fixture.coordinator, defaults: fixture.defaults)

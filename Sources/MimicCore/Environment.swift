@@ -42,6 +42,9 @@ public enum EnvironmentInspector {
         if let directory = project.developerDirectory { result["DEVELOPER_DIR"] = directory }
         // A desktop task must not inherit CI-only credential paths/behavior.
         result.removeValue(forKey: "CI")
+        // An inherited SDK/toolchain from another Xcode overrides DEVELOPER_DIR in SwiftPM and
+        // mixes compilers: swiftc 6.3 from the task's Xcode with the Swift 6.4 SDK of Xcode 27.
+        result.removeValue(forKey: "SDKROOT"); result.removeValue(forKey: "TOOLCHAINS")
         return result
     }
 

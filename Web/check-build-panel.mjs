@@ -80,6 +80,43 @@ try{
  await page.evaluate(()=>window.mimicBuildFixture.products());await page.locator('.build-popover:popover-open').getByRole('button',{name:'App2',exact:true}).click();
  await sameHeight();
  assert.equal(await page.evaluate(()=>window.mimicBuildFixture.draft().scheme),'Fixture');
- await page.evaluate(()=>window.mimicBuildFixture.changeContext());assert.equal(await page.locator('.build-popover:popover-open').count(),0);
+ // Slow catalogue refresh keeps saved actions usable and fills only after completed steps.
+ await page.evaluate(()=>{window.mimicBuildFixture.task('succeeded');window.mimicBuildFixture.catalogueProgress('configurations',1,3);});
+ await mode('full');await card.locator('.build-full-controls>.quiet').click();
+ const catalogue=card.locator('.build-catalogue-progress');await catalogue.waitFor();
+ await page.waitForFunction(()=>document.querySelector('[data-block="builds"] .build-catalogue-label')?.textContent==='Настройки проекта');
+ assert.equal(await catalogue.locator('.build-catalogue-counter').textContent(),'2/3');
+ assert.equal(await catalogue.locator('[role=progressbar]').getAttribute('aria-valuenow'),'1');
+ assert.equal(await catalogue.locator('[role=progressbar]').getAttribute('aria-valuemax'),'3');
+ assert(await card.locator('[data-build-action="run"]').isEnabled());
+ assert(await card.locator('select[data-build-field="scheme"]').isEnabled());
+ assert((await catalogue.locator('time').textContent()).startsWith('00:'));
+ assert(await page.locator('.build-popover:popover-open .build-catalogue-note').isVisible());
+ const fill=await catalogue.locator('.build-progress-fill').getAttribute('style');await page.waitForTimeout(1100);
+ assert.equal(await catalogue.locator('.build-progress-fill').getAttribute('style'),fill,'elapsed time cannot advance progress');
+ await page.locator('.build-popover:popover-open').press('Escape');
+ for(const width of [520,360,260])for(const theme of ['light','dark']){
+  await page.setViewportSize({width,height:1100});await page.emulateMedia({colorScheme:theme});await mode(width===520?'full':'mini');await sameHeight();
+  await card.screenshot({path:output+`/catalogue-${width}-${theme}.png`});
+ }
+ await page.evaluate(()=>document.documentElement.style.setProperty('--bootstrap-text-scale','1.5'));await sameHeight();
+ await card.screenshot({path:output+'/catalogue-large-text.png'});
+ await page.evaluate(()=>document.documentElement.style.removeProperty('--bootstrap-text-scale'));
+ await page.evaluate(()=>window.mimicBuildFixture.catalogueProgress('destinations',2,3));
+ await page.waitForFunction(()=>document.querySelector('[data-block="builds"] .build-catalogue-counter')?.textContent==='3/3');
+ assert.equal(await catalogue.locator('[role=progressbar]').getAttribute('aria-valuenow'),'2');
+ await mode('extended');assert(await card.locator('.build-settings .build-catalogue-progress').isVisible());
+ assert(await card.locator('.build-catalogue-note').isVisible());
+ await page.evaluate(()=>window.mimicBuildFixture.catalogueFailure(true));
+ await page.waitForFunction(()=>!document.querySelector('[data-block="builds"] .build-catalogue-progress')||document.querySelector('[data-block="builds"] .build-catalogue-progress').hidden);
+ assert(await card.locator('.error').last().isVisible());
+ await page.evaluate(()=>{window.mimicBuildFixture.catalogueFailure(false);window.mimicBuildFixture.catalogueProgress('schemes',0,3);window.mimicBuildFixture.changeContext();});
+ await page.waitForFunction(()=>document.querySelector('[data-block="builds"] .build-catalogue-label')?.textContent==='Схемы');
+ assert(await card.locator('select[data-build-field="scheme"]').isDisabled());
+ assert((await card.locator('.build-catalogue-note').textContent()).includes('Xcode'));
+ await page.evaluate(()=>window.mimicBuildFixture.catalogueProgress(null));
+ await page.waitForFunction(()=>document.querySelector('[data-block="builds"] .build-catalogue-progress')?.hidden);
+ assert(await card.locator('select[data-build-field="scheme"]').isEnabled());
+ assert.equal(await page.locator('.build-popover:popover-open').count(),0);
  assert.deepEqual(errors,[]);console.log('PASS: standalone Mini/Full, progress/cancel, explicit catalogue, exact selection, themes/narrow widths, Extended tabs, product picker, context change');
 }finally{await browser.close();server.close();}
