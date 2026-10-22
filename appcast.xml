@@ -6,6 +6,29 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <title>Mimic</title>
     <link>https://github.com/Stubbs221/Mimic</link>
     <item>
+      <title>Mimic 1.9.0</title>
+      <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 22.10.2026. --&gt;
+# Mimic 1.9.0
+
+- «Собрать и запустить» передаёт схему и симулятор в Xcode и запускает приложение с подключённым отладчиком. Mimic сам открывает проект в выбранном Xcode; при первом запуске macOS попросит разрешить управление Xcode.
+- Во время сборки видны операции Xcode и число завершённых операций, а после разрешения в «Универсальном доступе» — фактический процент компиляции.
+- Схемы, конфигурации и устройства сохраняются между запусками и проверяются в фоне; сохранёнными параметрами можно пользоваться сразу. Инкрементальная сборка не теряется при смене ветки.
+- Загрузка схем и устройств показывает этап, время и шкалу завершённых этапов.
+- Плавающая плашка сборки: пин отключает автоскрытие; без пина плашка скрывается через 5 секунд после успеха, при ошибке остаётся.
+- Исправлено смешение компиляторов при унаследованных `SDKROOT`/`TOOLCHAINS` другой версии Xcode.
+
+Сборка 190 для Apple Silicon, macOS 14+. Developer ID, нотарификация Apple и подписанные обновления Sparkle. Профиль команды поставляется отдельно.
+
+Запуск через Xcode проверен автоматическими тестами; живой запуск реального проекта с отладчиком в ходе приёмки не выполнялся. Intel и запуск на macOS 14 не квалифицировались. После обновления переоткройте старую панель Codex, чтобы загрузить новую веб-версию.
+</description>
+      <pubDate>Thu, 22 Oct 2026 16:35:41 GMT</pubDate>
+      <sparkle:version>190</sparkle:version>
+      <sparkle:shortVersionString>1.9.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <enclosure url="https://github.com/Stubbs221/Mimic/releases/download/v1.9.0/Mimic-1.9.0.zip" length="20045789" type="application/octet-stream" sparkle:edSignature="fMCNVsAPFIYazVl8c852Kdn0KZzy0M0OjeVqYKxnBqgQ9yGuBCB77yZXdXw87H9F+9Dx4EfceLY8USxH6JZuCg=="></enclosure>
+    </item>
+    <item>
       <title>Mimic 1.8.0</title>
       <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 22.10.2026. --&gt;
 # Mimic 1.8.0
@@ -157,6 +180,6 @@ Apple-разработка под рукой — в macOS и внутри Codex.
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: iOteGjS6PThPpMd2eJnr+jDLgp0h1Kvy+LM9CQSP1YKbetAo8K6BRM7k4dv3zEOA5A9U6DEQwWFK7xD7eYxbCA==
-length: 19567
+edSignature: TcntVfemyLNfQbe/BnMa00s+zjUjmKby3d6J1mscoRyvv392HZzLw+naREAiKkU0FapAqdqtt4SxpbRBs1X9DQ==
+length: 22571
 -->
