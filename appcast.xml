@@ -1,10 +1,32 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
 --><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-  <!-- Created by Василий Маслов on 21.10.2026. -->
+  <!-- Created by Василий Маслов on 22.10.2026. -->
   <channel>
     <title>Mimic</title>
     <link>https://github.com/Stubbs221/Mimic</link>
+    <item>
+      <title>Mimic 1.8.0</title>
+      <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 22.10.2026. --&gt;
+# Mimic 1.8.0
+
+- Меньше фоновых запросов: каталог сборок открывается по действию пользователя, повторные запросы объединяются, а выполнение проверяет актуальный контекст.
+- Codex-панель проверяет ревизию состояния вместо постоянной загрузки полного ответа; в скрытом состоянии опрос приостанавливается. Улучшено восстановление соединения.
+- История сохраняется последовательно вне главного потока. Сокращены фоновые проверки AI, пересчёты сетки и обновления скрытого интерфейса.
+- Плашка «Окружение»: Сабсайт, Аппверсия, Имя куба и кнопки Сбросить, Принять, Обновить. Без выбора приложения.
+- Исправлены обработка устаревших ответов и ожидание локального перезапуска после таймаута bridge.
+
+Сборка 180 для Apple Silicon, macOS 14+. Developer ID, нотарификация Apple и подписанные обновления Sparkle. Профиль команды поставляется отдельно.
+
+Редкие задержки главного потока ещё возможны. Intel и запуск на macOS 14 не квалифицировались; реальные проектные и серверные операции в ходе приёмки не запускались. После обновления переоткройте старую панель Codex, чтобы загрузить новую веб-версию.
+</description>
+      <pubDate>Thu, 22 Oct 2026 05:06:59 GMT</pubDate>
+      <sparkle:version>180</sparkle:version>
+      <sparkle:shortVersionString>1.8.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <enclosure url="https://github.com/Stubbs221/Mimic/releases/download/v1.8.0/Mimic-1.8.0.zip" length="19717025" type="application/octet-stream" sparkle:edSignature="DpdEJgz7f1y4xTlCV1rXgIuXtN7wVyxZgwUZByhsZQHg4CwQW18gbJbMXc3Ic7RTO4AC0+POSuinJvFw3hz+Aw=="></enclosure>
+    </item>
     <item>
       <title>Mimic 1.7.0</title>
       <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 21.10.2026. --&gt;
@@ -135,6 +157,6 @@ Apple-разработка под рукой — в macOS и внутри Codex.
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: zypA/mKe83qtRCHch4mWrussfypOKc2a1BcdEu7Gci4ws4kuS80+ntAUAqw0IxeP0Cfh6PR2YTJWPhsm/4weBA==
-length: 16870
+edSignature: iOteGjS6PThPpMd2eJnr+jDLgp0h1Kvy+LM9CQSP1YKbetAo8K6BRM7k4dv3zEOA5A9U6DEQwWFK7xD7eYxbCA==
+length: 19567
 -->
