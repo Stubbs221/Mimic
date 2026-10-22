@@ -22,6 +22,7 @@ enum BranchSwitchBlocker: String, Error, CaseIterable {
 final class TaskCoordinator: ObservableObject {
     let work = WorkCoordinator()
     let serviceTools: ServiceToolCoordinator
+    let serviceSettingsChanges = PassthroughSubject<Void, Never>()
     func verifyServiceProfile(_ snapshot: ProfileSnapshot) throws { try profileStore.verify(snapshot) }
     func serviceSettingsSelection(checkout: String, panelID: String) -> [String] { defaults.stringArray(forKey: "customPanel.target." + checkout + ":" + panelID) ?? [] }
     let systemOptions: MimicSystemOptions
@@ -210,6 +211,10 @@ final class TaskCoordinator: ObservableObject {
     var identifyPreparationToolchain: (String) async -> String? = { developer in await Task.detached { PreparationToolchain.identify(developer: developer) }.value }
     var preparationReceipts: [String: PreparationReceipt] = [:]
     private let history: HistoryStore
+    private let historyPersistence: TaskHistoryPersistence
+    private var historyLaunchWaiter: Task<Void, Never>?
+    private var historyExitWaiter: Task<Void, Never>?
+    private var exitDelivered = false
     private let defaults: UserDefaults
     private let branchService: any GitBranchService
     private let usageStore: any SimulatorUsageStore
@@ -281,6 +286,7 @@ final class TaskCoordinator: ObservableObject {
     func releaseUpdate(owner: UUID) { if self.updateOwner == owner { self.updateOwner = nil } }
     private var subscriptions = Set<AnyCancellable>()
     private var stateChangeQueued = false
+    private(set) var presentationRevision: UInt64 = 0
 
     init(directory: URL? = nil, simulatorServices: SimulatorPanelServices = SimulatorPanelServices(), helperURL: URL? = nil, buildCoordinator: BuildCoordinator? = nil, simulatorCoordinator: SimulatorCoordinator? = nil, xcodeApplications: any XcodeApplicationService = SystemXcodeApplications(), branchService: any GitBranchService = LocalGitBranchService(), usageStore: (any SimulatorUsageStore)? = nil, defaults: UserDefaults = .standard, ciClient: (any GitLabService)? = nil, ciSettings: CISettingsModel? = nil, jenkinsSettings: JenkinsSettings? = nil, analysis: AnalysisCoordinator? = nil, usageCoordinator: AIUsageCoordinator? = nil, inspectBootstrapAdmission: @escaping @Sendable (ProjectContext, BootstrapOptions) async -> BootstrapAdmissionResult = { await BootstrapAdmissionResult.inspect(project: $0, options: $1) }, inspectProject: @escaping @Sendable (ProjectContext) async -> (ProjectContext?, [String], GitSummary?) = { current in
         await Task.detached { () -> (ProjectContext?, [String], GitSummary?) in
@@ -326,6 +332,7 @@ final class TaskCoordinator: ObservableObject {
         let directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mimic")
         self.serviceTools = ServiceToolCoordinator(defaults: defaults, directory: directory.appendingPathComponent("ServiceTools"))
         self.history = HistoryStore(directory: directory)
+        self.historyPersistence = TaskHistoryPersistence(store: self.history)
         self.supportDirectory = directory
         self.codexAppearance = CodexPanelAppearanceStore(directory: directory, previous: self.appearance.selection)
         self.appearance.connect(to: self.codexAppearance)
@@ -341,7 +348,7 @@ final class TaskCoordinator: ObservableObject {
         self.profileRemote = ProfileRemoteCoordinator(directory: directory, jenkins: jenkinsSettings.authenticatedClient, gitlab: settings.authenticatedClient, jenkinsToken: { try jenkinsSettings.token(for: $0) }, gitlabToken: { try settings.token(for: $0) })
         self.remoteTests = RemoteTestCoordinator(directory: directory, jenkins: jenkinsSettings.authenticatedClient, gitlab: settings.authenticatedClient, jenkinsToken: { try jenkinsSettings.token(for: $0) }, gitlabToken: { try settings.token(for: $0) })
         self.simulatorUsage = self.usageStore.load()
-        do { self.records = try self.history.load(); try self.history.save(self.records) } catch { self.message = text("history.error") + ": " + error.localizedDescription }
+        do { self.records = try self.history.load() } catch { self.message = text("history.error") + ": " + error.localizedDescription }
         if let data = defaults.data(forKey: "projects"), let saved = try? JSONDecoder().decode([ProjectContext].self, from: data) { self.projects = saved }
         self.selectedProjectPath = defaults.string(forKey: "selectedProject") ?? self.projects.first?.path ?? ""
         self.builds.checkPreparation = { [weak self] project, parameters in
@@ -368,6 +375,7 @@ final class TaskCoordinator: ObservableObject {
         }.store(in: &self.subscriptions)
         self.analysis.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
         self.aiSettings.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &self.subscriptions)
+        self.work.contexts.objectWillChange.sink { [weak self] in self?.scheduleStateChange() }.store(in: &self.subscriptions)
         self.aiUsage.objectWillChange.sink { [weak self] in self?.scheduleStateChange() }.store(in: &self.subscriptions)
         self.analysis.onInferenceStarted = { [weak self] provider, date in self?.aiUsage.record(AIUsageActivity(provider: provider, date: date)) }
         self.aiSettings.objectWillChange.sink { [weak self] in
@@ -426,6 +434,8 @@ final class TaskCoordinator: ObservableObject {
         self.branchSwitch.openManualChat = { NSWorkspace.shared.open($0) }
         self.branchSwitch.onChange = { [weak self] in self?.branchSwitchChanged() }
         self.branchSwitchChanged()
+        self.historyPersistence.onError = { [weak self] error in self?.message = text("history.error") + ": " + error.localizedDescription }
+        self.persist()
     }
 
     var project: ProjectContext? { self.projects.first { $0.path == self.selectedProjectPath } }
@@ -502,6 +512,7 @@ final class TaskCoordinator: ObservableObject {
 
     /// Menu-bar and auxiliary windows still refresh, without invalidating the retained panel documents.
     private func scheduleStateChange() {
+        presentationRevision &+= 1
         guard !stateChangeQueued else { return }
         stateChangeQueued = true
         DispatchQueue.main.async { [weak self] in
@@ -1280,8 +1291,10 @@ final class TaskCoordinator: ObservableObject {
                       operation.developer == request.selectedDeveloperDirectory else { self.message = text("simulators.changed"); return }
             }
             let record = request
-            admitted = record
             self.records.append(record); if navigate { self.selectedTaskID = record.id }; self.persist()
+            do { try await self.historyPersistence.flush() }
+            catch { self.records.removeAll { $0.id == record.id }; self.message = text("history.error"); return }
+            admitted = self.records.first { $0.id == record.id }
             if reveal && navigate, action == .bootstrap { self.openTool(.bootstrap, source: navigationSource) }
             else if reveal && navigate { self.showHistory(id: record.id, source: navigationSource) }
             self.startNext()
@@ -1320,6 +1333,15 @@ final class TaskCoordinator: ObservableObject {
     }
 
     private func startNext() {
+        if historyPersistence.hasUnflushedChanges {
+            guard historyLaunchWaiter == nil else { return }
+            historyLaunchWaiter = Task { [weak self] in
+                guard let self else { return }
+                do { try await self.historyPersistence.flush(); self.historyLaunchWaiter = nil; self.startNext() }
+                catch { self.historyLaunchWaiter = nil; self.message = text("history.error") }
+            }
+            return
+        }
         guard !self.busy, !self.switchingBranch, !self.admissionsClosed else { return }
         guard let choice = QueuePolicy.nextActivity(in: records, builds: builds.records, simulators: simulatorScreen.records) else { return }
         if case let .simulator(id) = choice, let record = simulatorScreen.records.first(where: { $0.id == id }) { simulatorScreen.start(record); return }
@@ -1378,6 +1400,18 @@ final class TaskCoordinator: ObservableObject {
         let firstStep = self.records[index].startedAt == nil
         self.records[index].status = .running
         if firstStep { self.records[index].startedAt = Date() }; self.persist()
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.historyPersistence.flush()
+                guard !self.admissionsClosed, self.records.contains(where: { $0.id == id && $0.status == .running }) else { return }
+                self.launchPersisted(id: id, command: command, firstStep: firstStep)
+            } catch { self.cancel(id: id); self.message = text("history.error") }
+        }
+    }
+
+    private func launchPersisted(id: UUID, command: CommandSpec, firstStep: Bool) {
+        guard let index = records.firstIndex(where: { $0.id == id }) else { return }
         if self.records[index].simulator != nil { self.simulatorLaunchDevelopers[id] = command.environment["DEVELOPER_DIR"] }
         if firstStep, self.records[index].action == .bootstrap {
             self.bootstrapProgress = BootstrapProgress(options: self.records[index].options, matchers: self.records[index].profileExecution?.action?.progress ?? []); self.bootstrapProgressID = id
@@ -1460,6 +1494,7 @@ final class TaskCoordinator: ObservableObject {
             // Output from an interrupted or failed adapter cannot confirm saved settings.
             self.records[index].panelResult = self.records[index].status == .succeeded ? ProfilePanelResult.parse(self.buffers[id] ?? Data(), panel: panel) : nil
             if self.records[index].panelResult == nil, self.records[index].status == .succeeded { self.records[index].status = .failed }
+            self.serviceSettingsChanges.send()
         }
         self.records[index].truncated = (self.log?.truncated ?? false) || self.truncatedBuffers.contains(id)
         self.log?.close(); self.log = nil; self.session = nil
@@ -1509,7 +1544,10 @@ final class TaskCoordinator: ObservableObject {
     func cancel(id: UUID) {
         self.simulatorOpenRequests[id] = nil
         guard let index = records.firstIndex(where: { $0.id == id }) else { return }
-        if self.records[index].status == .running { self.session?.cancel() }
+        if self.records[index].status == .running {
+            if let session { session.cancel() }
+            else { self.records[index].status = .cancelled; self.records[index].finishedAt = Date(); self.persist(); self.startNext() }
+        }
         else if self.records[index].status == .queued {
             self.records[index].status = .cancelled; self.records[index].finishedAt = Date()
             self.launchPreparation.cancel(id: id); self.persist(); self.startNext()
@@ -1524,7 +1562,7 @@ final class TaskCoordinator: ObservableObject {
         self.builds.stop()
         self.stoppingForExit = true; self.launchPreparation.cancelAll()
         self.clearDiagnosticsForExit(); self.aiSettings.stop()
-        for index in self.records.indices where self.records[index].status == .queued {
+        for index in self.records.indices where self.records[index].status == .queued || self.records[index].status == .running && self.session == nil {
             records[index].status = .cancelled; records[index].finishedAt = Date()
         }
         self.persist()
@@ -1584,8 +1622,17 @@ final class TaskCoordinator: ObservableObject {
     }
 
     private func finishExitIfReady() {
-        guard self.stoppingForExit, self.agentMetadataPending.isEmpty, self.builds.active == nil, self.simulatorScreen.canExit, !self.requestingBootstrap, self.session == nil, !self.switchingBranch, !self.analysis.isActive, self.aiSettings.checking == nil else { return }
-        self.afterStopped?()
+        guard !self.exitDelivered, self.stoppingForExit, self.agentMetadataPending.isEmpty, self.builds.active == nil, self.simulatorScreen.canExit, !self.requestingBootstrap, self.session == nil, !self.switchingBranch, !self.analysis.isActive, self.aiSettings.checking == nil else { return }
+        guard historyExitWaiter == nil else { return }
+        historyExitWaiter = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.historyPersistence.flush()
+                self.historyExitWaiter = nil
+                if self.historyPersistence.hasUnflushedChanges { self.finishExitIfReady(); return }
+                self.exitDelivered = true; self.afterStopped?()
+            } catch { self.historyExitWaiter = nil; self.message = text("history.error") }
+        }
     }
 
     // MARK: - Terminal and history
@@ -1621,7 +1668,7 @@ final class TaskCoordinator: ObservableObject {
         if records[index].hasPrivateInput != true {
             records[index].hasPrivateInput = true; log?.close(); log = nil
             if let path = records[index].logPath { try? FileManager.default.removeItem(atPath: path) }
-            records[index].logPath = nil; sanitizedLogPending[id] = nil; sanitizedLogDropping.remove(id); persist()
+            records[index].logPath = nil; sanitizedLogPending[id] = nil; sanitizedLogDropping.remove(id); persist(coalescing: true)
         }
         self.bootstrapTerminals[id]?.discardReplayAfterPrivateInput()
         guard self.session?.send(data) == true else { self.message = text("terminal.input.rejected"); return false }
@@ -1650,15 +1697,16 @@ final class TaskCoordinator: ObservableObject {
 
     func storePreparationReceipts() { defaults.set(try? JSONEncoder().encode(preparationReceipts), forKey: "agentPreparationReceipts") }
     func persistAgentHistory() { persist() }
-    private func persist() {
+    private func persist(coalescing: Bool = false) {
         if let id = self.quickBootstrapActivity?.request.id, let record = self.records.first(where: { $0.id == id }) { self.quickBootstrapActivity?.request = record; if self.bootstrapProgressID == id { self.quickBootstrapActivity?.progress = self.bootstrapProgress } }
         let live = self.records.filter { $0.status == .queued || $0.status == .running }
         let completed = self.records.filter { $0.status != .queued && $0.status != .running }.suffix(max(0, 100 - live.count))
-        self.records = (Array(completed) + live).sorted { $0.createdAt < $1.createdAt }
+        let retained = (Array(completed) + live).sorted { $0.createdAt < $1.createdAt }
+        if self.records != retained { self.records = retained }
         let ids = Set(self.records.map(\.id))
         self.expandedAnalysisIDs.formIntersection(ids)
         self.diagnostics.retain(ids: ids); self.truncatedBuffers.formIntersection(ids); self.analysis.retain(ids: ids)
-        do { try self.history.save(self.records) } catch { self.message = text("history.error") + ": " + error.localizedDescription }
+        self.historyPersistence.save(self.records, coalescing: coalescing)
     }
 
     #if DEBUG
@@ -1847,13 +1895,18 @@ extension TaskCoordinator {
                         self.projects[index] = checked; self.saveProjects(); self.updateCIContext()
                     }
                 }
-                self.records.append(record); if reveal && navigate { self.selectedTaskID = record.id }; self.persist(); admitted = record
+                self.records.append(record); if reveal && navigate { self.selectedTaskID = record.id }; self.persist()
+                try await self.historyPersistence.flush()
+                admitted = self.records.first { $0.id == record.id }
                 if reveal && navigate {
                     if bootstrap { self.openTool(.bootstrap, source: navigationSource) }
                     else { self.showHistory(id: record.id, source: navigationSource) }
                 }
                 self.startNext()
             } catch {
+                if let index = self.records.firstIndex(where: { $0.id == recordID && $0.status == .queued }) {
+                    self.records[index].status = .failed; self.records[index].finishedAt = Date(); self.records[index].error = text("history.error"); self.persist()
+                }
                 let message = (error as? MimicError) == .changedCheckout ? text("checkout.changed") : text("profile.action.error") + ": " + String(describing: error)
                 if bootstrap && reveal { self.quickBootstrapActivity?.error = message; self.unreadFailure = true }
                 else { self.message = message }

@@ -84,7 +84,7 @@ struct WorkCardView: View {
                 }
                 #endif
                 popup = ""; notice = ""; query = ""; reportReady = false
-                while !Task.isCancelled && model.panelVisible { await refresh(); try? await Task.sleep(for: .seconds(30)) }
+                work.bind(owner: owner, project: model.project, profile: model.activeProfile)
             }
             .accessibilityIdentifier(full ? "work.full" : "work.mini")
     }

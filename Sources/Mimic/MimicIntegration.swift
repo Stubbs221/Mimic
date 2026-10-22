@@ -14,6 +14,14 @@ import MimicCore
     @Published private(set) var connecting = false
     unowned let model: TaskCoordinator
     private let listener = MimicBridgeListener()
+    private struct PanelPollSnapshot {
+        let modelRevision: UInt64
+        let epoch: UInt64
+        let project: ProjectContext?
+        let token: String
+    }
+    private var panelPollSnapshots: [String: PanelPollSnapshot] = [:]
+    private var panelPollEpoch: UInt64 = 0
     let discovery: BuildDiscovery
     let defaults: UserDefaults
     let workspaceStore: PanelWorkspaceStore
@@ -171,8 +179,7 @@ import MimicCore
     private func state(threadID: String? = nil, includeAppearance: Bool = false, includeCodexAppearance: Bool = false) -> BridgeValue {
         let current = project(threadID)
         let workOwner = threadID ?? "desktop"
-        model.work.bind(owner: workOwner, project: current, profile: model.activeProfile)
-        Task { @MainActor [weak self] in await self?.model.work.contexts.refresh(workOwner) }
+
         let ciContext = current.flatMap { project in self.model.ciSettings.connection(forCheckout: project.path, services: self.model.activeProfile?.profile.services).map { CIContext(project: project, connection: $0) } }
         let ciSummaries = threadID.map { self.model.ciMonitor.heartbeatSummaries(threadID: $0, context: ciContext) } ?? self.model.ci.compactSummaries
         let ciSummary = ciSummaries.first
@@ -264,6 +271,25 @@ import MimicCore
             }
             return .object(["ready": .bool(ready), "blockers": .array(self.developmentUpdateBlockers.map(BridgeValue.string))])
         }
+        if request.method == "panel_poll_state" {
+            guard let owner = request.threadID, !owner.isEmpty, Set(request.parameters.keys) == ["afterRevision"],
+                  request.parameters["afterRevision"]?.string != nil else { throw failure("arguments") }
+            let current = project(owner), previous = panelPollSnapshots[owner]
+            if let previous, previous.modelRevision == model.presentationRevision, previous.epoch == panelPollEpoch,
+               previous.project == current, previous.token == request.parameters["afterRevision"]?.string {
+                return .object(["revision": .string(previous.token), "changed": .bool(false)])
+            }
+            if previous?.project != current || previous == nil { model.work.bind(owner: owner, project: current, profile: model.activeProfile) }
+            let token = UUID().uuidString
+            if panelPollSnapshots.count >= 128 { panelPollSnapshots.removeAll() }
+            panelPollSnapshots[owner] = PanelPollSnapshot(modelRevision: model.presentationRevision, epoch: panelPollEpoch, project: current, token: token)
+            let interval = ResourceTrace.begin("Panel snapshot", cause: "revision changed")
+            defer { ResourceTrace.end("Panel snapshot", interval) }
+            return .object(["revision": .string(token), "changed": .bool(true), "state": state(threadID: owner, includeAppearance: true, includeCodexAppearance: true)])
+        }
+        if request.method.hasPrefix("panel_"), !["panel_branch_heartbeat", "panel_get_tool_configuration", "panel_get_ci_details", "panel_get_workspace", "panel_get_preview", "panel_terminal_poll", "panel_work_context", "panel_work_search", "panel_work_page", "panel_service_configuration", "panel_service_result"].contains(request.method) {
+            panelPollEpoch &+= 1
+        }
         if self.model.updateReserved {
             // Reads remain available to existing observers. Mutations fail before request-ledger admission.
             let reads = ["get_build_readiness", "wait_build_activity", "get_build_result", "get_build_configuration_state", "get_state", "get_action_configuration", "get_task", "get_task_log", "get_build_activity", "get_build_log", "get_simulator_activity", "get_simulator_screen", "get_panel_state"]
@@ -299,6 +325,7 @@ import MimicCore
                 }
             }
             if let current = project(request.threadID) { await model.refreshPanelContext(current.path) }
+            model.work.bind(owner: request.threadID ?? "desktop", project: project(request.threadID), profile: model.activeProfile)
             var fields = self.state(threadID: request.threadID, includeAppearance: request.presentationMetadataVersion == 1 || request.presentationMetadataVersion == 2, includeCodexAppearance: request.presentationMetadataVersion == 2).object ?? [:]
             fields["delivery"] = AgentWorkflow.delivery(request.helperIdentity)
             return .object(fields)

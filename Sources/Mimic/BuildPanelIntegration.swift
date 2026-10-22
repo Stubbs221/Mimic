@@ -14,7 +14,10 @@ extension MimicIntegration {
         let developer = pinned.developerDirectory ?? ""
         if operation == "get" {
             let draft = model.builds.panelDraft(project: project, developer: developer)
-            return .object(["context": context, "developerDirectory": .string(developer), "draft": try BridgeValue.encode(draft), "catalogue": model.builds.testCatalogue(project: project, parameters: draft, developer: developer).flatMap { try? BridgeValue.encode($0) } ?? .null])
+            let cached = await discovery.cachedCatalogue(project: pinned, scheme: draft.scheme, profileID: context["profileID"].string, profileRevision: context["profileRevision"].string)
+            _ = try expected(context, threadID: request.threadID)
+            let configuration: BridgeValue = try cached.map { .object(["value": try BridgeValue.encode($0.value), "loadedAt": .number($0.loadedAt.timeIntervalSince1970 * 1000), "stale": .bool(Date().timeIntervalSince($0.loadedAt) >= 600)]) } ?? .null
+            return .object(["configuration": configuration, "context": context, "developerDirectory": .string(developer), "draft": try BridgeValue.encode(draft), "catalogue": model.builds.testCatalogue(project: project, parameters: draft, developer: developer).flatMap { try? BridgeValue.encode($0) } ?? .null])
         }
         if operation == "product" {
             guard let id = p["activityID"]?.string.flatMap(UUID.init(uuidString:)), let record = model.builds.records.first(where: { $0.id == id && $0.project == project }), canAccess(record.project, threadID: request.threadID), let product = p["productID"]?.string else { throw BuildError.context }

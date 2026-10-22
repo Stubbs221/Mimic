@@ -192,11 +192,11 @@ struct AIUsageCoordinatorTests {
         let f = try UsageCoordinatorFixture(); defer { f.cleanup() }
         f.codex.result = .failure(.timeout); f.claude.result = .failure(.authentication)
         await f.coordinator.tick(); try await self.wait { f.coordinator.refreshing.isEmpty }
-        #expect(f.coordinator.nextRefresh[.codex] == f.clock.date.addingTimeInterval(30))
-        f.clock.date = f.clock.date.addingTimeInterval(30)
+        #expect(f.coordinator.nextRefresh[.codex] == f.clock.date.addingTimeInterval(300))
+        f.clock.date = f.clock.date.addingTimeInterval(300)
         f.codex.result = .failure(.network)
         await f.coordinator.tick(); try await self.wait { f.coordinator.refreshing.isEmpty }
-        #expect(f.coordinator.nextRefresh[.codex] == f.clock.date.addingTimeInterval(60))
+        #expect(f.coordinator.nextRefresh[.codex] == f.clock.date.addingTimeInterval(600))
         let reset = f.clock.date.addingTimeInterval(5)
         f.codex.result = .success(f.snapshot(reset: reset)); f.coordinator.refresh(provider: .codex, manual: true)
         try await self.wait { f.coordinator.refreshing.isEmpty }

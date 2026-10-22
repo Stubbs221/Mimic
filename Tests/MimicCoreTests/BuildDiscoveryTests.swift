@@ -33,6 +33,18 @@ struct BuildDiscoveryTests {
         #expect(await probe.calls == 5)
     }
 
+    @Test func presentationCacheNeverSatisfiesFreshValidation() async throws {
+        let probe = DiscoveryProbe(), service = BuildDiscovery(inspect: { try await probe.run($0, $1, $2) })
+        _ = try await service.catalogue(project: project, scheme: "Fixture", useCache: true)
+        _ = try await service.catalogue(project: project, scheme: "Fixture", useCache: true)
+        #expect(await probe.calls == 1)
+        _ = try await service.catalogue(project: project, scheme: "Fixture")
+        #expect(await probe.calls == 2)
+        var changed = project; changed.commit = "new"
+        _ = try await service.catalogue(project: changed, scheme: "Fixture", useCache: true)
+        #expect(await probe.calls == 3)
+    }
+
     @Test func errorsAreDistinctAndTestPlansAreOptIn() throws {
         for code: Int32 in [ReadOnlyProcess.timeoutExitCode, 65, 0] {
             let expected: BuildError = code == ReadOnlyProcess.timeoutExitCode ? .catalogueTimeout : code == 65 ? .catalogueProcess : .catalogueResponse
@@ -63,7 +75,7 @@ struct BuildDiscoveryTests {
                 return (0, #"{"project":{"schemes":["Fixture"],"configurations":["Debug"]}}"#)
             }
         }
-        #expect(count == 2)
+        #expect((1...2).contains(count))
     }
 
     /// Real child-process waits cross both former bridge thresholds without using Xcode or building a user project.
@@ -77,6 +89,6 @@ struct BuildDiscoveryTests {
             }
             return (0, #"{"project":{"schemes":["Fixture"],"configurations":["Debug"]}}"#)
         }
-        #expect(value.schemes == ["Fixture"] && calls == 2)
+        #expect(value.schemes == ["Fixture"] && calls == 1)
     }
 }

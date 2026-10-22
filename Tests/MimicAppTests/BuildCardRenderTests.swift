@@ -7,6 +7,48 @@ import MimicCore
 @testable import Mimic
 
 @Suite(.serialized) @MainActor struct BuildCardRenderTests {
+    @Test(arguments: [false, true]) func catalogueOnlyLoadsOnIntentDespiteRepeatedViewUpdates(extended: Bool) async throws {
+        let suite = "BuildCardDiscovery-" + UUID().uuidString
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let probe = BuildCardDiscoveryProbe()
+        let project = ProjectContext(path: root.path, branch: "fixture", commit: "one", developerDirectory: "/fixture/Developer", appleTarget: .init(path: "Fixture.xcodeproj"))
+        let builds = BuildCoordinator(directory: root, helper: root.appendingPathComponent("unused"), defaults: defaults,
+                                      resolveDeveloper: { _ in "/fixture/Developer" }, discover: { _, _, _, _, _ in try await probe.catalogue() })
+        let model = TaskCoordinator(directory: root, buildCoordinator: builds, defaults: defaults)
+        model.projects = [project]; model.selectedProjectPath = project.path; model.aiUsage.stop()
+        let host = NSHostingView(rootView: BuildCardView(model: model, builds: builds, extended: extended).frame(width: 520))
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 520, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer {
+            window.contentView = nil; window.close(); model.stopAndExit()
+            defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root)
+        }
+        // Published loading/message changes must not replace the task which is awaiting discovery.
+        for index in 0..<30 {
+            builds.message = "fixture \(index)"
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        #expect(await probe.requests == 0)
+        await builds.refreshCatalogue(project: project)
+        let requests = await probe.requests
+        #expect(requests == 1)
+        #expect(!builds.loading)
+        #expect(builds.catalogue.schemes == ["Fixture"])
+        var changed = project; changed.commit = "two"; model.projects = [changed]
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(await probe.requests == 1)
+        await builds.refreshCatalogue(project: changed)
+        for _ in 0..<100 {
+            if await probe.requests == 2, !builds.loading { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let refreshed = await probe.requests
+        #expect(refreshed == 2)
+        #expect(!builds.loading)
+        #expect(builds.catalogue.schemes == ["Fixture"])
+    }
+
     /// Measure the production grid beside another tile; isolated content can hide a broken height contract.
     @Test(arguments: ["empty", "running", "succeeded", "failed"])
     func compactCardsKeepNeighbourHeightAndVisibleControls(state: String) async throws {
@@ -68,5 +110,15 @@ import MimicCore
             for _ in 0..<200 { if !builds.busy { break }; try await Task.sleep(for: .milliseconds(10)) }
             #expect(!builds.busy)
         }
+    }
+}
+
+private actor BuildCardDiscoveryProbe {
+    private(set) var requests = 0
+    func catalogue() async throws -> BuildCatalogue {
+        requests += 1
+        try await Task.sleep(for: .milliseconds(150))
+        var result = BuildCatalogue(); result.schemes = ["Fixture"]; result.configurations = ["Debug"]
+        return result
     }
 }

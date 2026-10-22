@@ -113,7 +113,7 @@ public enum MimicError: Error, Equatable { case invalidBootstrap, invalidProject
 
 /// Exit status is stored independently from an execution error or terminating signal.
 public enum TaskStatus: String, Codable, Sendable { case queued, running, succeeded, failed, cancelled, interrupted }
-public struct TaskRecord: Codable, Identifiable, Sendable {
+public struct TaskRecord: Codable, Equatable, Identifiable, Sendable {
     public var completedProfileSteps: Int?
     /// Validated non-secret form state returned by a profile adapter.
     public var panelResult: ProfilePanelResult?

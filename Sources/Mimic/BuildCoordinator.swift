@@ -30,6 +30,7 @@ import os
     private let resolveDeveloper: @Sendable (ProjectContext) async throws -> String
     private let makeCommand: @Sendable (BuildActivity, String?) throws -> CommandSpec
     private let makeStageCommand: @Sendable (BuildActivity, BuildStage, CommandSpec) throws -> CommandSpec
+    private let presentationDiscover: @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue
     private let discover: @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue
     var artifactLeases: Set<UUID> = []
     var checkPreparation: (ProjectContext, BuildParameters) async throws -> Void = { _, _ in }
@@ -52,6 +53,12 @@ import os
     private var catalogueContext: ProjectContext?
     private var catalogueScheme = ""
     private var catalogueDeveloper = ""
+    private var restoredContext: ProjectContext?
+    private var restoredProfile = ""
+    private var presentationRequest: (profile: String, project: ProjectContext, scheme: String, tests: Bool, task: Task<Void, Never>)?
+    @Published private(set) var catalogueLoadedAt: Date?
+    var catalogueStale: Bool { catalogueLoadedAt.map { Date().timeIntervalSince($0) >= 600 } ?? true }
+
     private var stopped = false
     private var draftKey: String?
     private var renderBatch = Data()
@@ -79,10 +86,11 @@ import os
         var project = record.project; project.developerDirectory = record.selectedDeveloperDirectory
         let base = resultPath.map { URL(fileURLWithPath: $0).deletingPathExtension().path }
         return try record.parameters.command(project: project, resultBundlePath: resultPath, derivedDataPath: record.preparedDerivedDataPath ?? base.map { $0 + "-DerivedData" }, enumerationPath: base.map { $0 + ".tests.json" })
-    }, makeStageCommand: @escaping @Sendable (BuildActivity, BuildStage, CommandSpec) throws -> CommandSpec = { _, _, command in command }, discover: @escaping @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue = { project, scheme, tests, profileID, profileRevision in
-        try await BuildDiscovery.shared.catalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: profileID, profileRevision: profileRevision)
-    }) {
-        self.store = BuildHistoryStore(directory: directory); self.helper = helper; self.defaults = defaults; self.inspect = inspect; self.discover = discover; self.resolveDeveloper = resolveDeveloper; self.makeCommand = makeCommand; self.makeStageCommand = makeStageCommand
+    }, makeStageCommand: @escaping @Sendable (BuildActivity, BuildStage, CommandSpec) throws -> CommandSpec = { _, _, command in command }, discover: (@Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue)? = nil) {
+        self.store = BuildHistoryStore(directory: directory); self.helper = helper; self.defaults = defaults; self.inspect = inspect
+        self.discover = discover ?? { project, scheme, tests, id, revision in try await BuildDiscovery.shared.catalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: id, profileRevision: revision) };
+        self.presentationDiscover = discover ?? { project, scheme, tests, id, revision in try await BuildDiscovery.shared.catalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: id, profileRevision: revision, useCache: true) }
+        self.resolveDeveloper = resolveDeveloper; self.makeCommand = makeCommand; self.makeStageCommand = makeStageCommand
         do {
             records = try store.load()
             let path = store.directory.appendingPathComponent("requests.json")
@@ -121,12 +129,16 @@ import os
     }
     func perform(_ operation: BuildOperation = .build, intent: BuildIntent? = nil) {
         guard !panelBusy, let project = currentProject() else { return }
-        let parameters = draftFor(operation, intent: intent)
         manualSubmitting = true
         saveDraft(project: project)
         Task {
             defer { manualSubmitting = false }
             do {
+                if self.draft.backend == .cli && (self.catalogueContext != project || self.catalogueScheme != self.draft.scheme) {
+                    await self.refreshCatalogue(project: project)
+                }
+                let parameters = self.draftFor(operation, intent: intent)
+                try parameters.validate()
                 if parameters.backend == .cli, try await resolveDeveloper(project) != catalogueDeveloper {
                     await refreshCatalogue(project: project); throw BuildError.configuration
                 }
@@ -160,7 +172,20 @@ import os
 
     // MARK: - Configuration and admission
 
-    func refreshCatalogue(project: ProjectContext, scheme: String? = nil, includeTestPlans: Bool = false) async {
+    /// User intent owns discovery; view creation only restores local preferences.
+    func refreshCatalogue(project: ProjectContext, scheme: String? = nil, includeTestPlans: Bool = false, force: Bool = false) async {
+        let chosen = scheme ?? draft.scheme
+        let profile = currentProfile().map { $0.id + ":" + $0.revision } ?? ""
+        if let request = presentationRequest, request.profile == profile, request.project == project, request.scheme == chosen, request.tests == includeTestPlans {
+            await request.task.value; return
+        }
+        let task = Task { await self.loadCatalogue(project: project, scheme: scheme, includeTestPlans: includeTestPlans, force: force) }
+        presentationRequest = (profile, project, chosen, includeTestPlans, task)
+        await task.value
+        if presentationRequest?.profile == profile, presentationRequest?.project == project, presentationRequest?.scheme == chosen, presentationRequest?.tests == includeTestPlans { presentationRequest = nil }
+    }
+
+    private func loadCatalogue(project: ProjectContext, scheme: String?, includeTestPlans: Bool, force: Bool) async {
         let token = UUID(), profile = currentProfile(); catalogueRevision = token; loading = true; message = ""
         defer { if catalogueRevision == token { loading = false } }
         do {
@@ -174,9 +199,11 @@ import os
             }
             let chosen = scheme ?? draft.scheme
             var captured = project; captured.developerDirectory = developer
-            let result = try await discover(captured, chosen, includeTestPlans || draft.operation == .test, profile?.id, profile?.revision)
+            let result = try await (force ? discover : presentationDiscover)(captured, chosen, includeTestPlans || draft.operation == .test, profile?.id, profile?.revision)
             guard catalogueRevision == token, currentProject() == project, currentProfile() == profile else { return }
-            catalogue = result; catalogueContext = project; catalogueScheme = chosen; catalogueDeveloper = developer
+            let cached = await BuildDiscovery.shared.cachedCatalogue(project: captured, scheme: chosen, profileID: profile?.id, profileRevision: profile?.revision)
+            guard catalogueRevision == token, currentProject() == project, currentProfile() == profile else { return }
+            catalogueLoadedAt = cached?.loadedAt ?? Date(); catalogue = result; catalogueContext = project; catalogueScheme = chosen; catalogueDeveloper = developer
             if !result.schemes.contains(draft.scheme) { draft.scheme = "" }
             if !result.configurations.contains(draft.configuration) { draft.configuration = result.configurations.contains("Debug") ? "Debug" : "" }
             if !result.destinations.contains(where: { $0.id == draft.destinationID }) { draft.destinationID = "" }
@@ -185,11 +212,20 @@ import os
         if catalogueRevision == token { loading = false }
     }
     func restoreDraft(project: ProjectContext) async {
+        let profile = currentProfile().map { $0.id + ":" + $0.revision } ?? ""
+        guard restoredContext != project || restoredProfile != profile else { return }
+        presentationRequest = nil
+        restoredContext = project; restoredProfile = profile
+        catalogueLoadedAt = nil
         catalogueRevision = UUID(); loading = false; catalogueContext = nil; catalogue = .init(); xcodeSimulatorConfirmed = false
-        guard let developer = try? await resolveDeveloper(project), currentProject() == project else { return }
+        guard let developer = try? await resolveDeveloper(project), currentProject() == project, restoredProfile == profile else { return }
         let key = "build.configuration." + project.path + "|" + developer; draftKey = key
         draft = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(BuildParameters.self, from: $0) } ?? .init()
         if defaults.data(forKey: key + ".selectionContext").flatMap({ try? JSONDecoder().decode(ProjectContext.self, from: $0) }) != project { draft.testIdentifiers = [] }
+        var captured = project; captured.developerDirectory = developer
+        let cached = await BuildDiscovery.shared.cachedCatalogue(project: captured, scheme: draft.scheme, profileID: currentProfile()?.id, profileRevision: currentProfile()?.revision)
+        guard currentProject() == project, restoredProfile == profile else { return }
+        if let cached { catalogue = cached.value; catalogueLoadedAt = cached.loadedAt; catalogueContext = project; catalogueScheme = draft.scheme; catalogueDeveloper = developer }
     }
     func saveDraft(project: ProjectContext) {
         guard currentProject() == project, let key = draftKey else { return }

@@ -30,11 +30,11 @@ struct MimicPanel: View {
             if let updater = self.model.updater { MimicUpdateNotice(updater: updater) }
             GeometryReader { bounds in
                 ZStack(alignment: .topLeading) {
-                    MimicDocumentHost(visible: model.panelPage == .home, content: self.homeDocument
+                    MimicDocumentHost(visible: model.panelVisible && model.panelPage == .home, content: self.homeDocument
                         .environment(\.mimicPresentationVisible, model.panelPage == .home && model.panelVisible))
                         .frame(width: bounds.size.width, height: bounds.size.height)
                         .modifier(MimicPageInteraction(visible: self.model.panelPage == .home))
-                    MimicDocumentHost(visible: model.panelPage == .settings, content: SettingsDocument(model: model)
+                    MimicDocumentHost(visible: model.panelVisible && model.panelPage == .settings, content: SettingsDocument(model: model)
                         .environment(\.mimicPresentationVisible, model.panelPage == .settings && model.panelVisible))
                         .frame(width: bounds.size.width, height: bounds.size.height)
                         .modifier(MimicPageInteraction(visible: self.model.panelPage == .settings))
@@ -116,7 +116,7 @@ private struct MimicDocumentHost<Content: View>: NSViewRepresentable {
     func updateNSView(_ view: DocumentView, context: Context) {
         if visible, view.hosting.isHidden { view.hosting.isHidden = false }
         view.desiredVisible = visible
-        view.hosting.rootView = MimicDocumentRoot(content: content, inherited: context.environment)
+        if visible { view.hosting.rootView = MimicDocumentRoot(content: content, inherited: context.environment) }
         // Commit inner scroll visibility and its retained offset before excluding the complete graph.
         if view.hasLaidOut, !visible, !view.hosting.isHidden {
             view.hosting.layoutSubtreeIfNeeded(); view.hosting.isHidden = true

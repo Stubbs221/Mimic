@@ -6,15 +6,15 @@
 import Foundation
 import CryptoKit
 
-public struct ActivityChanges: Codable, Sendable {
-    public struct GitStatus: Codable, Sendable {
+public struct ActivityChanges: Codable, Equatable, Sendable {
+    public struct GitStatus: Codable, Equatable, Sendable {
         public let path: String
         public let index: String
         public let worktree: String
     }
     public var gitBefore: [GitStatus]?
     public var gitAfter: [GitStatus]?
-    public struct Change: Codable, Sendable {
+    public struct Change: Codable, Equatable, Sendable {
         public let path: String
         public let beforeDigest: String?
         public let afterDigest: String?

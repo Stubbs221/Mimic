@@ -12,9 +12,13 @@ struct BuildCardView: View {
     @State private var action = "run"
     @State private var search = ""
     private var presented: Binding<Bool> { Binding(get: { !popup.isEmpty }, set: { if !$0 { popup = "" } }) }
-    private var contextKey: String {
-        let project = model.project.flatMap { try? JSONEncoder().encode($0) }.map { String(decoding: $0, as: UTF8.self) } ?? ""
-        return project + (model.activeProfile?.id ?? "") + (model.activeProfile?.revision ?? "")
+    private struct ContextKey: Hashable {
+        let path: String?, branch: String?, commit: String?, developer: String?, target: String?, configuration: String?, profile: String?, revision: String?
+    }
+    private var contextKey: ContextKey {
+        ContextKey(path: model.project?.path, branch: model.project?.branch, commit: model.project?.commit,
+                   developer: model.project?.developerDirectory, target: model.project?.appleTarget?.path,
+                   configuration: model.project?.appleTarget?.configurationProject, profile: model.activeProfile?.id, revision: model.activeProfile?.revision)
     }
 
     var body: some View {
@@ -51,14 +55,13 @@ struct BuildCardView: View {
                     else { settings; if popup != "settings" { actionButton(action, primary: true) } }
                 }.padding(16).frame(width: 400).fixedSize(horizontal: false, vertical: true)
             }
-            .task(id: contextKey) { if let project = model.project { await builds.restoreDraft(project: project); await builds.refreshCatalogue(project: project) } }
+            .task(id: contextKey) { if let project = model.project { await builds.restoreDraft(project: project) } }
             .onChange(of: builds.draft) { _, _ in if let project = model.project { builds.saveDraft(project: project) } }
-            .onChange(of: builds.draft.scheme) { _, value in if let project = model.project { Task { await builds.refreshCatalogue(project: project, scheme: value) } } }
             .onChange(of: builds.panelActivity?.stage) { _, stage in if stage == .products, builds.panelActivity?.products?.count ?? 0 > 1 { popup = "products" } }
             .onChange(of: builds.panelActivity?.products) { _, value in if builds.panelActivity?.stage == .products, value?.count ?? 0 > 1 { popup = "products" } }
             .onChange(of: contextKey) { _, _ in popup = ""; search = "" }
             .onChange(of: builds.panelActivity?.status) { _, value in if popup == "products", value?.isPending != true { popup = "" } }
-            .onChange(of: popup) { _, value in if value == "tests", let project = model.project { Task { await builds.refreshCatalogue(project: project, includeTestPlans: true) } } }
+            .onChange(of: popup) { _, value in if ["tests", "settings", "execute"].contains(value), let project = model.project { Task { await builds.refreshCatalogue(project: project, includeTestPlans: value == "tests") } } }
             .onChange(of: action) { _, value in if value == "tests", let project = model.project { Task { await builds.refreshCatalogue(project: project, includeTestPlans: true) } } }
             .accessibilityIdentifier(extended ? "build.extended" : full ? "build.full" : "build.mini")
     }
@@ -94,7 +97,7 @@ struct BuildCardView: View {
         Button {
             action = value
             if value == "tests" { popup = "tests" }
-            else if !builds.draftCompatible || value == "run" && builds.draft.backend != .cli { popup = "execute" }
+            else if builds.draft.scheme.isEmpty && builds.draft.backend == .cli || value == "run" && builds.draft.backend != .cli { popup = "execute" }
             else { builds.perform(intent: value == "run" ? .run : nil); popup = "" }
         } label: { Text(text("build.action." + value)).multilineTextAlignment(.center).frame(maxWidth: .infinity).fixedSize(horizontal: false, vertical: true) }
             .buttonStyle(MimicAuxiliaryButtonStyle(primary: primary, height: extended ? 32 : 28, horizontalPadding: extended ? 12 : 8)).disabled(builds.panelBusy || model.project == nil)
@@ -102,7 +105,7 @@ struct BuildCardView: View {
     }
     private var selections: some View {
         VStack(alignment: .leading, spacing: extended || !full ? 8 : 4) {
-            Picker(text("build.scheme"), selection: parameter(\.scheme)) { Text(text("build.chooseScheme")).tag(""); ForEach(builds.catalogue.schemes, id: \.self) { Text($0).tag($0) } }
+            Picker(text("build.scheme"), selection: parameter(\.scheme)) { Text(builds.draft.scheme.isEmpty ? text("build.chooseScheme") : builds.draft.scheme).tag(builds.draft.scheme); ForEach(builds.catalogue.schemes, id: \.self) { Text($0).tag($0) } }
                 .mimicSelection(text("build.scheme"), selection: parameter(\.scheme), options: [.init(text("build.chooseScheme"), "")] + builds.catalogue.schemes.map { .init($0, $0) })
                 .accessibilityIdentifier("build.scheme")
             Picker(text("build.destination"), selection: parameter(\.destinationID)) { Text(text("build.chooseDevice")).tag(""); ForEach(builds.catalogue.destinations) { Text($0.name).tag($0.id) } }
@@ -113,9 +116,10 @@ struct BuildCardView: View {
     private var settings: some View {
         VStack(alignment: .leading, spacing: 10) {
             selections
+            if builds.catalogueLoadedAt != nil && builds.catalogueStale { Text(text("build.catalogue.stale")).mimicFont(.caption).foregroundStyle(.secondary) }
             if builds.loading { ProgressView(text("build.loadingSettings")).controlSize(.small) }
             if !builds.draftCompatible { Text(text("build.settings.required")).mimicFont(.caption).foregroundStyle(.secondary) }
-            Button(text("build.refreshSettings")) { Task { if let project = model.project { await builds.refreshCatalogue(project: project) } } }.disabled(builds.loading || builds.panelBusy)
+            Button(text("build.refreshSettings")) { Task { if let project = model.project { await builds.refreshCatalogue(project: project, force: true) } } }.disabled(builds.loading || builds.panelBusy)
             DisclosureGroup(text("build.moreSettings")) {
                 Picker(text("build.backend"), selection: $builds.draft.backend) { ForEach(BuildBackend.allCases, id: \.self) { Text(text("build.backend." + $0.rawValue)).tag($0) } }
                     .mimicSelection(text("build.backend"), selection: $builds.draft.backend, options: BuildBackend.allCases.map { .init(text("build.backend." + $0.rawValue), $0) })
@@ -175,6 +179,9 @@ struct BuildCardView: View {
         Binding(get: { builds.draft[keyPath: keyPath] }, set: { value in
             if builds.draft[keyPath: keyPath] != value { builds.draft.testIdentifiers = [] }
             builds.draft[keyPath: keyPath] = value
+            if keyPath == \BuildParameters.scheme, let project = model.project {
+                Task { await builds.refreshCatalogue(project: project, scheme: value) }
+            }
         })
     }
 }

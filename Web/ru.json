@@ -2,9 +2,9 @@
   "customPanel.device": "Симулятор",
   "customPanel.application": "Приложение",
   "customPanel.default": "По умолчанию",
-  "customPanel.apply": "Применить",
+  "customPanel.apply": "Принять",
   "customPanel.reset": "Сбросить",
-  "customPanel.resetAll": "Сбросить всё",
+  "customPanel.resetAll": "Сбросить",
   "customPanel.reload": "Перечитать",
   "customPanel.overwrite": "Заменить",
   "customPanel.retryLaunch": "Повторить запуск",
@@ -774,5 +774,8 @@
   "work.link.copy": "Копировать ссылку",
   "work.link.copied": "Ссылка скопирована",
   "work.documents.empty": "Нет связанных документов",
-  "work.readHere": "Читать здесь"
+  "work.readHere": "Читать здесь",
+  "customPanel.refreshRequired": "Нажмите Обновить, чтобы прочитать настройки",
+  "build.catalogue.stale": "Сохранённые параметры. Обновите при необходимости",
+  "customPanel.cached": "Сохранённые значения · обновление по запросу"
 }

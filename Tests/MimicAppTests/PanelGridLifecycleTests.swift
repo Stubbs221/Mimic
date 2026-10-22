@@ -15,7 +15,7 @@ private actor ColdCatalogueProbe {
 }
 
 @Suite(.serialized) @MainActor struct PanelGridLifecycleTests {
-    @Test func coldCollapsedGridDoesNotQueryBuildCatalogueAndRetainsItAfterOpening() async throws {
+    @Test func openingAndReopeningGridDoesNotDiscoverWithoutIntent() async throws {
         let suite = "ColdPanelGrid-" + UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
@@ -36,6 +36,9 @@ private actor ColdCatalogueProbe {
         let coldRequests = await probe.requests
         #expect(coldRequests == 0)
         model.panelLayout.open(.builds)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(await probe.requests == 0)
+        await builds.refreshCatalogue(project: model.project!)
         for _ in 0..<100 {
             if await probe.requests > 0 { break }
             try await Task.sleep(for: .milliseconds(10))

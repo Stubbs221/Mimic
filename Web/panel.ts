@@ -15,7 +15,7 @@ import { App, applyDocumentTheme, applyHostStyleVariables } from '@modelcontextp
 import { OpenAIExtensions } from '@openai/mcp-extensions/app';
 import ru from './ru.json';
 import {tools,defaultFavorites,toolRoles,toolSymbols,toolForRole,validateFavorites,toolTask,elapsed,statusSymbols,type ToolID,type ToolsPreferences} from './tools';
-import {renderCompactRuns,middleText,ciIdentity,type CICompactSummary} from './ci-compact';
+import {renderCompactRuns,middleText,ciIdentity,ciActive,type CICompactSummary} from './ci-compact';
 import {PanelCIView,type CIInspection} from './ci-details';
 import {ProfilePanel,type CustomPanel} from './profile-panel';
 import {ServiceToolPanel,type ServiceCatalog} from './service-tool';
@@ -31,7 +31,7 @@ type Action={id:string;title:string;presentation:string;remote:boolean;parameter
 function stableJSON(value:unknown):string{return JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item)??'';}
 const actionValues=new Map<string,Record<string,string>>();
 const remoteFields=new Map<string,Record<string,{defaultValue:string;choices:string[]}>>();
-type LocalTask={id:string;toolID?:ToolID|null;isPreview?:boolean;actionID?:string;title:string;status:string;createdAt:string;context:Context;diagnosticAvailable:boolean;canCancel:boolean;needsInput?:boolean;progress?:string|null;startedAt?:string|null;finishedAt?:string|null;error?:string|null;bootstrap?:{platform:'ios'|'tvos';phase:string;fraction:number;stages?:string[];currentStage?:string|null;completedStages?:string[]}};
+type LocalTask={id:string;panelResult?:unknown;toolID?:ToolID|null;isPreview?:boolean;actionID?:string;title:string;status:string;createdAt:string;context:Context;diagnosticAvailable:boolean;canCancel:boolean;needsInput?:boolean;progress?:string|null;startedAt?:string|null;finishedAt?:string|null;error?:string|null;bootstrap?:{platform:'ios'|'tvos';phase:string;fraction:number;stages?:string[];currentStage?:string|null;completedStages?:string[]}};
 type Build=LocalTask&{actionKey?:string;tracking:string;phase:string;source:string;duration?:number;parameters:{operation:string;backend:string;scheme:string;configuration:string;destinationID:string;workspaceTab:string};errorCount?:number;warningCount?:number};
 type Run={id:string;actionID?:string;branch:string;plan:string;status:string;createdAt:string;updatedAt?:string;error?:string;jenkinsURL?:string;gitlabURL?:string;allureURL?:string;pipelineID?:number;sha?:string;jobs:{name:string;status:string;allowFailure:boolean;url:string}[]};
 type UIBinding={role:string;actionID:string;fields:Record<string,string>};
@@ -65,7 +65,25 @@ function card(title:string){const box=element('section','','card');box.append(el
 function showError(value:unknown){error=value instanceof Error?value.message:t('error');render();}
 async function tool(name:string,args:Record<string,unknown>={}):Promise<any>{return preview?fixtureTool(name,args):transport.call(name,args);}
 function releaseRejectedRequest(key:string,error:unknown){if(error instanceof ToolFailure&&!['unavailable','unknown'].includes(error.code))pendingIDs.delete(key);}
-async function refresh(recheckTools=false){try{const next=await tool('get_state') as State;if(recheckTools){toolConfigurationRevision++;toolConfigurations.clear();}accept(next);stale=false;render();void branchSwitchPanel.poll();}catch{stale=true;render();}}
+let panelRevision='',revisionPolling=true,refreshingState=false;
+async function refresh(recheckTools=false,poll=false){
+ if(refreshingState)return;refreshingState=true;
+ try{
+  let next:State|undefined;
+  if(poll&&!preview&&revisionPolling){
+   try{const result=await tool('panel_poll_state',{afterRevision:panelRevision});panelRevision=result.revision;if(!result.changed){if(stale){stale=false;render();}return;}next=result.state;}
+   catch{
+    // Older helpers and hosts may reject an unknown app-only tool before returning a typed failure.
+    // Disable revision polling only after the compatible read actually succeeds.
+    next=await tool('get_state') as State;revisionPolling=false;panelRevision='';
+   }
+  }
+  next??=await tool('get_state') as State;
+  if(recheckTools){toolConfigurationRevision++;toolConfigurations.clear();}
+  accept(next);stale=false;render();void branchSwitchPanel.poll();
+ }catch{stale=true;render();}finally{refreshingState=false;scheduleStatePoll();}
+}
+
 function accept(next:State){if(!next||!Array.isArray(next.tasks)||!Array.isArray(next.runs))return;const old=stableJSON(state?.context),oldCheckout=state?.context?.checkoutId;state=next;for(const [id,view]of serviceViews)if(!next.serviceTools?.some(p=>p.block===id)||old!==stableJSON(next.context)){view.dispose();serviceViews.delete(id);}for(const [id,view]of customPanelViews)if(!next.customPanels?.some(p=>p.block===id)||old!==stableJSON(next.context)){view.dispose();customPanelViews.delete(id);}for(const id of actionValues.keys())if(!next.actions.some(a=>a.id===id))actionValues.delete(id);updateSimulator();if(!selectedBranch)selectedBranch=next.context?.branch??'';if(old!==stableJSON(next.context)){if(oldCheckout!==next.context?.checkoutId){bootstrapTerminalTask=null;bootstrapFailedAttempt=null;void bootstrapTerminal?.detach();}bootstrapLaunchError='';if(diagnosticSource==='bootstrap')diagnostic=null;remoteFields.clear();buildCatalogue=null;buildValues.simulatorConfirmed='false';buildValues.workspaceTab='';buildValues.destinationID='';previews.clear();branches=[];selectedBranch=next.context?.branch??'';simulatorPanel.invalidate();void syncContext();}if(selection?.type==='task'&&!next.tasks.some(x=>x.id===selection?.id))selection=null;if(selection?.type==='run'&&!next.runs.some(x=>x.id===selection?.id))selection=null;if(selection?.type==='build'&&!next.builds?.some(x=>x.id===selection?.id))selection=null;notifyChanges(next);}
 async function perform(operation:()=>Promise<void>){if(busy)return;busy=true;error='';notice='';render();try{await operation();}catch(e){showError(e);}finally{busy=false;render();}}
 function selectItem(type:'task'|'run'|'build',id:string){selection={type,id};historyOpen=true;diagnostic=null;diagnosticSource='history';scheduleWorkspace();notice='';render();void syncContext();}
@@ -118,7 +136,7 @@ function currentLayout(){return cardDrag.layout??editLayout??savedLayout;}
 function blockTitle(block:Block){return state?.serviceTools?.find(p=>p.block===block)?.title??state?.customPanels?.find(p=>p.block===block)?.title??t('block.'+block);}
 const customPanelViews=new Map<string,ProfilePanel>();
 const serviceViews=new Map<string,ServiceToolPanel>();
-function renderServiceTool(block:Block,host:HTMLElement){const definition=state?.serviceTools?.find(p=>p.block===block);if(!definition||!state?.context)return;let view=serviceViews.get(block);if(!view){view=new ServiceToolPanel(definition,tool,t);serviceViews.set(block,view);}view.update(host);}
+function renderServiceTool(block:Block,host:HTMLElement){const definition=state?.serviceTools?.find(p=>p.block===block);if(!definition||!state?.context)return;let view=serviceViews.get(block);if(!view){view=new ServiceToolPanel(definition,tool,t);serviceViews.set(block,view);}view.update(host,stableJSON([state.context,state.tasks.filter(task=>task.panelResult).map(task=>[task.id,task.status,task.panelResult])]));}
 function renderCustomPanel(block:Block,host:HTMLElement){const definition=state?.customPanels?.find(p=>p.block===block);if(!definition||!state?.context)return;let view=customPanelViews.get(block);if(!view){view=new ProfilePanel(definition,tool,t,()=>actionValues.get(definition.actionID)??{},draft=>{actionValues.set(definition.actionID,draft);scheduleWorkspace();});customPanelViews.set(block,view);}view.update(host,state.context);}
 function scheduleWorkspace(){if(preview||!workspaceLoaded)return;clearTimeout(saveTimer);saveTimer=setTimeout(()=>{void tool('panel_save_workspace',{workspace:{expanded,toolSelection:selectedTool,toolGenerator,selection:selection?selection.type+':'+selection.id:null,drafts:{...Object.fromEntries(actionValues),builds:buildValues}}}).catch(showError);},350);}
 let panelAppearance:CodexAppearance|undefined;
@@ -332,12 +350,12 @@ function updateBootstrap(mode=bootstrapMode,hidden=bootstrapHidden){
  else{view.diagnostic.replaceChildren();view.diagnostic.hidden=true;}
  const sendButton=diagnosticNode?.querySelector<HTMLButtonElement>('[data-action=diagnostic-send]');if(sendButton)sendButton.disabled=busy||!preview&&!extensions.message;
 }
-setInterval(()=>{
- const view=blockNodes.get('ci');if(!view)return;
+const tickCI=()=>{
+ const view=blockNodes.get('ci');if(!view||!ciSummaries().some(ciActive))return;
  if(!view.summary.hidden){const row=currentLayout().rows.find(row=>row.slots.includes('ci'));renderCompactRuns(view.summary,ciSummaries().slice(0,row?.slots.length===1&&!isCompact()?2:1),t,openCI);}
  ciView.tick();
-},1000);
-const bootstrapClock=setInterval(()=>{buildPanel.tick();if(currentBootstrap()?.status==='running')updateBootstrap();if(historyOpen&&selection?.type==='task'&&state?.tasks.find(task=>task.id===selection?.id)?.bootstrap){renderHistory();renderDetails();}const view=blockNodes.get('utils');if(view&&!view.summary.hidden)renderToolsCompact(view.summary,currentLayout().rows.find(r=>r.slots.includes('utils'))?.slots.length===1&&!isCompact());for(const [id,form]of formNodes){const action=state?.actions.find(a=>a.id===id);if(action&&toolForAction(action)&&form.node.isConnected)form.update();}},1000);
+};
+const tickBootstrap=()=>{buildPanel.tick();if(currentBootstrap()?.status==='running')updateBootstrap();if(historyOpen&&selection?.type==='task'&&state?.tasks.find(task=>task.id===selection?.id)?.bootstrap){renderHistory();renderDetails();}const view=blockNodes.get('utils');if(view&&!view.summary.hidden&&toolRecords().some(task=>['queued','running'].includes(task.status)))renderToolsCompact(view.summary,currentLayout().rows.find(r=>r.slots.includes('utils'))?.slots.length===1&&!isCompact());for(const [id,form]of formNodes){const action=state?.actions.find(a=>a.id===id);if(action&&toolForAction(action)&&form.node.isConnected&&toolBusy(toolForAction(action)!))form.update();}};
 
 // MARK: - Shared project tools
 function toolForAction(action:Action){const role=state?.interface?.bindings.find(binding=>binding.actionID===action.id)?.role;return role?toolForRole(role):undefined;}
@@ -753,15 +771,23 @@ async function fixtureTerminalPoll(args:Record<string,unknown>){
 async function fixtureTerminalSend(args:Record<string,unknown>){const c=fixtureChannels.get(String(args.channelID))!,packet=args.packet as {sequence:number;data:string};if(packet.sequence!==c.received+1)throw new Error('sequence');const data=fixtureBytes(packet.data);const plaintext=await crypto.subtle.decrypt({name:'AES-GCM',iv:data.slice(0,12),additionalData:new TextEncoder().encode(`${c.id}|${c.taskID}|${c.threadID}|input|${packet.sequence}`)},c.key,data.slice(12));if(JSON.parse(new TextDecoder().decode(plaintext)).input)fixtureInputCount++;c.received=packet.sequence;return{accepted:true};}
 
 
-app.onteardown=async()=>{clearInterval(bootstrapClock);cardDrag.cancel();await detailsTerminal?.dispose();await bootstrapTerminal?.dispose();await simulatorPanel.dispose();return {};};
+app.onteardown=async()=>{clearInterval(uiClock);clearTimeout(statePollTimer);cardDrag.cancel();await detailsTerminal?.dispose();await bootstrapTerminal?.dispose();await simulatorPanel.dispose();return {};};
 app.ontoolresult=params=>{if(params.structuredContent){accept({...params.structuredContent,...(params._meta?.['mimic/workspace'] as object??{})} as State);render();}};
 function hostStyle(context:ReturnType<App['getHostContext']>){if(context?.theme)applyDocumentTheme(context.theme);if(context?.styles?.variables)applyHostStyleVariables(context.styles.variables);updateBootstrap();}
 for(const query of ['(prefers-color-scheme: dark)','(prefers-contrast: more)'])matchMedia(query).addEventListener('change',()=>updateBootstrap());
 app.onhostcontextchanged=context=>hostStyle(context);
 render();
 if(preview){accept(fixtureState);render();}else{void app.connect().then(()=>{hostStyle(app.getHostContext());simulatorHost.dataset.hostConnectDomains=JSON.stringify(app.getHostCapabilities()?.sandbox?.csp?.connectDomains??[]);return refresh();}).catch(()=>{error=t('connecting');render();});}
-setInterval(()=>{if(!busy&&document.visibilityState==='visible')void refresh();},5000);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!preview)void refresh();});
+let statePollTimer:ReturnType<typeof setTimeout>|undefined,uiClock:ReturnType<typeof setInterval>|undefined;
+function scheduleStatePoll(){
+ clearTimeout(statePollTimer);if(document.hidden||preview)return;
+ const active=[...(state?.tasks??[]),...(state?.builds??[])].some(task=>['queued','preparing','running','unknown'].includes(task.status));
+ statePollTimer=setTimeout(()=>{if(!busy)void refresh(false,true);else scheduleStatePoll();},active?5000:30000);
+}
+function syncVisibleClocks(){clearInterval(uiClock);clearTimeout(statePollTimer);if(document.hidden)return;uiClock=setInterval(()=>{tickCI();tickBootstrap();},1000);scheduleStatePoll();}
+// Revisions skip unchanged payloads; hidden panels have no background UI timers.
+syncVisibleClocks();
+document.addEventListener('visibilitychange',()=>{syncVisibleClocks();if(!document.hidden&&!preview)void refresh(false,true);});
 
 // Disposable acceptance fixtures only; live panels never expose their drag transaction.
 if(preview)(window as any).mimicDragFixture={

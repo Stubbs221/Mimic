@@ -7,7 +7,7 @@
 
 [Русский](README.md) · [English](README.en.md)
 
-<a href="docs/MimicSetup.md"><img src="docs/images/badge-release.svg" alt="Mimic 1.7.0"></a>
+<a href="docs/MimicSetup.md"><img src="docs/images/badge-release.svg" alt="Mimic 1.8.0"></a>
 <a href="docs/MimicSetup.md"><img src="docs/images/badge-macos.svg" alt="macOS 14+"></a>
 <a href="docs/MimicSetup.md"><img src="docs/images/badge-architecture.svg" alt="Apple Silicon"></a>
 <a href="LICENSE"><img src="docs/images/badge-license.svg" alt="MIT"></a>
@@ -15,12 +15,12 @@
 <br><br>
 <img src="docs/images/readme-hero-ru.png" alt="Mimic: Tile Grid в приложении macOS и панели Codex; рабочие данные скрыты" width="1040">
 
-[**Скачать Mimic 1.7.0**](https://github.com/Stubbs221/Mimic/releases/tag/v1.7.0) · [**Установка за несколько шагов**](docs/MimicSetup.md) · [Что нового](CHANGELOG.md)
+[**Скачать Mimic 1.8.0**](https://github.com/Stubbs221/Mimic/releases/tag/v1.8.0) · [**Установка за несколько шагов**](docs/MimicSetup.md) · [Что нового](CHANGELOG.md)
 
 </div>
 
 > [!TIP]
-> **Mimic 1.7.0 · build 170 · 21 октября 2026.** Подписан Developer ID и прошёл нотарификацию Apple. Установи готовое приложение или обновись через **Настройки → Основные**.
+> **Mimic 1.8.0 · build 180 · 22 октября 2026.** Подписан Developer ID и прошёл нотарификацию Apple. Установи готовое приложение или обновись через **Настройки → Основные**.
 
 Mimic собирает привычные сценарии команды в одном месте: подготовку проекта, инструменты, сборки, выбранные тесты и CI. Открывай панель из строки меню или работай рядом с агентом в Codex. **Один исполнитель, общая очередь и история; у каждого чата свой контекст проекта.**
 
@@ -56,6 +56,10 @@ Mimic собирает привычные сценарии команды в о�
 Экран, tap, swipe, ввод текста, Home и поворот — внутри панели. Источники изображения и ввода выбираются независимо: видео MCP или снимки, непрерывные HID-жесты или Apple MCP. «Авто» использует снимки, если видео недоступно. **Для экрана нужен Xcode 27+** и доступные нативные инструменты Apple. WSS требует отдельного доверенного endpoint. [Как подключить](docs/CodexPlugin.md#экран-симулятора).
 
 <sub>macOS — реальные экраны установленной 1.5.0/150. Codex и Simulator — свежие preview bundled HTML 1.5.0 с безопасными фикстурами; экран устройства демонстрационный. Рабочие данные скрыты непрозрачно. [Об изображениях](docs/images/README.md).</sub>
+
+## Новое в 1.8.0
+
+Меньше фоновых запросов и повторных загрузок каталога сборок, сохранение истории вне главного потока и более отзывчивая панель. Плашка «Окружение»: Сабсайт, Аппверсия, Имя куба и кнопки Сбросить, Принять, Обновить. Исправлены восстановление связи Codex и ожидание перезапуска приложения. [Скачать Mimic 1.8.0/180](https://github.com/Stubbs221/Mimic/releases/tag/v1.8.0) · [Изменения](CHANGELOG.md).
 
 ## Новое в 1.7.0
 

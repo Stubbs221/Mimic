@@ -24,15 +24,15 @@ function data(worst){definition.applications[0].title=worst?'Очень длин
 </script>`;
 const server=createServer((_req,res)=>{res.setHeader('content-type','text/html;charset=utf-8');res.end(html);});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await chromium.launch({headless:true,channel:'chrome'});try{
- const page=await browser.newPage({viewport:{width:560,height:280}});await page.goto(`http://127.0.0.1:${server.address().port}`);await page.waitForFunction(()=>window.fixture?.panel.revision==='1');
+ const page=await browser.newPage({viewport:{width:560,height:280}});await page.goto(`http://127.0.0.1:${server.address().port}`);await page.waitForFunction(()=>!!window.fixture);await page.waitForTimeout(16000);assert.equal(await page.evaluate(()=>window.fixture.calls.length),0,'idle settings must not create tasks');assert.equal(await page.locator('.profile-panel select').count(),0);assert.equal(await page.locator('.profile-panel input').count(),3);assert.deepEqual(await page.locator('.profile-panel button').allTextContents(),[strings['customPanel.resetAll'],strings['customPanel.apply'],strings.refresh]);await page.screenshot({path:output+'/cold.png'});await page.locator('.profile-panel-refresh').click();await page.waitForFunction(()=>window.fixture?.panel.revision==='1');
  await page.getByLabel('First ID',{exact:true}).fill('0');assert.equal(await page.getByRole('button',{name:strings['customPanel.apply'],exact:true}).isEnabled(),false);
  await page.getByLabel('First ID',{exact:true}).fill('321');await page.getByLabel('Environment',{exact:true}).fill('staging');await page.getByRole('button',{name:strings['customPanel.apply'],exact:true}).click();await page.waitForFunction(()=>window.fixture.actual.first==='321');
  await page.getByLabel('Second ID',{exact:true}).fill('999');await page.evaluate(()=>window.fixture.reset('first'));assert.equal(await page.getByLabel('Second ID',{exact:true}).inputValue(),'999');assert.equal(await page.evaluate(()=>window.fixture.actual.second),'456');
- await page.evaluate(()=>window.fixture.external());assert.equal(await page.getByLabel('Second ID',{exact:true}).inputValue(),'999');assert.equal(await page.getByRole('button',{name:strings['customPanel.overwrite'],exact:true}).isVisible(),true);
- await page.getByRole('button',{name:strings['customPanel.overwrite'],exact:true}).click();await page.waitForFunction(()=>window.fixture.actual.second==='999');
+ await page.evaluate(()=>window.fixture.external());assert.equal(await page.getByLabel('Second ID',{exact:true}).inputValue(),'999');assert.equal(await page.getByRole('button',{name:strings['customPanel.apply'],exact:true}).isEnabled(),false);
+ await page.getByRole('button',{name:strings.refresh,exact:true}).click();await page.waitForFunction(()=>!window.fixture.panel.conflict);await page.getByLabel('Second ID',{exact:true}).fill('999');await page.getByRole('button',{name:strings['customPanel.apply'],exact:true}).click();await page.waitForFunction(()=>window.fixture.actual.second==='999');
  await page.evaluate(()=>window.fixture.resetAll());assert.deepEqual(await page.evaluate(()=>window.fixture.actual),{first:'',second:'',target:''});
- await page.evaluate(()=>window.fixture.failLaunch());await page.getByLabel('First ID',{exact:true}).fill('123');await page.evaluate(()=>window.fixture.apply());assert.equal(await page.getByRole('button',{name:strings['customPanel.retryLaunch'],exact:true}).isVisible(),true);
- await page.evaluate(()=>window.fixture.restoreLaunch());await page.getByRole('button',{name:strings['customPanel.retryLaunch'],exact:true}).click();
+ await page.evaluate(()=>window.fixture.failLaunch());await page.getByLabel('First ID',{exact:true}).fill('123');await page.evaluate(()=>window.fixture.apply());assert.equal(await page.getByRole('button',{name:strings['customPanel.apply'],exact:true}).isVisible(),true);
+ await page.evaluate(()=>window.fixture.restoreLaunch());await page.getByRole('button',{name:strings['customPanel.apply'],exact:true}).click();
  // A lost mutation reply is reconciled by ID, without another submission.
  await page.getByLabel('First ID',{exact:true}).fill('333');await page.evaluate(()=>window.fixture.loseNextReply());await page.evaluate(()=>window.fixture.apply());
  await page.getByLabel('First ID',{exact:true}).fill('444');
@@ -53,7 +53,7 @@ const browser=await chromium.launch({headless:true,channel:'chrome'});try{
  // A response from an old context cannot clear a newer request's observation state.
  await page.evaluate(()=>{window.fixture.holdNext();window.fixture.oldRead=window.fixture.read()});
  const oldID=await page.evaluate(()=>window.fixture.panel.activeRequest.id);
- await page.evaluate(()=>{window.fixture.holdNext();window.fixture.panel.update(document.querySelector('#host'),{checkoutId:'/other-fixture',profileRevision:'r2'})});
+ await page.evaluate(()=>{window.fixture.holdNext();window.fixture.panel.update(document.querySelector('#host'),{checkoutId:'/other-fixture',profileRevision:'r2'});if(window.fixture.panel.activeRequest!==null)throw Error('context change must not submit a request');window.fixture.newRead=window.fixture.panel.start()});
  const newID=await page.evaluate(()=>window.fixture.panel.activeRequest.id);assert.notEqual(newID,oldID);
  await page.evaluate(async()=>{window.fixture.release(0,true);await window.fixture.oldRead});
  assert.equal(await page.evaluate(()=>window.fixture.panel.activeRequest.id),newID);

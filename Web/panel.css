@@ -437,10 +437,6 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 :root[data-appearance] .work-popover{position:fixed;margin:0;z-index:1000;box-shadow:0 8px 28px #0002}
 /* Profile forms share the tile's compact geometry and theme controls. */
 .profile-panel{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:11px;line-height:15px}
-.profile-panel-target{display:flex;gap:3px;min-width:0;height:17px}
-.profile-panel-target select{width:0;flex:1;min-width:0;padding:0 2px;font-size:10px;height:17px}
-.profile-panel-target .profile-panel-refresh{flex:none;width:23px;padding:0;font-size:0;height:17px}
-.profile-panel-refresh::after{content:'↻';font-size:12px}
 .profile-panel-field{display:flex;align-items:center;gap:4px;min-width:0;height:17px;margin:0}
 .profile-panel-field>span{width:62px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .profile-panel-field input{width:0;flex:1;min-width:0;height:17px;box-sizing:border-box;padding:0 4px;font-size:11px}
@@ -455,3 +451,7 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 .service-tool{display:flex;flex-direction:column;gap:2px;font-size:11px;min-width:0}.service-target,.service-selectors,.service-fields,.service-actions{display:flex;align-items:center;gap:4px;min-width:0}.service-tool input,.service-tool select{min-width:0;max-width:100%;height:22px;font:inherit}.service-target input{width:76px}.service-target select{width:42px}.service-namespace{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.service-selectors select,.service-field{flex:1;min-width:0}.service-field{display:flex;align-items:center;gap:4px}.service-field input,.service-field select{width:100%}.service-actions button{height:22px;padding:1px 6px;font:inherit}.service-status{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;line-height:14px}.service-dialog{width:min(420px,90vw);max-height:75vh;overflow:auto;padding:16px;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:10px}.service-dialog .service-field{margin-top:10px;display:flex;justify-content:space-between}.service-dialog input{min-width:0}.service-dialog pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px}.service-dialog .service-actions{margin:6px 0}.service-dialog .service-actions span{flex:1}
 
 .service-tool{gap:1px}.service-tool input,.service-tool select{height:20px;min-height:20px;padding:0 4px;line-height:16px}.service-tool .service-field{margin:0;padding:0;line-height:18px}.service-tool .service-actions button{height:20px;min-height:20px;line-height:16px;margin:0;padding:0 5px}.service-tool .service-status{line-height:12px;font-size:10px}
+
+/* Interactive forms keep the approved row geometry; text-summary clamping must not overlap controls. */
+.block-summary:has(>.profile-panel),.block-summary:has(>.service-tool){display:block;-webkit-line-clamp:unset;overflow:visible}
+:root .panel-block .profile-panel button{min-height:0}

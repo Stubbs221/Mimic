@@ -70,6 +70,16 @@ import MimicCore
 }
 
 @MainActor @Suite(.serialized) struct ProfilePanelLogicTests {
+    @Test func staleLayoutUsesTheCurrentSnapshotFields() throws {
+        let fixture = try PanelLogicFixture(); defer { fixture.close() }
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(fixture.panel)) as? [String: Any])
+        object["title"] = "Old title"
+        object["fields"] = [["id": "old", "title": "Old field"]]
+        let stale = try JSONDecoder().decode(ProfilePanel.self, from: JSONSerialization.data(withJSONObject: object))
+        let form = ProfilePanelForm(model: fixture.model, panel: stale, project: fixture.project, snapshot: fixture.snapshot, defaults: fixture.defaults)
+        #expect(form.panel == fixture.panel)
+    }
+
     @Test func cancelledViewWaiterKeepsObservingTheOriginalTask() async throws {
         let fixture = try PanelLogicFixture(); defer { fixture.close() }
         let waiter = Task { await fixture.form.run("read") }

@@ -15,7 +15,7 @@ import MimicCore
     @Published var pending = false
     @Published var message = ""
     let tool: ServiceTool
-    private unowned let model: TaskCoordinator
+    unowned let model: TaskCoordinator
     private let project: ProjectContext
     private let snapshot: ProfileSnapshot
     private var scope: String { ServiceToolCoordinator.scope(owner: "desktop", tool: tool.id, context: context) }
@@ -124,7 +124,7 @@ struct ServiceToolView: View {
                     Button(text("service.copyJSON")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(jsonResult, forType: .string) }
                 }.padding(12).frame(width: 420, height: 350)
             }
-            .task { guard live else { return }; while !Task.isCancelled { form.refresh(); do { try await Task.sleep(for: .seconds(1)) } catch { break } } }
+            .onReceive(form.model.serviceSettingsChanges) { _ in if live { form.refresh() } }
     }
     @ViewBuilder private func editor(_ field: ServiceTool.Field) -> some View {
         if field.kind == .boolean { Toggle(field.title, isOn: Binding(get: { form.value(field) == "true" }, set: { form.binding(field).wrappedValue = String($0) })) }

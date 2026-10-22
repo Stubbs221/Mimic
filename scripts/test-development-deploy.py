@@ -8,6 +8,7 @@ import fcntl
 import os
 import pathlib
 import subprocess
+import socket
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -42,11 +43,13 @@ class DevelopmentDeployTests(unittest.TestCase):
                 deploy.wait_for_exit(30)
 
     def test_reply_timeout_waits_for_confirmed_owner_disappearance(self):
-        with patch.object(deploy, 'process_ids', side_effect=[['123'], [], [], [], [], []]), \
-             patch.object(deploy, 'prepare_exit', side_effect=TimeoutError()) as quit_owner, \
-             patch.object(deploy.time, 'sleep'):
-            deploy.wait_for_exit(30)
-            quit_owner.assert_called_once()
+        for failure in [TimeoutError(), socket.timeout()]:
+            with self.subTest(failure=type(failure).__name__), \
+                 patch.object(deploy, 'process_ids', side_effect=[['123'], [], [], [], [], []]), \
+                 patch.object(deploy, 'prepare_exit', side_effect=failure) as quit_owner, \
+                 patch.object(deploy.time, 'sleep'):
+                deploy.wait_for_exit(30)
+                quit_owner.assert_called_once()
 
     def test_reply_timeouts_do_not_extend_the_original_deadline(self):
         with patch.object(deploy, 'process_ids', return_value=['123']), \

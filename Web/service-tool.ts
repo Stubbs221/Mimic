@@ -16,17 +16,16 @@ export class ServiceToolPanel {
  readonly host=node('div','','service-tool');
  private config:Configuration|null=null;private identity='';private actionID='';private variantID='';private drafts:Record<string,Record<string,string>>={};private result:Result|null=null;private generation=0;private pending=false;private refreshing=false;private dirty=false;
  private namespace=node('span','','service-namespace');private uid=node('input');private recent=node('select');private action=node('select');private variant=node('select');private fields=node('div','','service-fields');private actions=node('div','','service-actions');private status=node('span','','service-status');private runButton:HTMLButtonElement;private resultButton:HTMLButtonElement;
- private popup:HTMLDialogElement|null=null;private saveTimer:ReturnType<typeof setTimeout>|undefined;private timer:ReturnType<typeof setInterval>;
+ private popup:HTMLDialogElement|null=null;private saveTimer:ReturnType<typeof setTimeout>|undefined;private refreshKey='';
  constructor(readonly definition:ServiceCatalog,private call:<T=any>(name:string,args?:Record<string,unknown>)=>Promise<T>,private t:(key:string)=>string){
   const top=node('div','','service-target');this.uid.placeholder='UID';this.uid.setAttribute('aria-label','UID');this.uid.inputMode='numeric';this.uid.autocomplete='off';this.recent.setAttribute('aria-label',t('service.recent'));
   this.uid.oninput=()=>{this.prefillPhone();this.scheduleSave();};this.recent.onchange=()=>{if(this.recent.value==='clear'){void this.save(true);return;}if(this.recent.value){this.uid.value=this.recent.value;this.prefillPhone();this.scheduleSave();}};
   top.append(this.namespace,this.uid,this.recent);const selectors=node('div','','service-selectors');this.action.setAttribute('aria-label',t('service.action'));this.variant.setAttribute('aria-label',t('service.mode'));this.action.onchange=()=>{this.actionID=this.action.value;this.variantID=this.currentAction().variants[0].id;this.buildForm();};this.variant.onchange=()=>{this.variantID=this.variant.value;this.buildForm();};selectors.append(this.action,this.variant);
   for(const action of definition.actions)this.action.append(new Option(action.title,action.id));this.actionID=definition.actions[0].id;this.variantID=definition.actions[0].variants[0].id;
   this.runButton=this.button(t('service.run'),()=>void this.run());this.runButton.className='primary';this.resultButton=this.button(t('service.result'),()=>this.showResult());this.actions.append(this.runButton,this.button(t('service.extra'),()=>this.showExtra()),this.resultButton);this.status.setAttribute('role','status');this.host.append(top,selectors,this.fields,this.actions,this.status);
-  this.timer=setInterval(()=>{if(this.host.isConnected&&!document.hidden&&!this.host.closest('[hidden]'))void this.refresh();},1000);
  }
- update(host:HTMLElement){if(this.host.parentElement!==host)host.replaceChildren(this.host);if(!this.config)void this.refresh();}
- dispose(){clearInterval(this.timer);clearTimeout(this.saveTimer);this.generation++;this.popup?.remove();this.host.remove();}
+ update(host:HTMLElement,key=''){if(this.host.parentElement!==host)host.replaceChildren(this.host);if(!this.config||this.refreshKey!==key){this.refreshKey=key;void this.refresh();}}
+ dispose(){clearTimeout(this.saveTimer);this.generation++;this.popup?.remove();this.host.remove();}
  private button(title:string,action:()=>void){const b=node('button',title);b.type='button';b.onclick=action;return b;}
  private currentAction(){return this.definition.actions.find(a=>a.id===this.actionID)??this.definition.actions[0];}
  private currentVariant(){return this.currentAction().variants.find(v=>v.id===this.variantID)??this.currentAction().variants[0];}

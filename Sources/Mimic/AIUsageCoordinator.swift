@@ -39,6 +39,7 @@ final class AIUsageCoordinator: @MainActor ObservableObject {
     @ObservationIgnored private var stopped = false
     @ObservationIgnored private var sleeping = false
     @ObservationIgnored private var scanning = false
+    @ObservationIgnored private var nextScan: Date?
 
     init(defaults: UserDefaults = .standard, fallback: AIProvider = .codex, adapters: [any AIUsageFetching], scan: @escaping () async -> AIUsageActivity? = { nil }, scanUsage: (() async -> AIUsageScanResult)? = nil, clock: @escaping () -> Date = Date.init) {
         self.defaults = defaults; self.fallbackProvider = fallback
@@ -77,6 +78,7 @@ final class AIUsageCoordinator: @MainActor ObservableObject {
     }
     func panelDidClose() { self.expansionOverrides.removeAll() }
     func refreshVisible() {
+        Task { await self.tick(forceScan: true) }
         for provider in AIProvider.allCases where self.isExpanded(provider) { self.refresh(provider: provider, manual: true) }
     }
     private func refreshIfNeeded(_ provider: AIProvider) {
@@ -119,10 +121,18 @@ final class AIUsageCoordinator: @MainActor ObservableObject {
         self.lifecycle = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 await self?.tick()
-                do { try await Task.sleep(for: .seconds(10)) } catch { return }
+                let delay = self?.backgroundDelay ?? 300
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             }
         }
     }
+    private var backgroundDelay: TimeInterval {
+        let now = clock()
+        var deadlines = [nextScan].compactMap { $0 }
+        if !refreshing.contains(activeProvider), let date = nextRefresh[activeProvider] { deadlines.append(date) }
+        return max(1, min(300, deadlines.map { $0.timeIntervalSince(now) }.min() ?? 300))
+    }
+
     func stop() {
         self.stopped = true; self.lifecycle?.cancel(); self.lifecycle = nil
         self.cancelOperations()
@@ -135,25 +145,22 @@ final class AIUsageCoordinator: @MainActor ObservableObject {
     func wake() {
         self.sleeping = false; self.currentDate = self.clock()
         self.checkRevisions()
-        for provider in [self.activeProvider] {
-            // Wake does not bypass provider throttling.
-            if self.errors[provider] == nil { self.nextRefresh[provider] = nil }
-        }
         Task { @MainActor [weak self] in await self?.tick() }
     }
-    func tick() async {
+    func tick(forceScan: Bool = false) async {
         guard !self.stopped, !self.sleeping else { return }
         let interval = FramePerformanceTrace.begin("AI usage tick")
         defer { FramePerformanceTrace.end("AI usage tick", interval) }
         let now = self.clock()
         if self.currentDate != now { self.currentDate = now }
         self.checkRevisions()
-        if !self.scanning {
+        if !self.scanning && (forceScan || self.nextScan.map { $0 <= now } ?? true) {
             self.scanning = true
             let result: AIUsageScanResult
             if let scanUsage = self.scanUsage { result = await scanUsage() }
             else { result = AIUsageScanResult(activity: await self.scan()) }
             self.scanning = false
+            self.nextScan = self.clock().addingTimeInterval(300)
             guard !self.stopped, !self.sleeping else { return }
             if self.histories != result.histories { self.histories = result.histories }
             if self.unknownModels != result.unknownModels { self.unknownModels = result.unknownModels }
@@ -197,8 +204,8 @@ final class AIUsageCoordinator: @MainActor ObservableObject {
                 self.errors[provider] = failure
                 if failure == .authentication || failure == .keychainAccess { self.snapshots[provider] = nil }
                 let count = min(6, (self.failures[provider] ?? 0) + 1); self.failures[provider] = count
-                let delay = min(1800, 30 * pow(2, Double(count - 1)))
-                if case let .rateLimited(retryAt) = failure { self.nextRefresh[provider] = max(retryAt ?? self.clock().addingTimeInterval(300), self.clock().addingTimeInterval(30)) }
+                let delay = min(1800, 300 * pow(2, Double(count - 1)))
+                if case let .rateLimited(retryAt) = failure { self.nextRefresh[provider] = max(retryAt ?? self.clock().addingTimeInterval(300), self.clock().addingTimeInterval(300)) }
                 else if failure == .authentication || failure == .keychainAccess || failure == .missingCLI { self.nextRefresh[provider] = self.clock().addingTimeInterval(300) }
                 else { self.nextRefresh[provider] = self.clock().addingTimeInterval(delay) }
             }

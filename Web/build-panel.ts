@@ -16,7 +16,7 @@ export class BuildPanel {
  private context:Context|null=null;
  private records:BuildRecord[]=[];
  private draft:BuildDraft={operation:'build',backend:'cli',scheme:'',configuration:'Debug',destinationID:'',testPlan:'',testIdentifiers:[],workspaceTab:''};
- private catalogue:Catalogue|null=null;
+ private catalogue:Catalogue|null=null;private loadedAt=0;
  private developerDirectory='';private workspaces:Record<string,string>={};private xcodeConfirmed=false;
  private tests:Test[]|null=null;
  private mode=''; private action='run'; private search=''; private popupKind=''; private anchor:HTMLElement|null=null;
@@ -32,7 +32,7 @@ export class BuildPanel {
  update(host:HTMLElement,mode:'mini'|'full'|'extended',context:Context|null,records:BuildRecord[],blocked=false) {
   if(this.host.parentElement!==host)host.append(this.host);
   const changed=key(context)!==key(this.context);
-  if(changed){this.revision++;this.requests.clear();this.context=context;this.catalogue=null;this.tests=null;this.xcodeConfirmed=false;this.workspaces={};this.close();this.mode='';this.error='';this.records=[];void this.load(true);}
+  if(changed){this.revision++;this.loading=false;this.requests.clear();this.context=context;this.catalogue=null;this.tests=null;this.xcodeConfirmed=false;this.workspaces={};this.close();this.mode='';this.error='';this.records=[];void this.load(true,false);}
   this.records=records.filter(r=>r.context.checkoutId===context?.checkoutId&&r.context.sha===context?.sha&&r.context.branch===context?.branch&&(!context?.xcode||r.context.xcode===context.xcode)&&r.context.profileID===context?.profileID&&r.context.profileRevision===context?.profileRevision&&(r.context.appleTarget===undefined||key(r.context.appleTarget)===key(context?.appleTarget)));
   this.host.inert=blocked;
   if(this.mode!==mode){this.mode=mode;this.renderControls();this.renderStatus();}
@@ -62,7 +62,13 @@ export class BuildPanel {
    if(this.mode==='full')this.content.append(this.button('build.moreSettings',button=>this.open('settings',button),'quiet'));
   }
  }
- private actionButton(action:string,primary=false){const button=this.button('build.action.'+action,b=>{this.action=action;if(action==='tests')this.open('tests',b);else if(!this.compatible||action==='run'&&this.draft.backend!=='cli')this.open('execute',b);else void this.execute(action);},primary?'primary build-action':'build-action');button.dataset.buildAction=action;return button;}
+ private actionButton(action:string,primary=false){const button=this.button('build.action.'+action,b=>{
+  this.action=action;
+  if(action==='tests'){this.open('tests',b);return;}
+  if(!this.compatible&&this.draft.backend==='cli'&&this.draft.scheme){void this.load(false).then(()=>{if(this.compatible)void this.execute(action);else this.open('execute',b);});return;}
+  if(!this.compatible||action==='run'&&this.draft.backend!=='cli')this.open('execute',b);else void this.execute(action);
+ },primary?'primary build-action':'build-action');button.dataset.buildAction=action;return button;}
+
  private selections(compact=false){const fields=node('div','','build-settings-fields');for(const field of ['scheme','destinationID'] as const){const name=this.t(field==='scheme'?'build.scheme':'build.destination'),label=node('label',compact?'':name);const input=node('select');input.setAttribute('aria-label',name);input.dataset.buildField=field;input.onchange=()=>{this.draft[field]=input.value;this.draft.testIdentifiers=[];this.tests=null;if(field==='scheme'){this.draft.destinationID='';this.catalogue=null;void this.load(false);}this.save();this.updateControls();};label.append(input);fields.append(label);}return fields;}
  private settings(){const box=node('div','','build-settings');box.append(this.selections(),node('p',this.t('build.settings.required'),'build-settings-reason muted'),this.button('build.refreshSettings',()=>void this.load(false),'quiet'));
   const advanced=node('details');advanced.append(node('summary',this.t('build.moreSettings')));
@@ -70,15 +76,16 @@ export class BuildPanel {
   const confirm=node('label',this.t('build.xcode.simulator.confirm'),'build-xcode-only');const checkbox=node('input');checkbox.type='checkbox';checkbox.checked=this.xcodeConfirmed;checkbox.onchange=()=>{this.xcodeConfirmed=checkbox.checked;this.updateControls();};confirm.prepend(checkbox);advanced.append(confirm);const connect=this.button('build.xcode.connect',()=>{void this.tool('panel_setup',{operation:'xcodeMCP'}).then(()=>this.load(false));},'quiet build-xcode-only');advanced.append(connect,node('p',this.t('build.run.cliRequired'),'muted'));box.append(advanced);return box;
  }
  private async call(operation:string,parameters:BuildDraft|Record<string,unknown>={},extra:Record<string,string>={}){return this.tool('panel_build_control',{context:this.context,operation,parameters:Object.hasOwn(parameters,'backend')?{...parameters,developerDirectory:this.developerDirectory}:parameters,requestID:'',activityID:'',productID:'',...extra});}
- private async load(restore:boolean){
+ private async load(restore:boolean,discover=true){
+  if(this.loading)return;
   if(!this.context)return;const context=this.context,revision=++this.revision;this.loading=true;this.updateControls();
   try{
-   const value=await this.call('get');if(revision!==this.revision||key(context)!==key(this.context))return;if(restore||value.developerDirectory!==this.developerDirectory){this.draft=value.draft;this.tests=value.catalogue?.tests??null;}this.developerDirectory=value.developerDirectory??'';
+   const value=await this.call('get');if(revision!==this.revision||key(context)!==key(this.context))return;if(restore||value.developerDirectory!==this.developerDirectory){this.draft=value.draft;this.tests=value.catalogue?.tests??null;}this.developerDirectory=value.developerDirectory??'';if(value.configuration){this.catalogue=value.configuration.value;this.loadedAt=value.configuration.loadedAt;}if(!discover)return;
    const testsScope=this.popupKind==='tests'||this.mode==='extended'&&this.action==='tests';const scheme=this.draft.scheme,query=await this.tool('start_build_configuration',{context,scheme,includeTestPlans:testsScope});let result=query;const deadline=performance.now()+130000;
    while(result.status==='pending'){if(revision!==this.revision||scheme!==this.draft.scheme)return;if(performance.now()>deadline)throw new Error(this.t('build.error.catalogueTimeout'));await new Promise(resolve=>setTimeout(resolve,500));result=await this.tool('get_build_configuration_state',{queryID:query.queryID});}
    if(revision!==this.revision||key(context)!==key(this.context)||scheme!==this.draft.scheme)return;
    if(result.status!=='ready'||key(result.result.context)!==key(context))throw new Error(result.message??this.t('stale'));
-   this.catalogue=result.result.cli;if(testsScope&&this.draft.testPlan&&!this.catalogue!.testPlans.includes(this.draft.testPlan)){this.draft.testPlan='';this.draft.testIdentifiers=[];this.tests=null;}this.workspaces=result.result.xcode?.workspaces??{};
+   this.catalogue=result.result.cli;this.loadedAt=Date.now();if(testsScope&&this.draft.testPlan&&!this.catalogue!.testPlans.includes(this.draft.testPlan)){this.draft.testPlan='';this.draft.testIdentifiers=[];this.tests=null;}this.workspaces=result.result.xcode?.workspaces??{};
    if(!this.catalogue!.schemes.includes(this.draft.scheme))this.draft.scheme='';if(!this.catalogue!.destinations.some(d=>d.id===this.draft.destinationID))this.draft.destinationID='';if(!this.catalogue!.configurations.includes(this.draft.configuration))this.draft.configuration=this.catalogue!.configurations.includes('Debug')?'Debug':'';
    this.error='';this.save();this.renderTestList();
   }catch(error){if(revision===this.revision)this.error=error instanceof Error?error.message:this.t('error');}
@@ -94,7 +101,7 @@ export class BuildPanel {
  }
  private open(kind:string,anchor:HTMLElement){
   this.popupKind=kind;this.anchor=anchor;this.popup.replaceChildren();const header=node('div','','build-popover-header');header.append(node('h3',this.t(kind==='tests'?'build.tab.tests':kind==='products'?'build.chooseProduct':'build.parameters.title')),this.button('close',()=>this.close(),'quiet'));this.popup.append(header);
-  if(kind==='tests')void this.load(false);
+  if(['tests','settings','execute'].includes(kind))void this.load(false);
   if(kind==='products'){this.popup.append(node('p',this.t('build.product.explanation'),'muted'));const record=this.current;for(const product of record?.products??[])this.popup.append(this.button(product.name,()=>{void this.call('product',{}, {activityID:record!.id,productID:product.path}).then(()=>{this.close();return this.refresh();}).catch(error=>{this.error=String(error);this.updateControls();});}));}
   else{this.popup.append(this.settings());if(kind==='tests')this.popup.append(this.testPicker());else if(kind==='execute')this.popup.append(this.actionButton(this.action,true));else{this.popup.append(this.actionButton('run',true),this.actionButton('build'));}}
   this.updateControls();if(!this.popup.matches(':popover-open'))this.popup.showPopover();const rect=anchor.getBoundingClientRect(),width=Math.min(420,innerWidth-24);this.popup.style.width=width+'px';this.popup.style.left=Math.max(12,Math.min(rect.left,innerWidth-width-12))+'px';this.popup.style.top=Math.max(12,Math.min(rect.bottom+8,innerHeight-this.popup.offsetHeight-12))+'px';
@@ -110,7 +117,7 @@ export class BuildPanel {
   this.content.hidden=this.mode!=='extended'&&pending(this.current);
   const roots=[this.host,this.popup];for(const root of roots){for(const input of Array.from(root.querySelectorAll<HTMLSelectElement>('select[data-build-field]'))){const field=input.dataset.buildField as keyof BuildDraft;const choices=field==='scheme'?this.catalogue?.schemes??[]:field==='destinationID'?this.catalogue?.destinations??[]:field==='configuration'?this.catalogue?.configurations??[]:field==='backend'?['cli','xcodeMCP']:field==='workspaceTab'?Object.entries(this.workspaces).map(([id,name])=>({id,name})):this.catalogue?.testPlans??[];const signature=key(choices);if(input.dataset.choices!==signature){input.replaceChildren(new Option(this.t('build.choose'),''),...choices.map(c=>typeof c==='string'?new Option(field==='backend'?this.t('build.backend.'+c):c,c):new Option(c.name,c.id)));input.dataset.choices=signature;}input.value=String(this.draft[field]);input.disabled=this.busy||this.loading;if(field==='workspaceTab')input.parentElement!.hidden=this.draft.backend!=='xcodeMCP';}root.querySelectorAll<HTMLElement>('.build-xcode-only').forEach(n=>n.hidden=this.draft.backend!=='xcodeMCP');
    for(const button of Array.from(root.querySelectorAll<HTMLButtonElement>('[data-build-action]')))button.disabled=this.busy||!this.context;
-   root.querySelectorAll<HTMLElement>('.build-settings-reason').forEach(n=>{n.hidden=this.compatible;n.textContent=this.loading?this.t('build.loadingSettings'):this.t('build.settings.required');});
+   root.querySelectorAll<HTMLElement>('.build-settings-reason').forEach(n=>{const stale=this.loadedAt>0&&Date.now()-this.loadedAt>=600000;n.hidden=this.compatible&&!stale;n.textContent=this.loading?this.t('build.loadingSettings'):this.t(stale?'build.catalogue.stale':'build.settings.required');});
    const summary=root.querySelector<HTMLElement>('[data-parameters]');if(summary){summary.textContent=(this.draft.scheme||this.t('build.chooseScheme'))+' · '+(this.catalogue?.destinations.find(d=>d.id===this.draft.destinationID)?.name??this.t('build.chooseDevice'));summary.title=summary.textContent;}
    for(const button of Array.from(root.querySelectorAll<HTMLButtonElement>('[data-catalogue-load]')))button.disabled=this.busy||!this.testsCompatible||this.draft.backend!=='cli';
    for(const button of Array.from(root.querySelectorAll<HTMLButtonElement>('[data-tests-start]')))button.disabled=this.busy||!this.testsCompatible||!this.draft.testIdentifiers.length||this.draft.testIdentifiers.length>100;
@@ -134,5 +141,5 @@ export class BuildPanel {
   if(record.canCancel){const cancel=this.button('build.stop',()=>void this.tool('cancel_build_activity',{activityID:record.id}).then(()=>this.refresh()).catch(error=>{this.error=String(error);this.updateControls();}),'quiet');cancel.dataset.buildCancel='';controls.append(cancel);}
   if(controls.children.length)this.status.append(controls);if(this.mode==='extended')this.status.append(this.button('build.output',()=>this.details(record.id),'quiet'));
  }
- tick(){const record=this.current,time=this.status.querySelector('time');if(!time||!record)return;const seconds=Math.max(0,Math.floor(((record.finishedAt?Date.parse(record.finishedAt):Date.now())-Date.parse(record.startedAt??record.createdAt))/1000));time.textContent=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');}
+ tick(){const record=this.current,time=this.status.querySelector('time');if(!time||!record)return;const seconds=Math.max(0,Math.floor(((record.finishedAt?Date.parse(record.finishedAt):Date.now())-Date.parse(record.startedAt??record.createdAt))/1000));const value=String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0');if(time.textContent!==value)time.textContent=value;}
 }

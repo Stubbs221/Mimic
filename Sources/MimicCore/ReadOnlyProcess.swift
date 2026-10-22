@@ -12,6 +12,8 @@ enum ReadOnlyProcess {
     /// Existing short queries retain their eight-second budget. Catalogue callers distinguish timeout from exit failure.
     static let timeoutExitCode: Int32 = -2
     static func capture(_ executable: String, _ arguments: [String], directory: String? = nil, environment: [String: String]? = nil, timeout: TimeInterval = 8, maximumBytes: Int = 2 * 1024 * 1024) -> (Int32, String) {
+        let interval = ResourceTrace.begin("Read-only process", cause: arguments.contains("xcodebuild") ? "Xcode catalogue" : "metadata")
+        defer { ResourceTrace.end("Read-only process", interval) }
         let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(0, timeout) * 1_000_000_000)
         guard !Task.isCancelled else { return (-1, "") }
         var descriptors: [Int32] = [0, 0]

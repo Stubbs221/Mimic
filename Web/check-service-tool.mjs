@@ -5,7 +5,7 @@ import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.MIMIC_PLAYWRIGHT_MODULE??'playwright');
-const profile=JSON.parse(await readFile(process.env.MIMIC_SERVICE_MANIFEST,'utf8')),definition=profile.serviceTools[0];
+const profile=process.env.MIMIC_SERVICE_MANIFEST?JSON.parse(await readFile(process.env.MIMIC_SERVICE_MANIFEST,'utf8')):{serviceTools:[{id:'fixture',title:'Service fixture',actions:[{id:'create',title:'Create',hint:'Fixture',usesUID:true,returnsUID:false,variants:[{id:'default',title:'Default',fields:[{id:'phone',title:'Phone',kind:'text',required:false,defaultValue:'',advanced:false,secret:false},{id:'app_version',title:'Version',kind:'integer',required:true,defaultValue:'',advanced:true,secret:false,source:'appVersion'}]}]}]}]},definition=profile.serviceTools[0];
 const catalog={id:definition.id,title:definition.title,actions:definition.actions.map(a=>({...a,variants:a.variants.map(v=>({id:v.id,title:v.title,fields:v.fields}))}))};
 const bundle=await build({entryPoints:['service-tool.ts'],bundle:true,write:false,format:'iife',globalName:'fixtureModule'});
 const strings=JSON.parse(await readFile('ru.json','utf8')),tokens=JSON.parse(await readFile('../Sources/MimicCore/Resources/panel-design-tokens.json','utf8'));
@@ -22,7 +22,7 @@ document.querySelector('#worst').onclick=()=>{context={...context,namespace:'qa-
 const server=createServer((_q,r)=>{r.setHeader('content-type','text/html');r.end(html);});await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const output=process.env.MIMIC_SERVICE_OUTPUT??'/private/tmp/MimicServiceTools-20261016/web';await mkdir(output,{recursive:true});
 const browser=await chromium.launch({headless:true,channel:'chrome'});try{
- const page=await browser.newPage({viewport:{width:650,height:650}});await page.goto(`http://127.0.0.1:${server.address().port}`);await page.waitForFunction(()=>window.fixture.panel.config!==null);
+ const page=await browser.newPage({viewport:{width:650,height:650}});await page.goto(`http://127.0.0.1:${server.address().port}`);await page.waitForFunction(()=>window.fixture.panel.config!==null);const initialReads=await page.evaluate(()=>window.fixture.calls.length);await page.waitForTimeout(2100);assert.equal(await page.evaluate(()=>window.fixture.calls.length),initialReads,'idle service form must not poll');
  await page.getByLabel('UID',{exact:true}).fill('321');await page.waitForTimeout(1200);assert.equal(await page.getByLabel('UID',{exact:true}).inputValue(),'321');
  await page.getByRole('button',{name:strings['service.run'],exact:true}).click();await page.waitForFunction(()=>window.fixture.panel.result?.phase==='success');
  await page.getByRole('button',{name:strings['service.result'],exact:true}).click();assert.equal(await page.locator('dialog pre').textContent().then(s=>s.includes('fixture-session')),false);

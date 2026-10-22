@@ -22,21 +22,30 @@ import MimicCore
     private var storageKey: String { "customPanel.draft." + project.path + ":" + panel.block(profileID: snapshot.id).rawValue + ":" + device + ":" + application }
     private var selectionKey: String { "customPanel.target." + project.path + ":" + panel.id }
     var valid: Bool { !device.isEmpty && !application.isEmpty && panel.fields.allSatisfy { $0.accepts(values[$0.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines)) } }
+    var hasReadRevision: Bool { !revision.isEmpty }
     var dirty: Bool { panel.fields.contains { values[$0.id, default: ""] != baseline[$0.id, default: ""] } }
     init(model: TaskCoordinator, panel: ProfilePanel, project: ProjectContext, snapshot: ProfileSnapshot, defaults: UserDefaults = .standard) {
-        self.model = model; self.panel = panel; self.project = project; self.snapshot = snapshot; self.defaults = defaults
+        self.model = model
+        // Layout registration updates asynchronously after an import; the snapshot owns current labels and fields.
+        self.panel = snapshot.profile.panels?.first(where: { $0.id == panel.id }) ?? panel
+        self.project = project; self.snapshot = snapshot; self.defaults = defaults
         let selection = defaults.stringArray(forKey: selectionKey) ?? []
-        device = selection.first ?? ""; application = selection.count > 1 ? selection[1] : panel.applications[0].id
+        device = selection.first ?? ""; application = self.panel.applications[0].id
+        restoreDraft()
     }
-    func saveDraft() { defaults.set(["values": values, "baseline": baseline, "revision": revision], forKey: storageKey) }
+    private func restoreDraft() {
+        let saved = defaults.dictionary(forKey: storageKey) ?? [:]
+        values = saved["values"] as? [String: String] ?? [:]
+        baseline = saved["baseline"] as? [String: String] ?? [:]
+        revision = saved["profileRevision"] as? String == snapshot.revision ? saved["revision"] as? String ?? "" : ""
+    }
+    func saveDraft() { defaults.set(["values": values, "baseline": baseline, "revision": revision, "profileRevision": snapshot.revision], forKey: storageKey) }
     func select() async {
         guard !busy else { return }
         defaults.set([device, application], forKey: selectionKey)
         result = nil; revision = ""; baseline = [:]; conflict = false
-        let saved = defaults.dictionary(forKey: storageKey) ?? [:]
-        values = saved["values"] as? [String: String] ?? [:]
-        baseline = saved["baseline"] as? [String: String] ?? [:]
-        revision = saved["revision"] as? String ?? ""
+        restoreDraft()
+        model.serviceSettingsChanges.send()
         await run("read")
     }
     func start() async {
@@ -44,7 +53,10 @@ import MimicCore
         if device.isEmpty { device = result?.devices.first?.id ?? "" }
         if !device.isEmpty { await select() }
     }
-    func refresh() async { if model.panelVisible && model.panelPage == .home && !busy && !device.isEmpty { await run("read") } }
+    func refresh() async {
+        guard model.panelVisible, model.panelPage == .home, !busy else { return }
+        if result == nil || device.isEmpty { await start() } else { await run("read", discardDraft: conflict) }
+    }
     /// The form owns observation independently of the SwiftUI task which displayed it.
     func run(_ operation: String, field: String = "", force: Bool = false, discardDraft: Bool = false) async {
         guard !busy, model.project == project, model.activeProfile == snapshot,
@@ -86,6 +98,7 @@ import MimicCore
         if operation == "apply" || operation == "resetAll" || operation == "read" && (discardDraft || !wasDirty) { values = next.values }
         if operation == "reset" { values[field] = "" }
         saveDraft()
+        model.serviceSettingsChanges.send()
     }
     func reload() async { await run("read", discardDraft: true) }
 }
@@ -103,46 +116,26 @@ struct ProfilePanelView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Picker(text("customPanel.device"), selection: $form.device) {
-                    if form.device.isEmpty { Text(text("customPanel.device")).tag("") }
-                    ForEach(form.result?.devices ?? []) { Text($0.title).tag($0.id) }
-                }.labelsHidden().pickerStyle(.menu)
-                    .mimicSelection(text("customPanel.device"), selection: $form.device, options: (form.result?.devices ?? []).map { .init($0.title, $0.id) }, labelsHidden: true).frame(maxWidth: .infinity)
-                Picker(text("customPanel.application"), selection: $form.application) {
-                    ForEach(form.panel.applications) { Text($0.title).tag($0.id) }
-                }.labelsHidden().pickerStyle(.menu)
-                    .mimicSelection(text("customPanel.application"), selection: $form.application, options: form.panel.applications.map { .init($0.title, $0.id) }, labelsHidden: true).frame(maxWidth: .infinity)
-                Button { Task { await form.refresh() } } label: { Image(systemName: "arrow.clockwise") }.mimicHelp(text("refresh"))
-            }.controlSize(.mini)
             ForEach(form.panel.fields) { field in
                 HStack(spacing: 4) {
                     Text(field.title).lineLimit(1).frame(width: full ? 90 : 62, alignment: .leading).mimicHelp(field.title)
                     TextField(field.placeholder ?? text("customPanel.default"), text: Binding(get: { form.values[field.id, default: ""] }, set: { form.values[field.id] = $0; form.saveDraft() }))
                         .textFieldStyle(.roundedBorder).mimicInput().accessibilityLabel(field.title)
-                        .onSubmit { if form.valid && !form.conflict { Task { await form.run("apply") } } }
-                    Button { Task { await form.run("reset", field: field.id) } } label: { Image(systemName: "arrow.uturn.backward") }
-                        .mimicHelp(text("customPanel.reset") + " " + field.title).disabled(form.result == nil || form.result?.revision.isEmpty != false)
+                        .onSubmit { if form.valid && form.hasReadRevision && !form.conflict { Task { await form.run("apply") } } }
                 }.controlSize(.mini)
             }
             HStack(spacing: 5) {
-                if form.conflict {
-                    Button(text("customPanel.reload")) { Task { await form.reload() } }
-                    Button(text("customPanel.overwrite")) { Task { await form.run("apply", force: true) } }.disabled(!form.valid)
-                } else if form.result?.status == "launchFailed" {
-                    Button(text("customPanel.retryLaunch")) { Task { await form.run("launch") } }
-                } else {
-                    Button(text("customPanel.apply")) { Task { await form.run("apply") } }.disabled(!form.valid || form.result?.revision.isEmpty != false)
-                    Button(text("customPanel.resetAll")) { Task { await form.run("resetAll") } }.disabled(form.result?.revision.isEmpty != false)
-                }
+                Button(text("customPanel.resetAll")) { Task { await form.run("resetAll") } }
+                    .disabled(!form.hasReadRevision || form.conflict)
+                Button(text("customPanel.apply")) { Task { await form.run(form.result?.status == "launchFailed" ? "launch" : "apply") } }
+                    .disabled(!form.valid || !form.hasReadRevision || form.conflict)
+                Button(text("customPanel.refresh")) { Task { await form.refresh() } }
                 Spacer(minLength: 0)
             }.buttonStyle(MimicAuxiliaryButtonStyle(height: 20, horizontalPadding: 6)).controlSize(.mini)
-            Text(form.busy ? text("customPanel.working") : form.conflict ? text("customPanel.conflict") : form.message)
+            Text(form.busy ? text("customPanel.working") : form.conflict ? text("customPanel.conflict") : form.message.isEmpty && form.result == nil ? text(form.hasReadRevision ? "customPanel.cached" : "customPanel.refreshRequired") : form.message)
                 .lineLimit(1).foregroundStyle(.secondary).mimicHelp(form.conflict ? text("customPanel.conflict") : form.message)
         }.mimicFont(.caption).disabled(form.busy).background(PanelControlRegion())
             .accessibilityIdentifier("customPanel." + form.panel.id)
-            .task { guard live else { return }; await form.start(); while !Task.isCancelled { do { try await Task.sleep(for: .seconds(15)) } catch { break }; await form.refresh() } }
-            .onChange(of: form.device) { old, value in if old != value && !form.busy { Task { await form.select() } } }
-            .onChange(of: form.application) { old, value in if old != value && !form.busy { Task { await form.select() } } }
+
     }
 }

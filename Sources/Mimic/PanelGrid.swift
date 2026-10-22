@@ -152,12 +152,12 @@ struct PanelGridLayout: Layout {
     var transientRow: UUID?
     var frameStore: PanelFrameStore?
     let gap: CGFloat = MimicMetrics.large
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let width = proposal.width ?? MimicMetrics.panelWidth - 2 * MimicMetrics.documentInset
-        return CGSize(width: width, height: placements(width: width, subviews: subviews).height)
+        return CGSize(width: width, height: measured(width: width, subviews: subviews, cache: &cache).height)
     }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = placements(width: bounds.width, subviews: subviews)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let result = measured(width: bounds.width, subviews: subviews, cache: &cache)
         frameStore?.record(Dictionary(uniqueKeysWithValues: cells.indices.map { (cells[$0].id, result.frames[$0]) }), rows: rows)
         for index in subviews.indices {
             let frame = result.frames[index]
@@ -167,6 +167,33 @@ struct PanelGridLayout: Layout {
             subviews[index].place(at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y), anchor: lifted && offset == nil ? dragAnchor : .topLeading, proposal: ProposedViewSize(frame.size))
         }
     }
+    struct Cache {
+        fileprivate struct Key: Equatable {
+            let width: CGFloat
+            let rows: [PanelLayoutRow]
+            let expanded: PanelBlockKind?
+            let singleColumn: Bool
+            let dragging: PanelBlockKind?
+            let transient: UUID?
+            let count: Int
+        }
+        fileprivate var key: Key?
+        fileprivate var result: (frames: [CGRect], height: CGFloat)?
+    }
+    func makeCache(subviews: Subviews) -> Cache { Cache() }
+    func updateCache(_ cache: inout Cache, subviews: Subviews) { cache = Cache() }
+
+    /// Measurement and placement share one result until SwiftUI invalidates subview layout.
+    private func measured(width: CGFloat, subviews: Subviews, cache: inout Cache) -> (frames: [CGRect], height: CGFloat) {
+        let key = Cache.Key(width: width, rows: rows, expanded: expanded, singleColumn: singleColumn, dragging: dragging, transient: transientRow, count: subviews.count)
+        if cache.key == key, let result = cache.result { return result }
+        let interval = ResourceTrace.begin("Panel layout measurement", cause: "layout invalidated")
+        defer { ResourceTrace.end("Panel layout measurement", interval) }
+        let result = placements(width: width, subviews: subviews)
+        cache.key = key; cache.result = result
+        return result
+    }
+
     private func placements(width: CGFloat, subviews: Subviews) -> (frames: [CGRect], height: CGFloat) {
         var frames = Array(repeating: CGRect.zero, count: subviews.count), y: CGFloat = 0
         for row in rows {
@@ -277,12 +304,6 @@ struct PanelGrid: View {
                 }.id(PanelSection.tasks.scrollID)
             }
         }.accessibilityIdentifier("panel.grid")
-            .task(id: self.pollsSimulators) {
-                if self.pollsSimulators { await model.pollSimulators() }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                if self.pollsSimulators { model.refreshSimulators() }
-            }
             .onChange(of: layout.expanded) { _, block in
                 if block == .simulators { model.refreshSimulators() }
             }
@@ -367,7 +388,7 @@ struct PanelGrid: View {
                 } else if let panel = layout.customPanels[block], let project = model.project, let snapshot = model.activeProfile, !layout.editing {
                     if !theme.retro { blockHeader(block, expanded: expanded) }
                     ProfilePanelView(model: model, panel: panel, project: project, snapshot: snapshot, full: layout.layout.size(of: block) == .full)
-                        .id(project.path + snapshot.revision + block.rawValue)
+                        .id(project.path + project.branch + project.commit + snapshot.revision + block.rawValue)
                 } else if block == .workItem, !layout.editing {
                     WorkCardView(model: model, full: expanded || layout.layout.size(of: block) == .full)
                 } else if block == .bootstrap, !layout.editing {

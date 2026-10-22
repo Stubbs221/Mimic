@@ -142,13 +142,13 @@ public struct BuildCatalogue: Codable, Sendable {
     public var destinations: [BuildDestination] = []
     public var testPlans: [String] = []
     public init() { }
-    public static func inspect(project: ProjectContext, scheme: String = "", includeTestPlans: Bool = false, timeout: TimeInterval = 120) throws -> Self {
-        try inspect(project: project, scheme: scheme, includeTestPlans: includeTestPlans, timeout: timeout) { arguments, environment, remaining in
+    public static func inspect(project: ProjectContext, scheme: String = "", includeTestPlans: Bool = false, timeout: TimeInterval = 120, baseCatalogue: Self? = nil) throws -> Self {
+        try inspect(project: project, scheme: scheme, includeTestPlans: includeTestPlans, timeout: timeout, baseCatalogue: baseCatalogue) { arguments, environment, remaining in
             ReadOnlyProcess.capture("/usr/bin/xcrun", ["xcodebuild"] + arguments, directory: project.path, environment: environment, timeout: remaining)
         }
     }
     /// All child queries consume one absolute budget; a slow first query cannot restart the deadline.
-    static func inspect(project: ProjectContext, scheme: String, includeTestPlans: Bool, timeout: TimeInterval,
+    static func inspect(project: ProjectContext, scheme: String, includeTestPlans: Bool, timeout: TimeInterval, baseCatalogue: Self? = nil,
                         capture run: ([String], [String: String], TimeInterval) throws -> (Int32, String)) throws -> Self {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         var env = EnvironmentInspector.environment(project: project)
@@ -169,13 +169,17 @@ public struct BuildCatalogue: Codable, Sendable {
         guard let target = project.appleTarget else { throw BuildError.configuration }
         let targetFlag = target.path.hasSuffix(".xcodeproj") ? "-project" : "-workspace"
         _ = try ProfileValidation.checkoutPath(target.path, root: project.path)
-        let json = try object(capture(["-list", "-json", targetFlag, project.workspace]))
-        guard let schemes = (json[targetFlag == "-project" ? "project" : "workspace"] as? [String: Any])?["schemes"] as? [String], !schemes.isEmpty else { throw BuildError.catalogueResponse }
-        value.schemes = schemes.sorted()
-        guard let configurationPath = targetFlag == "-project" ? Optional(target.path) : target.configurationProject else { throw BuildError.configuration }
-        let projectObject = try object(capture(["-list", "-json", "-project", try ProfileValidation.checkoutPath(configurationPath, root: project.path)]))
-        guard let configurations = (projectObject["project"] as? [String: Any])?["configurations"] as? [String], !configurations.isEmpty else { throw BuildError.catalogueResponse }
-        value.configurations = configurations.sorted()
+        if let baseCatalogue {
+            value.schemes = baseCatalogue.schemes; value.configurations = baseCatalogue.configurations
+        } else {
+            let json = try object(capture(["-list", "-json", targetFlag, project.workspace]))
+            guard let schemes = (json[targetFlag == "-project" ? "project" : "workspace"] as? [String: Any])?["schemes"] as? [String], !schemes.isEmpty else { throw BuildError.catalogueResponse }
+            value.schemes = schemes.sorted()
+            guard let configurationPath = targetFlag == "-project" ? Optional(target.path) : target.configurationProject else { throw BuildError.configuration }
+            let projectObject = targetFlag == "-project" ? json : try object(capture(["-list", "-json", "-project", try ProfileValidation.checkoutPath(configurationPath, root: project.path)]))
+            guard let configurations = (projectObject["project"] as? [String: Any])?["configurations"] as? [String], !configurations.isEmpty else { throw BuildError.catalogueResponse }
+            value.configurations = configurations.sorted()
+        }
         if !scheme.isEmpty {
             guard value.schemes.contains(scheme) else { throw BuildError.configuration }
             value.destinations = destinations(from: try capture(["-showdestinations", targetFlag, project.workspace, "-scheme", scheme]))
