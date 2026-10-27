@@ -17,13 +17,13 @@ struct ToolsCompactView: View {
                 Button { self.model.openProjectTool(tool) } label: {
                     HStack(spacing: 8) {
                         ToolCompactIcon(tool: tool)
-                        Text(text(tool.titleKey)).mimicFont(.body).lineLimit(1).truncationMode(.middle).layoutPriority(1)
+                        Text(model.toolTitle(tool)).mimicFont(.body).lineLimit(1).truncationMode(.middle).layoutPriority(1)
                         Spacer(minLength: 2)
                         if self.full {
                             if let record = self.model.toolRecord(tool) {
                                 ToolStatusText(record: record, compact: true).fixedSize(horizontal: true, vertical: false)
                             } else {
-                                Text(text(tool.descriptionKey)).foregroundStyle(theme.color("muted"))
+                                Text(model.toolDescription(tool)).foregroundStyle(theme.color("muted"))
                                     .lineLimit(1).truncationMode(.tail).layoutPriority(-1)
                             }
                         }
@@ -41,7 +41,7 @@ struct ToolsCompactView: View {
                     .onKeyPress(.return) { self.model.openProjectTool(tool, source: .keyboard); return .handled }
                     .background(PanelControlRegion())
                     .mimicHelp(self.toolHelp(tool)).accessibilityIdentifier("tools.favorite." + tool.rawValue)
-                    .accessibilityLabel(text(tool.titleKey)).accessibilityValue(self.toolHelp(tool))
+                    .accessibilityLabel(model.toolTitle(tool)).accessibilityValue(self.toolHelp(tool))
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
             // Isolate favorite labels, hints and identifiers from the enclosing draggable grid.
@@ -50,7 +50,7 @@ struct ToolsCompactView: View {
     }
 
     private func toolHelp(_ tool: ProjectTool) -> String {
-        var parts = [text(tool.titleKey), text(tool.descriptionKey)]
+        var parts = [model.toolTitle(tool), model.toolDescription(tool)]
         if let record = self.model.toolRecord(tool) {
             parts.append(text("status." + record.status.rawValue))
             if let duration = record.duration { parts.append(ciElapsed(duration)) }
@@ -130,7 +130,7 @@ struct ToolsDetailView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Button { model.selectedProjectTool = nil } label: { Label(text("tools.back"), systemImage: "chevron.left") }
                     .buttonStyle(BootstrapControlStyle()).accessibilityIdentifier("tools.back")
-                Label(text(tool.titleKey), systemImage: ActionPresentation.symbol(tool.action)).mimicFont(.heading)
+                Label(model.toolTitle(tool), systemImage: ActionPresentation.symbol(tool.action)).mimicFont(.heading)
                 ToolContent(model: model, action: tool.action)
             }
         } else { ToolsCatalogView(model: model, preferences: model.toolsPreferences) }
@@ -154,8 +154,8 @@ struct ToolsCatalogView: View {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: ActionPresentation.symbol(tool.action)).foregroundStyle(.secondary).frame(width: 20)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(text(tool.titleKey)).mimicFont(.body, weight: .medium)
-                        Text(text(tool.descriptionKey)).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        Text(model.toolTitle(tool)).mimicFont(.body, weight: .medium)
+                        Text(model.toolDescription(tool)).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 0)
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())

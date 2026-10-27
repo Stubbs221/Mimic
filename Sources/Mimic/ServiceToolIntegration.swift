@@ -17,7 +17,8 @@ extension TaskCoordinator {
             record.status == .succeeded && ["ready", "shutdown", "saved", "launchFailed"].contains(record.panelResult?.status ?? "") ? record.panelResult : nil
         }
         let raw = value?.values[tool.source.namespaceField] ?? ""
-        let namespace = raw.hasSuffix(".ing") || raw.hasSuffix(".svc") ? String(raw.dropLast(4)) : raw
+        let suffix = tool.source.namespaceSuffixes?.first { raw.hasSuffix($0) }
+        let namespace = suffix.map { String(raw.dropLast($0.count)) } ?? raw
         return .init(checkout: project.path, profileRevision: snapshot.revision, namespace: ServiceTool.validNamespace(namespace) ? namespace : "", appVersion: value?.values[tool.source.appVersionField] ?? "", sourceRevision: (value?.revision ?? "") + ":" + selection.joined(separator: ":"))
     }
 }

@@ -13,6 +13,33 @@ spec.loader.exec_module(resources)
 
 
 class PackagedResourcesTests(unittest.TestCase):
+    def test_staging_excludes_stale_files_and_preserves_localized_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / 'Sources/Mimic/Resources'
+            product = root / 'products/Mimic_Mimic.bundle'
+            for base in (source, product):
+                (base / 'ru.lproj').mkdir(parents=True)
+                (base / 'tool.svg').write_text('current')
+                (base / 'ru.lproj/Localizable.strings').write_text('localized')
+            (product / 'Info.plist').write_text('generated')
+            (product / 'removed-team-adapter.rb').write_text('private stale resource')
+            resources.stage_project_bundle(root, product.parent, root / 'staged', 'Mimic')
+            staged = root / 'staged/Mimic_Mimic.bundle'
+            self.assertEqual({p.relative_to(staged).as_posix() for p in staged.rglob('*') if p.is_file()},
+                             {'Info.plist', 'tool.svg', 'ru.lproj/Localizable.strings'})
+
+    def test_staging_rejects_missing_declared_resource(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            source = root / 'Sources/Mimic/Resources'
+            product = root / 'products/Mimic_Mimic.bundle'
+            source.mkdir(parents=True); product.mkdir(parents=True)
+            (source / 'required.svg').write_text('required')
+            (product / 'Info.plist').write_text('generated')
+            with self.assertRaisesRegex(RuntimeError, 'Missing or invalid declared resource'):
+                resources.stage_project_bundle(root, product.parent, root / 'staged', 'Mimic')
+
     def check_source(self, text):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

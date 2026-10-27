@@ -1,6 +1,6 @@
 #!/bin/bash
 # Created by Василий Маслов on 04.10.2026.
-# Explicit, disposable iOS acceptance only. Never touches ios3 or global xcode-select.
+# Explicit, disposable iOS acceptance only. Never touches ExampleProject or global xcode-select.
 set -euo pipefail
 MIMIC_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MIMIC_DEVELOPER=""

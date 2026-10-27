@@ -4,7 +4,7 @@ export const tools=['generation','localization','proto','format','fullCleanup','
 export type ToolID=typeof tools[number];
 export type ToolsPreferences={revision:number;favorites:ToolID[]};
 export const defaultFavorites:ToolID[]=['generation','localization','format'];
-export const toolRoles:Record<ToolID,string[]>={generation:['generateUI','generateSicilia','generateGalera'],localization:['localization'],proto:['protocols'],format:['format'],fullCleanup:['fullCleanup'],derivedDataCleanup:['derivedDataCleanup']};
+export const toolRoles:Record<ToolID,string[]>={generation:['generateUI','generateModule','generateFeature'],localization:['localization'],proto:['protocols'],format:['format'],fullCleanup:['fullCleanup'],derivedDataCleanup:['derivedDataCleanup']};
 export const toolSymbols:Record<ToolID,string>={generation:'▱',localization:'文',proto:'⑂',format:'≡',fullCleanup:'⌫',derivedDataCleanup:'⌫'};
 export function toolForRole(role:string):ToolID|undefined{return tools.find(id=>toolRoles[id].includes(role));}
 export function validateFavorites(value:ToolsPreferences):ToolsPreferences{

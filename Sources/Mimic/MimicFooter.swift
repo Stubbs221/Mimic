@@ -167,7 +167,7 @@ struct MimicFooter: View {
                         .background(appearance.usesTileGrid ? theme.color("accentSoft") : .clear, in: RoundedRectangle(cornerRadius: 10))
                 }
                 if appearance.usesTileGrid {
-                    theme.color("line").frame(height: 1).accessibilityHidden(true)
+                    if appearance.isRetro { theme.color("line").frame(height: 1).accessibilityHidden(true) }
                     tiledBottomRow
                 }
                 else if model.frameDiagnostics.enabled { diagnosticsRow }

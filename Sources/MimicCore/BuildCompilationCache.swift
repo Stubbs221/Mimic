@@ -8,9 +8,10 @@ import Foundation
 
 /// Stable compiler storage is separate from immutable, per-invocation result bundles.
 /// Xcode invalidates changed sources; branch names and commits must not defeat incremental builds.
+/// Build, test enumeration and test execution share compiler storage; results still require fresh verification.
 public enum BuildCompilationCache {
     public static func directory(root: URL, project: ProjectContext, developer: String, parameters: BuildParameters, profileRevision: String?) throws -> URL {
-        guard parameters.backend == .cli, parameters.operation == .build, parameters.intent == nil || parameters.intent == .run else { throw BuildError.arguments }
+        guard parameters.backend == .cli, parameters.intent == nil || parameters.intent == .run || parameters.intent == .catalogue else { throw BuildError.arguments }
         let identity = ["v1", URL(fileURLWithPath: project.path).resolvingSymlinksInPath().path,
                         project.appleTarget?.path ?? "", project.appleTarget?.configurationProject ?? "",
                         URL(fileURLWithPath: developer).resolvingSymlinksInPath().path,

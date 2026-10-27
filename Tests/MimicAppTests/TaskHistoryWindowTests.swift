@@ -193,11 +193,11 @@ struct TaskHistoryWindowTests {
         let m = f.model
         let output = URL(fileURLWithPath: "/private/tmp/MimicPanelHistory-20261006")
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        var project = ProjectContext(path: f.root.appendingPathComponent(String(repeating: "MobilePlatformInfrastructure", count: 5) + "/ios3").path)
+        var project = ProjectContext(path: f.root.appendingPathComponent(String(repeating: "MobilePlatformInfrastructure", count: 5) + "/ExampleProject").path)
         project.branch = "feature/" + String(repeating: "navigation-subscription-profile-", count: 6)
         project.commit = String(repeating: "abcdef0123", count: 4)
         project.developerDirectory = "/Applications/Developer Tools/Xcode-27.app/Contents/Developer"
-        let second = ProjectContext(path: f.root.appendingPathComponent("another/ios3").path, branch: project.branch, commit: project.commit)
+        let second = ProjectContext(path: f.root.appendingPathComponent("another/ExampleProject").path, branch: project.branch, commit: project.commit)
         m.projects = [project, second]; m.selectedProjectPath = project.path
         m.revealSection(.tasks, source: .keyboard)
         for dark in [false, true] {

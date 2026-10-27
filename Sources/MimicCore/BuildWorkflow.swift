@@ -141,7 +141,7 @@ public extension BuildActivity {
     var actionKey: String { parameters.intent == .cleanup ? "build.action.cleanup" : parameters.intent == .run ? "build.action.run" : parameters.intent == .catalogue ? "build.action.catalogue" : parameters.operation == .test ? "build.action.testsSelected" : "build.action.build" }
     var progressTotal: Int { parameters.intent == .run ? 3 : 1 }
     /// Counts completed stages; an unknown compiler total remains indeterminate.
-    var selectedTestCount: Int? { parameters.operation == .test && parameters.testIdentifiers.allSatisfy { $0.split(separator: "/").count == 3 } ? Set(parameters.testIdentifiers).count : nil }
+    var selectedTestCount: Int? { parameters.operation == .test && parameters.testTarget == nil && !parameters.testIdentifiers.isEmpty && parameters.testIdentifiers.allSatisfy { $0.split(separator: "/").count == 3 } ? Set(parameters.testIdentifiers).count : nil }
     var progressFraction: Double? {
         if status == .succeeded { return 1 }
         if let count = completedTestCount, let total = selectedTestCount, total > 0 { return Double(count) / Double(total) }

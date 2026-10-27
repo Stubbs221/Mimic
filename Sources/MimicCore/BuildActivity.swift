@@ -25,6 +25,8 @@ public struct BuildParameters: Codable, Equatable, Sendable {
     public var destinationID: String
     public var testPlan: String
     public var testIdentifiers: [String]
+    /// Whole-target selection for the manual panel; mutually exclusive with method identifiers.
+    public var testTarget: String?
     public var workspaceTab: String
     public init(operation: BuildOperation = .build, backend: BuildBackend = .cli, scheme: String = "", configuration: String = "Debug", destinationID: String = "", platform: BootstrapPlatform? = nil, testPlan: String = "", testIdentifiers: [String] = [], workspaceTab: String = "") {
         self.operation = operation; self.backend = backend; self.scheme = scheme; self.configuration = configuration
@@ -32,19 +34,21 @@ public struct BuildParameters: Codable, Equatable, Sendable {
     }
     public func validate() throws {
         if intent != nil, operation != .build || backend != .cli && intent != .run { throw BuildError.arguments }
-        let fields = [scheme, configuration, destinationID, testPlan, workspaceTab] + testIdentifiers
+        let fields = [scheme, configuration, destinationID, testPlan, workspaceTab] + testIdentifiers + [testTarget].compactMap { $0 }
         guard fields.allSatisfy({ $0.utf8.count <= 1024 && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }), testIdentifiers.count <= 100 else { throw BuildError.arguments }
         if backend == .cli || intent == .run {
             guard !scheme.isEmpty, !configuration.isEmpty, UUID(uuidString: destinationID) != nil, workspaceTab.isEmpty else { throw BuildError.arguments }
         } else {
             guard !workspaceTab.isEmpty, scheme.isEmpty, configuration.isEmpty, destinationID.isEmpty, testPlan.isEmpty else { throw BuildError.arguments }
         }
-        if operation == .test {
+        if operation == .test, let testTarget {
+            guard backend == .cli, testIdentifiers.isEmpty, !testTarget.isEmpty, !testTarget.contains("/"), !testTarget.contains("*"), !testTarget.hasPrefix("-") else { throw BuildError.arguments }
+        } else if operation == .test {
             guard !testIdentifiers.isEmpty, testIdentifiers.allSatisfy({ value in
                 let parts = value.split(separator: "/", omittingEmptySubsequences: false)
                 return (2...3).contains(parts.count) && parts.allSatisfy { !$0.isEmpty && !$0.contains("*") && !$0.hasPrefix("-") }
             }) else { throw BuildError.testsRequired }
-        } else if !testIdentifiers.isEmpty || (!testPlan.isEmpty && intent != .catalogue) { throw BuildError.arguments }
+        } else if testTarget != nil || !testIdentifiers.isEmpty || (!testPlan.isEmpty && intent != .catalogue) { throw BuildError.arguments }
     }
     public func command(project: ProjectContext, resultBundlePath: String? = nil, derivedDataPath: String? = nil, enumerationPath: String? = nil) throws -> CommandSpec {
         try validate(); guard backend == .cli else { throw BuildError.unsupported }
@@ -60,7 +64,7 @@ public struct BuildParameters: Codable, Equatable, Sendable {
             arguments += ["test", "-enumerate-tests", "-test-enumeration-style", "hierarchical", "-test-enumeration-format", "json", "-test-enumeration-output-path", enumerationPath]
         } else {
             if let resultBundlePath { arguments += ["-resultBundlePath", resultBundlePath] }
-            arguments += testIdentifiers.map { "-only-testing:" + $0 }; arguments.append(operation.rawValue)
+            arguments += (testTarget.map { [$0] } ?? testIdentifiers).map { "-only-testing:" + $0 }; arguments.append(operation.rawValue)
         }
         return .init(executable: "/usr/bin/xcrun", arguments: arguments, directory: project.path, environment: environment)
     }
@@ -150,6 +154,8 @@ public struct BuildCatalogue: Codable, Sendable {
     public var configurations: [String] = []
     public var destinations: [BuildDestination] = []
     public var testPlans: [String] = []
+    /// Optional so previously persisted catalogues decode without migration.
+    public var testTargets: [BuildTestTarget]?
     public init() { }
     public static func inspect(project: ProjectContext, scheme: String = "", includeTestPlans: Bool = false, timeout: TimeInterval = 120, baseCatalogue: Self? = nil, progress: (@Sendable (BuildCatalogueProgress.Phase, Int, Int) -> Void)? = nil) throws -> Self {
         try inspect(project: project, scheme: scheme, includeTestPlans: includeTestPlans, timeout: timeout, baseCatalogue: baseCatalogue, progress: progress) { arguments, environment, remaining in
@@ -201,12 +207,13 @@ public struct BuildCatalogue: Codable, Sendable {
             begin(.destinations)
             value.destinations = destinations(from: try capture(["-showdestinations", targetFlag, project.workspace, "-scheme", scheme]))
             finish()
+            value.testTargets = try BuildTestTargetReader.read(project: project, scheme: scheme)
             if includeTestPlans {
                 begin(.testPlans)
                 let plans = try capture(["-showTestPlans", targetFlag, project.workspace, "-scheme", scheme])
                 if let range = plans.range(of: "Test plans associated with the scheme") {
                     value.testPlans = plans[range.upperBound...].components(separatedBy: "\n").dropFirst().map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-                } else { throw BuildError.catalogueResponse }
+                } else if value.testTargets?.contains(where: { !$0.testPlan.isEmpty }) == true || value.testTargets?.isEmpty != false { throw BuildError.catalogueResponse }
                 finish()
             }
         }
@@ -234,6 +241,9 @@ public struct BuildCatalogue: Codable, Sendable {
         }
     }
     public func validate(_ parameters: BuildParameters) throws {
+        if let target = parameters.testTarget {
+            guard testTargets?.contains(where: { $0.name == target && $0.testPlan == parameters.testPlan }) == true else { throw BuildError.configuration }
+        }
         guard schemes.contains(parameters.scheme), configurations.contains(parameters.configuration), destinations.contains(where: { $0.id == parameters.destinationID && ($0.platform ?? .ios) == (parameters.platform ?? .ios) }), parameters.testPlan.isEmpty || testPlans.contains(parameters.testPlan), parameters.operation != .test && parameters.intent != .catalogue || testPlans.count <= 1 || !parameters.testPlan.isEmpty else { throw BuildError.configuration }
     }
 }

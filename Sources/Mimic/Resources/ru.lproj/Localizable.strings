@@ -84,8 +84,8 @@
 "terminal.show" = "Открыть терминал";
 "action.bootstrap.description" = "Подготовка iOS и tvOS перед сборкой · Bootstrap";
 "action.generation" = "Создать компонент";
-"action.generation.description" = "UI-компонент, блок Sicilia или Galera · Celestial";
-"action.localization.description" = "Swift-строки из каталога переводов · Babylon";
+"action.generation.description" = "UI-компонент, модуль или функциональный блок";
+"action.localization.description" = "Swift-строки из каталога переводов";
 "action.proto.description" = "Swift-модели из .proto-файлов · Protobuf";
 "action.format.description" = "Только изменённые Swift-файлы · SwiftFormat";
 "action.simulatorBoot" = "Запустить симулятор";
@@ -94,8 +94,8 @@
 "action.simulatorShutdown.description" = "Завершение выбранного iOS-устройства";
 "action.details" = "Посмотреть параметры и результат действия";
 "action.result" = "Что получится";
-"action.localization.effects" = "Обновится Localization+Generated.swift на основе Localizable.xcstrings. Запускайте после изменения локализаций. Сгенерированный файл будет отформатирован.";
-"action.proto.effects" = "Обновятся Swift-модели в ProtoGenerated из схем CodeGenerateTools/Proto. Запускайте после изменения .proto. Нужны protoc и protoc-gen-swift.";
+"action.localization.effects" = "Обновит локализацию с помощью адаптера выбранного профиля. Пути входных и создаваемых файлов определяет профиль.";
+"action.proto.effects" = "Обновит модели по схемам и настройкам выбранного профиля. Требования к инструментам определяет профиль.";
 "action.format.effects" = "Отформатируются изменённые отслеживаемые Git Swift-файлы. Удалённые и новые неотслеживаемые файлы не затрагиваются. Правила берутся из проекта.";
 "ready.missing" = "Нужно: ";
 "ready.yes" = "Окружение готово к запуску";
@@ -126,11 +126,11 @@
 "run.terminal.hint" = "Ход выполнения и запросы ввода появятся в окне задачи.";
 "generator.type" = "Тип компонента";
 "generator.ui" = "UI-компонент iOS";
-"generator.module" = "Блок Sicilia";
-"generator.feature" = "Блок Galera";
-"generator.ui.description" = "UIView, конфигурация, пример в Atelier и iOS snapshot-тест. Использует шаблоны проекта.";
-"generator.module.description" = "Builder, Presenter, ViewController и Arena Adapter для карточки контента.";
-"generator.feature.description" = "Builder, Feature Adapter и Processor для блока Papirus.";
+"generator.module" = "Модуль";
+"generator.feature" = "Функциональный блок";
+"generator.ui.description" = "Создаёт UI-компонент и связанные файлы по шаблону выбранного профиля.";
+"generator.module.description" = "Создаёт модуль и связанные файлы по шаблону выбранного профиля.";
+"generator.feature.description" = "Создаёт функциональный блок по шаблону выбранного профиля.";
 "generator.name" = "Имя компонента";
 "generator.name.placeholder" = "Например, ProfileHeader";
 "generator.name.hint" = "Латинские буквы, с заглавной. До 50 символов. Для блока суффикс Block добавится сам.";
@@ -221,8 +221,8 @@
 "branch.missing" = "Локальная ветка больше не существует.";
 "branch.timeout" = "Git не завершил проверку вовремя. Проверьте состояние репозитория и откройте список веток повторно.";
 "branch.error" = "Не удалось проверить или переключить ветку.";
-"tool.name.generation" = "Celestial";
-"tool.name.localization" = "Babylon";
+"tool.name.generation" = "Генератор";
+"tool.name.localization" = "Локализация";
 "tool.name.proto" = "Protobuf";
 "tool.name.format" = "SwiftFormat";
 "bootstrap.xcode.short" = "Запуск закроет все экземпляры Xcode";
@@ -902,8 +902,8 @@
 "panel.block.simulators" = "Устройства";
 "panel.block.ai" = "AI";
 "panel.block.generateUI" = "Генератор UI";
-"panel.block.generateSicilia" = "Sicilia";
-"panel.block.generateGalera" = "Galera";
+"panel.block.generateModule" = "Модуль";
+"panel.block.generateFeature" = "Функция";
 "panel.block.localization" = "Локализация";
 "panel.block.protocols" = "Протоколы";
 "panel.block.format" = "Форматирование";
@@ -1060,13 +1060,13 @@
 "tools.unpin" = "Убрать из избранного";
 "tools.move.up" = "Выше в избранном";
 "tools.move.down" = "Ниже в избранном";
-"tools.favorites.restored" = "Восстановлены Celestial, Babylon и SwiftFormat.";
+"tools.favorites.restored" = "Восстановлено стандартное избранное.";
 "tools.favorites.conflict" = "Избранное изменилось в другой панели. Данные обновлены — повторите изменение.";
 "tools.task.open" = "Открыть задачу и лог";
 "tools.queue.explanation" = "Ожидает освобождения общей очереди. Можно отменить до запуска.";
 "tools.generator.ui" = "UI-компонент";
-"tools.generator.module" = "Sicilia";
-"tools.generator.feature" = "Galera";
+"tools.generator.module" = "Модуль";
+"tools.generator.feature" = "Функция";
 "tools.unavailable" = "Инструмент пока недоступен.";
 "tools.settings" = "Настройки окружения";
 "tools.command.unavailable" = "Команда станет доступна после заполнения формы и проверки окружения.";
@@ -1321,7 +1321,7 @@
 "customPanel.unknown" = "Исход действия неизвестен; повторите тот же запрос";
 
 // Service tool forms
-"service.noEnvironment" = "Выберите кубер в плашке настроек";
+"service.noEnvironment" = "Выберите окружение в плашке настроек";
 "service.action" = "Действие";
 "service.mode" = "Способ";
 "service.recent" = "Последние пользователи";
@@ -1380,3 +1380,10 @@
 "build.error.debuggerUnavailable" = "Xcode не подтвердил запуск с подключённым отладчиком. Проверьте состояние в Xcode.";
 "build.stop.request" = "Запросить остановку";
 "build.error.xcodeCancellationUnconfirmed" = "Запрос остановки передан Xcode. Проверьте фактическую остановку в Xcode перед следующим запуском.";
+
+"build.environment" = "Окружение";
+"build.tests.target" = "Набор тестов";
+"build.tests.runTarget" = "Запустить набор";
+"build.tests.noTargets" = "В выбранной схеме нет доступных тестовых таргетов.";
+"build.error.testsUnverified" = "Не удалось подтвердить выполнение выбранного набора. Откройте результат прогона.";
+"build.action.runShort" = "Запустить";

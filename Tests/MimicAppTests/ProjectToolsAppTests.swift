@@ -7,6 +7,63 @@ import MimicCore
 @testable import Mimic
 
 @Suite(.serialized) @MainActor struct ProjectToolsAppTests {
+    @Test func profileTitlesReachBothSurfacesAndResetWithoutProfile() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ToolLabels-" + UUID().uuidString)
+        let suite = "ToolLabels-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        let model = TaskCoordinator(directory: root, defaults: defaults)
+        model.aiUsage.stop(); model.motionSettings.reduceMotionOverride = true
+        defer { model.records = []; model.stopAndExit(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        #expect(model.toolTitle(.generation) == text("tool.name.generation"))
+        #expect(model.generatorTitle(.module) == text("tools.generator.module"))
+        let fixture = try Profile11Fixture.snapshot(directory: root)
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(fixture.profile)) as? [String: Any])
+        var interface = try #require(object["interface"] as? [String: Any])
+        interface["toolTitles"] = ["generation": "Team Generator", "localization": "Team Translations"]
+        interface["generatorTitles"] = ["module": "Team Module", "feature": "Team Feature"]
+        interface["toolDescriptions"] = ["generation": "Team generation templates"]
+        interface["toolEffects"] = ["localization": "Team translation output"]
+        interface["generatorDescriptions"] = ["module": "Team module architecture"]
+        object["interface"] = interface
+        let profile = try JSONDecoder().decode(MimicProfile.self, from: JSONSerialization.data(withJSONObject: object))
+        model.activeProfile = ProfileSnapshot(profile: profile, revision: fixture.revision, directory: fixture.directory)
+        model.projects = [ProjectContext(path: root.path, branch: "main")]; model.selectedProjectPath = root.path
+        model.panelLayout.configure(profile: model.activeProfile, checkout: root.path)
+        #expect(model.toolTitle(.generation) == "Team Generator" && model.generatorTitle(.module) == "Team Module")
+        #expect(model.toolDescription(.generation) == "Team generation templates")
+        #expect(model.generatorDescription(.module) == "Team module architecture")
+        #expect(model.panelLayout.title(.generateModule) == "Team Module")
+        let integration = MimicIntegration(model: model, defaults: defaults)
+        let state = try await integration.handle(.init(method: "get_state"))
+        #expect(state["interface"]["toolTitles"]["generation"].string == "Team Generator")
+        #expect(state["interface"]["generatorTitles"]["module"].string == "Team Module")
+        #expect(state["interface"]["toolEffects"]["localization"].string == "Team translation output")
+        // Optional documentation captures use only the neutral disposable profile and production views.
+        if let path = ProcessInfo.processInfo.environment["MIMIC_NEUTRAL_RENDER_OUTPUT"] {
+            model.panelVisibilityChanged(true)
+            model.activeProfile = fixture
+            model.panelLayout.configure(profile: fixture, checkout: root.path)
+            model.projects = [ProjectContext(path: root.appendingPathComponent("ExampleProject").path, branch: "main")]; model.selectedProjectPath = model.projects[0].path
+            let output = URL(fileURLWithPath: path)
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            for appearance in [PanelAppearance.tileGrid, .windows95, .windowsXP] {
+                model.appearance.select(appearance)
+                let host = NSHostingView(rootView: MimicPanel(model: model).frame(width: appearance.panelWidth, height: 760).modifier(MimicAppearanceRoot(store: model.appearance)))
+                let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: appearance.panelWidth, height: 760), styleMask: .borderless, backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try #require(bitmap.representation(using: .png, properties: [:])).write(to: output.appendingPathComponent("native-" + appearance.rawValue + ".png"))
+                window.contentView = nil; window.close()
+            }
+        }
+        model.activeProfile = nil; model.panelLayout.configure(profile: nil, checkout: root.path)
+        #expect(model.toolTitle(.generation) == text("tool.name.generation"))
+        #expect(model.generatorTitle(.module) == text("tools.generator.module"))
+        #expect(model.generatorDescription(.module) == text("generator.module.description"))
+        #expect(model.panelLayout.title(.generateModule) == text("panel.block.generateModule"))
+        #expect(try await integration.handle(.init(method: "get_state"))["interface"] == .null)
+    }
     @Test func catalogNavigationFavoritesAndPrivateBridgeRemainIndependent() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("ToolsApp-" + UUID().uuidString)
         let name = "ToolsApp-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: name))

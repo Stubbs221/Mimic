@@ -32,6 +32,11 @@ import MimicCore
 }
 
 extension TaskCoordinator {
+    func toolTitle(_ tool: ProjectTool) -> String { activeProfile?.profile.interface?.toolTitles?[tool.rawValue] ?? text(tool.titleKey) }
+    func generatorTitle(_ kind: GeneratorKind) -> String { activeProfile?.profile.interface?.generatorTitles?[kind.rawValue] ?? text("tools.generator." + kind.rawValue) }
+    func toolDescription(_ tool: ProjectTool) -> String { activeProfile?.profile.interface?.toolDescriptions?[tool.rawValue] ?? text(tool.descriptionKey) }
+    func toolEffects(_ tool: ProjectTool, execution: ProfileExecution?) -> String { activeProfile?.profile.interface?.toolEffects?[tool.rawValue] ?? text(tool.effectsKey(execution: execution)) }
+    func generatorDescription(_ kind: GeneratorKind) -> String { activeProfile?.profile.interface?.generatorDescriptions?[kind.rawValue] ?? text(kind.titleKey + ".description") }
     func toolRecord(_ tool: ProjectTool) -> TaskRecord? { tool.record(in: records, checkout: selectedProjectPath) }
     func toolActive(_ tool: ProjectTool) -> Bool {
         toolAdmissions.contains(selectedProjectPath + "|" + tool.rawValue) || records.contains { $0.project.path == selectedProjectPath && ProjectTool.identify($0) == tool && [.queued, .running].contains($0.status) }

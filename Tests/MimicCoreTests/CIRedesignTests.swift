@@ -64,7 +64,7 @@ private func redesignContractJSON(_ kind: RemoteCIKind, upload: String = "FALSE"
     case .uiTests: definitions += [["name": "TEST_PLAN", "choices": UITestPlan.allCases.map(\.rawValue), "defaultParameterValue": ["value": "SMOKE"]]]
     case .qualityGates: definitions += QualityGate.allCases.map { ["name": $0.rawValue, "defaultParameterValue": ["value": $0 != .performance]] }
     case .beta:
-        definitions += [["name": "TARGET", "choices": ["movie", "tvos", "atelier", "atelier_tvos"], "defaultParameterValue": ["value": "movie"]],
+        definitions += [["name": "TARGET", "choices": ["movie", "tvos", "catalog", "catalog_tvos"], "defaultParameterValue": ["value": "movie"]],
                         ["name": "REBASE_BRANCH", "defaultParameterValue": ["value": ""]],
                         ["name": "UPLOAD_TO_APP_DISTRIBUTION", "choices": ["FALSE", "TRUE"], "defaultParameterValue": ["value": upload]]]
     }

@@ -5,8 +5,36 @@ import argparse
 import json
 import pathlib
 import re
+import shutil
 import subprocess
 import tempfile
+
+
+def stage_project_bundle(root, products, destination, target):
+    """Copy only declared resources; incremental SwiftPM bundles may retain deleted private files."""
+    source = root / 'Sources' / target / 'Resources'
+    bundle = products / ('Mimic_' + target + '.bundle')
+    output = destination / bundle.name
+    resources = {}
+    for path in sorted(source.rglob('*')):
+        if not path.is_file() or path.name == '.DS_Store':
+            continue
+        if path.is_symlink():
+            raise RuntimeError(f'Symlink resource is unsupported: {path}')
+        relative = path.relative_to(source)
+        locale = next((index for index, part in enumerate(relative.parts) if part.endswith('.lproj')), None)
+        packaged = pathlib.Path(*relative.parts[locale:]) if locale is not None else pathlib.Path(path.name)
+        if packaged in resources:
+            raise RuntimeError(f'Duplicate packaged resource: {packaged}')
+        resources[packaged] = path
+    for packaged in [pathlib.Path('Info.plist'), *resources]:
+        if not (bundle / packaged).is_file() or (bundle / packaged).is_symlink():
+            raise RuntimeError(f'Missing or invalid declared resource: {bundle / packaged}')
+    output.mkdir(parents=True, exist_ok=False)
+    for packaged in [pathlib.Path('Info.plist'), *resources]:
+        target_path = output / packaged
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(bundle / packaged, target_path)
 
 
 def check_sources(root):
@@ -52,11 +80,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sources', type=pathlib.Path)
     parser.add_argument('--app', type=pathlib.Path)
+    parser.add_argument('--stage-products', type=pathlib.Path)
+    parser.add_argument('--destination', type=pathlib.Path)
     args = parser.parse_args()
     if not args.sources and not args.app:
         parser.error('Specify --sources and/or --app')
     if args.sources:
         check_sources(args.sources)
+    if args.stage_products or args.destination:
+        if not args.sources or not args.stage_products or not args.destination:
+            parser.error('Staging requires --sources, --stage-products and --destination')
+        for target in ('Mimic', 'MimicCore', 'MimicMCP'):
+            stage_project_bundle(args.sources, args.stage_products, args.destination, target)
     if args.app:
         check_app(args.app)
 

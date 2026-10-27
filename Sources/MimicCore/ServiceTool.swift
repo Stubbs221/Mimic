@@ -7,6 +7,8 @@ public struct ServiceTool: Codable, Equatable, Sendable, Identifiable {
         public let panelID: String
         public let namespaceField: String
         public let appVersionField: String
+        /// Optional environment suffixes are supplied by the team's profile, never inferred globally.
+        public var namespaceSuffixes: [String]? = nil
     }
     public struct Choice: Codable, Equatable, Sendable { public let value: String; public let title: String }
     public struct Field: Codable, Equatable, Sendable, Identifiable {
@@ -75,6 +77,7 @@ public struct ServiceTool: Codable, Equatable, Sendable, Identifiable {
               identifier(source.panelID), identifier(source.namespaceField), identifier(source.appVersionField),
               !actions.isEmpty, actions.count <= 32, Set(actions.map(\.id)).count == actions.count,
               baseURLTemplate.components(separatedBy: "{namespace}").count == 2 else { throw ProfileError.parameter }
+        guard (source.namespaceSuffixes?.count ?? 0) <= 8, (source.namespaceSuffixes ?? []).allSatisfy({ $0.range(of: #"^\.[a-z]{1,16}$"#, options: .regularExpression) != nil }) else { throw ProfileError.parameter }
         let base = try endpoint(namespace: "fixture")
         guard base.path.isEmpty || base.path == "/" else { throw ProfileError.path }
         for action in actions {

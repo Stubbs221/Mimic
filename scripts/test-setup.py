@@ -57,7 +57,7 @@ class SetupScriptTests(unittest.TestCase):
         legacy = self.root / 'Mimic.backup.legacy.app'
         self.make_app(legacy)
         with (legacy / 'Contents/Info.plist').open('wb') as file:
-            plistlib.dump({'CFBundleIdentifier': 'local.vmaslov.IVIToolbox', 'CFBundleName': 'Mimic', 'CFBundleExecutable': 'Mimic'}, file)
+            plistlib.dump({'CFBundleIdentifier': 'example.legacy.Toolbox', 'CFBundleName': 'Mimic', 'CFBundleExecutable': 'Mimic'}, file)
         unrelated = self.root / 'Mimic.backup.unrelated.app'
         self.make_app(unrelated)
         with (unrelated / 'Contents/Info.plist').open('wb') as file:
@@ -68,7 +68,7 @@ class SetupScriptTests(unittest.TestCase):
         self.make_app(self.app)
         self.assertEqual(self.run_script('--destination', str(destination)).returncode, 0)
         self.assertFalse(old.exists())
-        self.assertFalse(legacy.exists())
+        self.assertTrue(legacy.exists())
         self.assertTrue(unrelated.exists())
         self.assertTrue(link.is_symlink())
         self.assertTrue(self.app.exists())

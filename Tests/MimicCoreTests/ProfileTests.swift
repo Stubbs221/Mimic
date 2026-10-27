@@ -109,8 +109,10 @@ struct ProfileTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["MIMIC_PRIVATE_PROFILE"] != nil)) func privatePackageImportsWithoutExecutingAdapters() throws {
         let path = URL(fileURLWithPath: ProcessInfo.processInfo.environment["MIMIC_PRIVATE_PROFILE"]!)
         let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
-        let snapshot = try ProfileStore(directory: root.appendingPathComponent("Profiles")).importArchive(path)
-        #expect(snapshot.profile.actions.count == 12)
+        let store = ProfileStore(directory: root.appendingPathComponent("Profiles"))
+        let snapshot = try store.importArchive(path, requireInterface: true)
+        #expect(!snapshot.profile.actions.isEmpty); #expect(try store.active() == snapshot)
+        try store.verify(snapshot)
     }
     @Test func appleDestinationsIncludeOnlyIOSAndTVOSSimulators() {
         let destinations = BuildCatalogue.destinations(from: "{ platform:iOS Simulator, id:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA, OS:27.0, name:iPhone }\n{ platform:tvOS Simulator, id:BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB, OS:27.0, name:Apple TV }\n{ platform:watchOS Simulator, id:CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC, name:Watch }")

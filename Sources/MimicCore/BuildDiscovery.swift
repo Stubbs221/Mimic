@@ -88,7 +88,7 @@ public actor BuildDiscovery {
         guard !stopped, !Task.isCancelled else { throw CancellationError() }
         let project = try await Self.pinned(project), stamp = try await signature(project)
         guard !stopped, !Task.isCancelled else { throw CancellationError() }
-        if useCache, let index = cache.firstIndex(where: { matches($0, project: project, profileID: profileID, profileRevision: profileRevision) && $0.scheme == scheme && ($0.tests || !includeTestPlans) && $0.signature.configuration == stamp.configuration && (scheme.isEmpty || $0.signature.destinations == stamp.destinations) }) {
+        if useCache, let index = cache.firstIndex(where: { (inspect != nil || scheme.isEmpty || $0.value.testTargets != nil) && matches($0, project: project, profileID: profileID, profileRevision: profileRevision) && $0.scheme == scheme && ($0.tests || !includeTestPlans) && $0.signature.configuration == stamp.configuration && (scheme.isEmpty || $0.signature.destinations == stamp.destinations) }) {
             let cached = cache.remove(at: index); cache.append(cached)
             ResourceTrace.event("Build discovery cache hit"); return cached.value
         }

@@ -35,9 +35,8 @@ public enum MimicAction: String, Codable, CaseIterable, Sendable {
     /// Legacy values remain decodable; restored history is preserved by HistoryStore.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer(), value = try container.decode(String.self)
-        if value == "celestial" { self = .generation }
-        else if value == "babylon" { self = .localization }
-        else if let action = Self(rawValue: value) { self = action }
+        let aliases = (decoder.userInfo[ProfileCompatibility.codingKey] as? ProfileCompatibility)?.actions ?? [:]
+        if let action = Self(rawValue: aliases[value] ?? value) { self = action }
         else { throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown action") }
     }
     public var isSensitive: Bool { self == .bootstrap || self == .fullCleanup }

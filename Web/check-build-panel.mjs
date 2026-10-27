@@ -7,7 +7,7 @@ const {chromium}=createRequire(import.meta.url)(process.env.MIMIC_PLAYWRIGHT_MOD
 const html=await readFile(new URL('../Sources/MimicMCP/Resources/panel.html',import.meta.url));
 const server=createServer((_,response)=>{response.setHeader('Content-Type','text/html');response.end(html);});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-const output='/private/tmp/Mimic-build-card-acceptance-20261009';await mkdir(output,{recursive:true});
+const output='/private/tmp/Mimic-build-card-acceptance-20261023';await mkdir(output,{recursive:true});
 const browser=await chromium.launch({headless:true,executablePath:process.env.MIMIC_CHROME_EXECUTABLE});
 try{
  const page=await browser.newPage({viewport:{width:520,height:1100},reducedMotion:'reduce'});
@@ -16,107 +16,35 @@ try{
  await page.waitForFunction(()=>!!window.mimicBuildFixture);
  const card=page.locator('[data-block="builds"]');
  const mode=mode=>page.evaluate(mode=>window.mimicBuildFixture.mode(mode),mode);
- const sameHeight=async()=>{
-  const result=await page.evaluate(()=>{
-   const cards=[...document.querySelectorAll('.panel-block:not(.expanded)')].filter(card=>card.offsetParent!==null);
-   const expected=160*Number(getComputedStyle(document.documentElement).getPropertyValue('--bootstrap-text-scale')||1);
-   const builds=document.querySelector('[data-block="builds"]'),bounds=builds.getBoundingClientRect();
-   const controls=[...builds.querySelectorAll('[data-build-action],[data-build-cancel],[role=progressbar],select')].filter(control=>control.offsetParent!==null);
-   return {expected,heights:cards.map(card=>card.getBoundingClientRect().height),escaped:controls.filter(control=>{const r=control.getBoundingClientRect();return r.bottom>bounds.bottom+1||r.top<bounds.top-1||r.right>bounds.right+1||r.left<bounds.left-1;}).map(control=>control.outerHTML)};
-  });
-  assert(result.heights.every(height=>Math.abs(height-result.expected)<1),JSON.stringify(result));
-  assert.deepEqual(result.escaped,[],'all controls must fit the shared tile height');
+ const task=(status,stage='compilation',count=null)=>page.evaluate(([status,stage,count])=>window.mimicBuildFixture.task(status,stage,count),[status,stage,count]);
+ const fit=async()=>{
+  const result=await card.evaluate(card=>{
+   const bounds=card.getBoundingClientRect(),controls=[...card.querySelectorAll('[data-build-action],[data-build-cancel],[role=progressbar],select')].filter(n=>n.offsetParent!==null);
+   const scale=Number(getComputedStyle(document.documentElement).getPropertyValue('--bootstrap-text-scale')||1);
+   return{height:bounds.height,expected:160*scale,escaped:controls.filter(n=>{const r=n.getBoundingClientRect();return r.bottom>bounds.bottom+1||r.top<bounds.top-1||r.right>bounds.right+1||r.left<bounds.left-1;}).map(n=>n.outerHTML)};
+  });assert(Math.abs(result.height-result.expected)<1,JSON.stringify(result));assert.deepEqual(result.escaped,[]);
  };
- await mode('mini');await card.locator('[data-build-action="run"]').waitFor();
- await page.waitForFunction(()=>window.mimicBuildFixture.draft().scheme==='Fixture');await page.waitForTimeout(300);
- assert.equal(await card.locator('[data-build-action]').count(),3);
- await card.locator('[data-build-action="run"]').evaluate(button=>{button.click();button.click();});
+ await mode('mini');await page.waitForFunction(()=>window.mimicBuildFixture.draft().testTarget==='FixtureTests');
+ assert.equal(await card.getByRole('searchbox').count(),0);assert.equal(await card.locator('[data-catalogue-load]').count(),0);
+ assert.equal(await card.locator('select[data-build-field=testTarget]').inputValue(),'FixtureTests');
+ await card.locator('[data-build-action=tests]').evaluate(b=>{b.click();b.click();});
  await page.waitForFunction(()=>window.mimicBuildFixture.calls().length===1);
- assert.equal((await page.evaluate(()=>window.mimicBuildFixture.calls()))[0].operation,'run');
- assert(!await card.evaluate(card=>card.classList.contains('expanded')));
- await sameHeight();
- await page.evaluate(()=>window.mimicBuildFixture.task('running','installation',1));
- assert.equal(await card.locator('[role="progressbar"]').getAttribute('aria-valuenow'),'33');
- assert(await card.locator('[data-build-action="run"]').isDisabled());
- assert(!await card.locator('[data-build-action="run"]').isVisible());await sameHeight();
- await card.locator('[data-build-cancel]').click();await page.waitForTimeout(100);
- assert(!await card.evaluate(card=>card.classList.contains('expanded')));
- await page.evaluate(()=>window.mimicBuildFixture.empty());await mode('full');
- await card.locator('[data-build-action="tests"]').focus();await card.locator('[data-build-action="tests"]').press('Enter');
- const popup=page.locator('.build-popover:popover-open');await popup.waitFor();
- assert.equal((await page.evaluate(()=>window.mimicBuildFixture.calls())).length,1,'opening catalogue does not submit');
- await popup.locator('[data-catalogue-load]').click();await page.waitForFunction(()=>window.mimicBuildFixture.calls().length===2);
- assert.equal((await page.evaluate(()=>window.mimicBuildFixture.calls()))[1].operation,'catalogue');
- await page.evaluate(()=>window.mimicBuildFixture.task('succeeded','catalogue'));
- await popup.getByLabel('testOne()',{exact:true}).waitFor();
- await popup.getByLabel('testOne()',{exact:true}).check();
- await popup.getByRole('searchbox').fill('Another');assert.equal(await popup.locator('.build-test-row').count(),1);
- await popup.getByLabel('testAnother()',{exact:true}).check();await popup.getByRole('searchbox').fill('');
- assert(await popup.getByLabel('testOne()',{exact:true}).isChecked());
- await page.screenshot({path:output+'/test-picker-light.png'});
- await popup.locator('[data-tests-start]').click();await page.waitForFunction(()=>window.mimicBuildFixture.calls().length===3);
- const selected=(await page.evaluate(()=>window.mimicBuildFixture.calls()))[2];
- assert.equal(selected.operation,'tests');assert.deepEqual(selected.parameters.testIdentifiers,['FixtureTests/Checkout/testOne()','FixtureTests/Other/testAnother()']);
- assert(!await card.evaluate(card=>card.classList.contains('expanded')));
- await page.evaluate(()=>window.mimicBuildFixture.task('succeeded'));
- for(const width of [520,360,260])for(const theme of ['light','dark']){
-  await page.setViewportSize({width,height:1100});await page.emulateMedia({colorScheme:theme,contrast:'more',reducedMotion:'reduce'});await mode(width===520?'full':'mini');
-  assert(await card.locator('[data-build-action="run"]').isVisible());
-  const overflow=await card.evaluate(card=>card.scrollWidth>card.clientWidth+1);assert(!overflow,`overflow at ${width}/${theme}`);
-  await sameHeight();
-  await card.screenshot({path:output+`/${width}-${theme}.png`});
+ const call=(await page.evaluate(()=>window.mimicBuildFixture.calls()))[0];assert.equal(call.operation,'tests');assert.equal(call.parameters.testTarget,'FixtureTests');assert.deepEqual(call.parameters.testIdentifiers,[]);assert.equal(call.parameters.backend,'cli');
+ await task('running','compilation');assert(!await card.locator('[data-build-action=tests]').isVisible());assert(await card.getByRole('progressbar').isVisible());await fit();
+ await task('succeeded');assert(await card.locator('[data-build-action=tests]').isVisible());assert(!await card.getByRole('progressbar').isVisible());
+ await task('failed');assert(await card.getByRole('progressbar').isVisible());assert(!await card.locator('[data-build-action=tests]').isVisible());
+ await card.locator('.build-current-work').press('Enter');await page.waitForFunction(()=>document.querySelector('[data-block="builds"] [data-build-action=tests]')?.offsetParent!==null);
+ assert(!await card.getByRole('progressbar').isVisible());
+ await page.evaluate(()=>window.mimicBuildFixture.empty());await mode('full');await card.locator('[data-build-action=tests]').click();await task('running','installation',1);
+ assert.equal(await card.getByRole('progressbar').getAttribute('aria-valuenow'),'33');
+ const widths=await card.evaluate(card=>({bar:card.querySelector('[role=progressbar]').getBoundingClientRect().width,content:card.querySelector('.build-card-controls').getBoundingClientRect().width}));assert(widths.bar<=widths.content/2+0.5,JSON.stringify(widths));
+ await card.locator('[data-build-cancel]').click();await page.waitForTimeout(100);assert(await card.locator('[data-build-action=tests]').isVisible());
+ for(const width of [560,520,360,260])for(const theme of ['light','dark']){
+  await page.setViewportSize({width,height:1100});await page.emulateMedia({colorScheme:theme,reducedMotion:'reduce'});await mode(width>=520?'full':'mini');
+  for(const status of ['succeeded','running','cancelled']){await task(status,'compilation');await fit();}
+  assert(!await card.evaluate(n=>n.scrollWidth>n.clientWidth+1));await card.screenshot({path:output+`/B-${width}-${theme}.png`});
  }
- await page.evaluate(()=>document.documentElement.style.setProperty('--bootstrap-text-scale','1.5'));await mode('mini');
- assert(!await card.evaluate(card=>card.scrollWidth>card.clientWidth+1));await sameHeight();await card.screenshot({path:output+'/large-text.png'});
- await page.evaluate(()=>document.documentElement.style.removeProperty('--bootstrap-text-scale'));
- for(const width of [520,360,260]){
-  await page.setViewportSize({width,height:1100});await mode(width===520?'full':'mini');
-  for(const status of ['queued','running','failed','succeeded']){await page.evaluate(status=>window.mimicBuildFixture.task(status,'installation',1),status);await sameHeight();}
-  await page.evaluate(()=>window.mimicBuildFixture.empty());await sameHeight();
- }
- await page.setViewportSize({width:520,height:1100});await mode('extended');assert.equal(await card.getByRole('tab').count(),3);
- await card.getByRole('tab',{name:'Тесты',exact:true}).click();assert(await card.locator('[data-tests-start]').isVisible());
- await mode('mini');await card.locator('[data-build-action="run"]').click();await page.waitForTimeout(100);
- await page.evaluate(()=>window.mimicBuildFixture.products());await page.locator('.build-popover:popover-open').getByRole('button',{name:'App2',exact:true}).click();
- await sameHeight();
- assert.equal(await page.evaluate(()=>window.mimicBuildFixture.draft().scheme),'Fixture');
- // Slow catalogue refresh keeps saved actions usable and fills only after completed steps.
- await page.evaluate(()=>{window.mimicBuildFixture.task('succeeded');window.mimicBuildFixture.catalogueProgress('configurations',1,3);});
- await mode('full');await card.locator('.build-full-controls>.quiet').click();
- const catalogue=card.locator('.build-catalogue-progress');await catalogue.waitFor();
- await page.waitForFunction(()=>document.querySelector('[data-block="builds"] .build-catalogue-label')?.textContent==='Настройки проекта');
- assert.equal(await catalogue.locator('.build-catalogue-counter').textContent(),'2/3');
- assert.equal(await catalogue.locator('[role=progressbar]').getAttribute('aria-valuenow'),'1');
- assert.equal(await catalogue.locator('[role=progressbar]').getAttribute('aria-valuemax'),'3');
- assert(await card.locator('[data-build-action="run"]').isEnabled());
- assert(await card.locator('select[data-build-field="scheme"]').isEnabled());
- assert((await catalogue.locator('time').textContent()).startsWith('00:'));
- assert(await page.locator('.build-popover:popover-open .build-catalogue-note').isVisible());
- const fill=await catalogue.locator('.build-progress-fill').getAttribute('style');await page.waitForTimeout(1100);
- assert.equal(await catalogue.locator('.build-progress-fill').getAttribute('style'),fill,'elapsed time cannot advance progress');
- await page.locator('.build-popover:popover-open').press('Escape');
- for(const width of [520,360,260])for(const theme of ['light','dark']){
-  await page.setViewportSize({width,height:1100});await page.emulateMedia({colorScheme:theme});await mode(width===520?'full':'mini');await sameHeight();
-  await card.screenshot({path:output+`/catalogue-${width}-${theme}.png`});
- }
- await page.evaluate(()=>document.documentElement.style.setProperty('--bootstrap-text-scale','1.5'));await sameHeight();
- await card.screenshot({path:output+'/catalogue-large-text.png'});
- await page.evaluate(()=>document.documentElement.style.removeProperty('--bootstrap-text-scale'));
- await page.evaluate(()=>window.mimicBuildFixture.catalogueProgress('destinations',2,3));
- await page.waitForFunction(()=>document.querySelector('[data-block="builds"] .build-catalogue-counter')?.textContent==='3/3');
- assert.equal(await catalogue.locator('[role=progressbar]').getAttribute('aria-valuenow'),'2');
- await mode('extended');assert(await card.locator('.build-settings .build-catalogue-progress').isVisible());
- assert(await card.locator('.build-catalogue-note').isVisible());
- await page.evaluate(()=>window.mimicBuildFixture.catalogueFailure(true));
- await page.waitForFunction(()=>!document.querySelector('[data-block="builds"] .build-catalogue-progress')||document.querySelector('[data-block="builds"] .build-catalogue-progress').hidden);
- assert(await card.locator('.error').last().isVisible());
- await page.evaluate(()=>{window.mimicBuildFixture.catalogueFailure(false);window.mimicBuildFixture.catalogueProgress('schemes',0,3);window.mimicBuildFixture.changeContext();});
- await page.waitForFunction(()=>document.querySelector('[data-block="builds"] .build-catalogue-label')?.textContent==='Схемы');
- assert(await card.locator('select[data-build-field="scheme"]').isDisabled());
- assert((await card.locator('.build-catalogue-note').textContent()).includes('Xcode'));
- await page.evaluate(()=>window.mimicBuildFixture.catalogueProgress(null));
- await page.waitForFunction(()=>document.querySelector('[data-block="builds"] .build-catalogue-progress')?.hidden);
- assert(await card.locator('select[data-build-field="scheme"]').isEnabled());
- assert.equal(await page.locator('.build-popover:popover-open').count(),0);
- assert.deepEqual(errors,[]);console.log('PASS: standalone Mini/Full, progress/cancel, explicit catalogue, exact selection, themes/narrow widths, Extended tabs, product picker, context change');
+ await page.setViewportSize({width:520,height:1100});await page.evaluate(()=>document.documentElement.style.setProperty('--bootstrap-text-scale','1.5'));await mode('full');await task('running');await fit();await page.evaluate(()=>document.documentElement.style.removeProperty('--bootstrap-text-scale'));
+ await task('succeeded');await mode('extended');assert.equal(await card.getByRole('tab').count(),3);await card.getByRole('tab',{name:'Тесты',exact:true}).click();assert.equal(await card.getByRole('searchbox').count(),0);assert.equal(await card.locator('textarea').count(),0);assert(await card.getByText('Окружение',{exact:true}).isVisible());
+ await page.screenshot({path:output+'/B-extended.png'});assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,cases:'target launch, states, failure acknowledgement, progress width, 4 widths, themes, text scaling',screenshots:output}));
 }finally{await browser.close();server.close();}

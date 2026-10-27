@@ -24,8 +24,8 @@ public struct PanelBlockKind: RawRepresentable, Codable, CaseIterable, Hashable,
     public static let ai = Self("ai")
     public static let workItem = Self("workItem")
     public static let generateUI = Self("generateUI")
-    public static let generateSicilia = Self("generateSicilia")
-    public static let generateGalera = Self("generateGalera")
+    public static let generateModule = Self("generateModule")
+    public static let generateFeature = Self("generateFeature")
     public static let localization = Self("localization")
     public static let protocols = Self("protocols")
     public static let format = Self("format")
@@ -34,14 +34,16 @@ public struct PanelBlockKind: RawRepresentable, Codable, CaseIterable, Hashable,
     public static let uiTests = Self("uiTests")
     public static let qualityGates = Self("qualityGates")
     public static let beta = Self("beta")
-    private static let builtinNames = ["bootstrap", "utils", "builds", "ci", "simulators", "ai", "workItem", "generateUI", "generateSicilia", "generateGalera", "localization", "protocols", "format", "fullCleanup", "derivedDataCleanup", "uiTests", "qualityGates", "beta"]
+    private static let builtinNames = ["bootstrap", "utils", "builds", "ci", "simulators", "ai", "workItem", "generateUI", "generateModule", "generateFeature", "localization", "protocols", "format", "fullCleanup", "derivedDataCleanup", "uiTests", "qualityGates", "beta"]
     public static let allCases = builtinNames.map(Self.init)
     public var isCustom: Bool { rawValue.hasPrefix("profile:") }
     public var titleKey: String { "panel.block." + rawValue }
     public var role: ProfileToolRole? { ProfileToolRole(rawValue: rawValue) }
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
-        guard let value = Self(rawValue: try container.decode(String.self)) else { throw PanelLayoutError.invalid }
+        let raw = try container.decode(String.self)
+        let aliases = (decoder.userInfo[ProfileCompatibility.codingKey] as? ProfileCompatibility)?.roles ?? [:]
+        guard let value = Self(rawValue: aliases[raw] ?? raw) else { throw PanelLayoutError.invalid }
         self = value
     }
     public func encode(to encoder: any Encoder) throws { var container = encoder.singleValueContainer(); try container.encode(rawValue) }
@@ -54,7 +56,7 @@ public struct PanelBlockKind: RawRepresentable, Codable, CaseIterable, Hashable,
         case .simulators: "iphone"
         case .ai: "sparkles"
         case .workItem: "doc.text"
-        case .generateUI, .generateSicilia, .generateGalera: "square.stack.3d.up"
+        case .generateUI, .generateModule, .generateFeature: "square.stack.3d.up"
         case .localization: "character.bubble"
         case .protocols: "arrow.triangle.branch"
         case .format: "text.alignleft"
@@ -304,10 +306,11 @@ public struct PanelDragTransaction: Sendable {
 /// Compare-and-save prevents another chat's completed edit from being overwritten by an older draft.
 @MainActor public final class PanelLayoutStore {
     let defaults: UserDefaults
-    public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    public var compatibility: ProfileCompatibility?
+    public init(defaults: UserDefaults = .standard, compatibility: ProfileCompatibility? = nil) { self.defaults = defaults; self.compatibility = compatibility }
     private func key(_ surface: PanelSurface) -> String { "panelLayout." + surface.rawValue }
     public func load(_ surface: PanelSurface) -> PanelLayout {
-        guard let data = defaults.data(forKey: key(surface)), let layout = try? JSONDecoder().decode(PanelLayout.self, from: data),
+        guard let data = defaults.data(forKey: key(surface)), let layout = try? ProfileCompatibility.decoder(compatibility).decode(PanelLayout.self, from: data),
               (try? layout.validate(for: surface)) != nil else { return .standard(for: surface) }
         return layout
     }

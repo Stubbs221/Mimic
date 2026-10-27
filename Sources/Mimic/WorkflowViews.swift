@@ -13,14 +13,14 @@ struct ToolContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let tool = ProjectTool(rawValue: action.rawValue) {
-                Text(text(tool.descriptionKey)).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(model.toolDescription(tool)).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let project = model.project {
                     Label(URL(fileURLWithPath: project.path).lastPathComponent + " · " + project.branch, systemImage: "folder")
                         .mimicFont(.caption).lineLimit(2).mimicHelp(project.path)
                 }
                 if action == .generation { GeneratorForm(model: model) }
                 else {
-                    Text(text(tool.effectsKey(execution: try? model.profileExecution(action)))).mimicFont(.caption).fixedSize(horizontal: false, vertical: true)
+                    Text(model.toolEffects(tool, execution: try? model.profileExecution(action))).mimicFont(.caption).fixedSize(horizontal: false, vertical: true)
                     ReadinessView(model: model, action: action)
                     CommandDisclosure(model: model, action: action)
                     Button(model.busy ? text("run.enqueue") : text("run")) { model.launchTool(tool) }
@@ -74,9 +74,9 @@ struct GeneratorForm: View {
             Surface {
                 VStack(alignment: .leading, spacing: MimicMetrics.medium) {
                     Picker(text("generator.type"), selection: self.$model.generatorKind) {
-                        ForEach(GeneratorKind.allCases, id: \.self) { Text(text("tools.generator." + $0.rawValue)).tag($0) }
-                    }.pickerStyle(.segmented).mimicSegments(selection: $model.generatorKind, options: GeneratorKind.allCases.map { .init(text("tools.generator." + $0.rawValue), $0) })
-                    Text(text(self.model.generatorKind.titleKey + ".description")).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        ForEach(GeneratorKind.allCases, id: \.self) { Text(model.generatorTitle($0)).tag($0) }
+                    }.pickerStyle(.segmented).mimicSegments(selection: $model.generatorKind, options: GeneratorKind.allCases.map { .init(model.generatorTitle($0), $0) })
+                    Text(model.generatorDescription(model.generatorKind)).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Text(text("generator.name")).mimicFont(.caption, weight: .medium)
                     TextField(text("generator.name.placeholder"), text: self.$model.generatorName).textFieldStyle(.roundedBorder).mimicInput().accessibilityLabel(text("generator.name"))
                     Text(text("generator.name.hint")).mimicFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

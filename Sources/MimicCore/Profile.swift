@@ -25,6 +25,7 @@ public struct MimicProfile: Codable, Equatable, Sendable {
     public var simulatorScenarios: [SimulatorScenario]? = nil
     public var panels: [ProfilePanel]? = nil
     public var serviceTools: [ServiceTool]? = nil
+    public var compatibility: ProfileCompatibility? = nil
 }
 
 public struct AppleTarget: Codable, Equatable, Sendable {
@@ -184,6 +185,7 @@ public enum ProfileValidation {
         guard resolved.hasPrefix(root + "/") else { throw ProfileError.path }; return resolved
     }
     public static func validate(_ profile: MimicProfile, files: Set<String>) throws {
+        try profile.compatibility?.validate()
         guard [1, 2].contains(profile.schemaVersion) else { throw ProfileError.schema }
         if profile.schemaVersion == 2 { guard let interface = profile.interface else { throw ProfileError.interface }; try interface.validate(profile: profile) }
         func identifier(_ id: String) -> Bool { id.range(of: #"^[A-Za-z][A-Za-z0-9._-]{0,79}$"#, options: .regularExpression) != nil }
@@ -313,13 +315,21 @@ public struct ProfileStore: Sendable {
     public func active() throws -> ProfileSnapshot? {
         let marker = directory.appendingPathComponent("active.json")
         guard FileManager.default.fileExists(atPath: marker.path) else { return nil }
-        let snapshot = try JSONDecoder().decode(ProfileSnapshot.self, from: Data(contentsOf: marker))
+        let snapshot = try ProfileCompatibility.decoder(activeCompatibility).decode(ProfileSnapshot.self, from: Data(contentsOf: marker))
         try verify(snapshot); return snapshot
     }
     public func verify(_ snapshot: ProfileSnapshot) throws {
         let url = directory.appendingPathComponent(snapshot.revision)
         guard snapshot.directory == url.path, try digest(url) == snapshot.revision,
-              try JSONDecoder().decode(MimicProfile.self, from: Data(contentsOf: url.appendingPathComponent("profile.json"))) == snapshot.profile else { throw ProfileError.revision }
+              try ProfileCompatibility.decoder(snapshot.profile.compatibility ?? activeCompatibility).decode(MimicProfile.self, from: Data(contentsOf: url.appendingPathComponent("profile.json"))) == snapshot.profile else { throw ProfileError.revision }
+    }
+    /// Read only the alias table before decoding a stored snapshot; it cannot supply executable code.
+    private var activeCompatibility: ProfileCompatibility? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("active.json")),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let profile = object["profile"] as? [String: Any], let value = profile["compatibility"],
+              let bytes = try? JSONSerialization.data(withJSONObject: value) else { return nil }
+        return try? JSONDecoder().decode(ProfileCompatibility.self, from: bytes)
     }
     /// Importing only reads and validates bytes. Adapter execution is a later named action.
     public func importArchive(_ source: URL, requireInterface: Bool = false) throws -> ProfileSnapshot {
@@ -353,7 +363,11 @@ public struct ProfileStore: Sendable {
             }
         }
         guard files.contains("profile.json") else { throw ProfileError.archive }
-        let profile = try JSONDecoder().decode(MimicProfile.self, from: Data(contentsOf: staging.appendingPathComponent("profile.json")))
+        let manifest = try Data(contentsOf: staging.appendingPathComponent("profile.json"))
+        let object = try JSONSerialization.jsonObject(with: manifest) as? [String: Any]
+        let aliases = try object?["compatibility"].map { try JSONDecoder().decode(ProfileCompatibility.self, from: JSONSerialization.data(withJSONObject: $0)) }
+        let profile = try ProfileCompatibility.decoder(aliases).decode(MimicProfile.self, from: manifest)
+        try profile.compatibility?.validate()
         try ProfileValidation.validate(profile, files: files)
         if requireInterface { guard profile.schemaVersion == 2, let interface = profile.interface else { throw ProfileError.interface }; try interface.validate(profile: profile) }
         let revision = try digest(staging), destination = directory.appendingPathComponent(revision)

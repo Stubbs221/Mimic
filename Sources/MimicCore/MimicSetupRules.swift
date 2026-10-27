@@ -35,11 +35,6 @@ public enum MimicSetupRules {
             updated.removeSubrange(a.lowerBound..<b.upperBound)
         }
         guard !updated.contains(end) else { throw RuleError.malformedBlock }
-        // The manually installed pilot rule is also ours; migrate only its exact project.
-        if project == "/private/tmp/MimicExample", let a = updated.range(of: "<!-- mimic-auto-open:ios3:start -->") {
-            guard let b = updated.range(of: "<!-- mimic-auto-open:ios3:end -->", range: a.upperBound..<updated.endIndex) else { throw RuleError.malformedBlock }
-            updated.removeSubrange(a.lowerBound..<b.upperBound)
-        }
         if enabled {
             let block = """
             \(start)

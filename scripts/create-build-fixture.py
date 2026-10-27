@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Created by Василий Маслов on 04.10.2026.
-"""Generate a minimal simulator-only workspace for explicit Mimic acceptance. Never bootstraps ios3."""
+"""Generate a minimal simulator-only workspace for explicit Mimic acceptance. Never bootstraps ExampleProject."""
 import plistlib
 import subprocess
 import sys

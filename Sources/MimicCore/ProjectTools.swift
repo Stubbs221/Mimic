@@ -17,7 +17,7 @@ public enum ProjectTool: String, Codable, CaseIterable, Sendable {
     }
     public var roles: [ProfileToolRole] {
         switch self {
-        case .generation: [.generateUI, .generateSicilia, .generateGalera]
+        case .generation: [.generateUI, .generateModule, .generateFeature]
         case .localization: [.localization]
         case .proto: [.protocols]
         case .format: [.format]

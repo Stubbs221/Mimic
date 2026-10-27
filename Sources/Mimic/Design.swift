@@ -287,15 +287,33 @@ struct MimicChrome<Content: View>: View {
     }
 }
 
-/// Scroll edges separate the document from pinned controls, without more glass.
+/// Tile Grid uses the approved permanent B edge; other styles retain system behavior.
 struct MimicScrollEdges: ViewModifier {
+    var gradient: Bool
     private var theme = MimicTheme()
     private var accessibility = MimicAccessibility()
     func body(content: Content) -> some View {
+        systemEdges(content)
+            .overlay(alignment: .top) { edge(.top) }
+            .overlay(alignment: .bottom) { edge(.bottom) }
+    }
+
+    @ViewBuilder private func systemEdges(_ content: Content) -> some View {
         if #available(macOS 26.0, *) {
             content.scrollEdgeEffectStyle(.soft, for: .vertical)
-                .scrollEdgeEffectHidden(theme.retro || self.accessibility.reduceTransparency || self.accessibility.increasedContrast, for: .vertical)
+                .scrollEdgeEffectHidden(gradient || theme.retro || self.accessibility.reduceTransparency || self.accessibility.increasedContrast, for: .vertical)
         } else { content }
+    }
+
+    @ViewBuilder private func edge(_ direction: MimicScrollEdge.Direction) -> some View {
+        if gradient {
+            if accessibility.reduceTransparency || accessibility.increasedContrast {
+                theme.color("line").frame(height: 1).allowsHitTesting(false).accessibilityHidden(true)
+            } else {
+                MimicScrollEdge(direction: direction, color: theme.color("paper"))
+                    .frame(height: MimicScrollEdge.depth).allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }
     }
 }
 

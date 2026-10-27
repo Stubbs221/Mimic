@@ -46,17 +46,17 @@
         }
       },
       {
-        "role": "generateSicilia",
+        "role": "generateModule",
         "actionID": "opaque-5",
         "fields": {
-          "name": "input_generateSicilia_name"
+          "name": "input_generateModule_name"
         }
       },
       {
-        "role": "generateGalera",
+        "role": "generateFeature",
         "actionID": "opaque-6",
         "fields": {
-          "name": "input_generateGalera_name"
+          "name": "input_generateFeature_name"
         }
       },
       {
@@ -323,7 +323,7 @@
       "presentation": "generator",
       "parameters": [
         {
-          "id": "input_generateGalera_name",
+          "id": "input_generateFeature_name",
           "title": "name",
           "kind": "text",
           "defaultValue": "Fixture",
@@ -348,7 +348,7 @@
         {
           "executable": "/usr/bin/printf",
           "arguments": [
-            "{\"files\": [{\"path\": \"generateGalera.swift\", \"exists\": false}], \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+            "{\"files\": [{\"path\": \"generateFeature.swift\", \"exists\": false}], \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
           ],
           "directory": "${checkout}"
         }
@@ -360,7 +360,7 @@
       "presentation": "generator",
       "parameters": [
         {
-          "id": "input_generateSicilia_name",
+          "id": "input_generateModule_name",
           "title": "name",
           "kind": "text",
           "defaultValue": "Fixture",
@@ -385,7 +385,7 @@
         {
           "executable": "/usr/bin/printf",
           "arguments": [
-            "{\"files\": [{\"path\": \"generateSicilia.swift\", \"exists\": false}], \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
+            "{\"files\": [{\"path\": \"generateModule.swift\", \"exists\": false}], \"digest\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}"
           ],
           "directory": "${checkout}"
         }

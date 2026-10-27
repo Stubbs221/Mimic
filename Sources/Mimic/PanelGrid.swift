@@ -26,9 +26,17 @@ import MimicCore
     var layout: PanelLayout { dragPreview ?? draft ?? saved }
     @Published var customPanels: [PanelBlockKind: ProfilePanel] = [:]
     @Published var servicePanels: [PanelBlockKind: ServiceTool] = [:]
-    func title(_ block: PanelBlockKind) -> String { customPanels[block]?.title ?? servicePanels[block]?.title ?? text(block.titleKey) }
+    @Published private(set) var profileTitles: [PanelBlockKind: String] = [:]
+    func title(_ block: PanelBlockKind) -> String { customPanels[block]?.title ?? servicePanels[block]?.title ?? profileTitles[block] ?? text(block.titleKey) }
     func configure(profile: ProfileSnapshot?, checkout: String?) {
         guard !editing, dragging == nil else { return }
+        store.compatibility = profile?.profile.compatibility
+        profileTitles = Dictionary(uniqueKeysWithValues: PanelBlockKind.allCases.compactMap { block in
+            guard let role = block.role else { return nil }
+            let title = role.generator.flatMap { profile?.profile.interface?.generatorTitles?[$0.rawValue] }
+                ?? ProjectTool.allCases.first(where: { $0.roles.contains(role) }).flatMap { profile?.profile.interface?.toolTitles?[$0.rawValue] }
+            return title.map { (block, $0) }
+        })
         let panels = profile?.profile.panels(checkout: checkout) ?? []
         customPanels = Dictionary(uniqueKeysWithValues: panels.map { ($0.block(profileID: profile!.id), $0) })
         if let profile, let checkout { saved = store.introduce(panels, profileID: profile.id, checkout: checkout, surface: .desktop) }
@@ -39,7 +47,7 @@ import MimicCore
     }
     var catalog: [PanelBlockKind] { PanelBlockKind.catalog(for: .desktop) + servicePanels.keys.sorted { $0.rawValue < $1.rawValue } + customPanels.keys.sorted { $0.rawValue < $1.rawValue } }
     var availableBlocks: [PanelBlockKind] { catalog.filter { !saved.blocks.contains($0) } }
-    init(defaults: UserDefaults) { store = PanelLayoutStore(defaults: defaults); saved = store.prepareForPresentation(.desktop) }
+    init(defaults: UserDefaults, compatibility: ProfileCompatibility? = nil) { store = PanelLayoutStore(defaults: defaults, compatibility: compatibility); saved = store.prepareForPresentation(.desktop) }
     func begin() { cancelPresentation(); saved = store.load(.desktop); draft = saved; expanded = nil; message = "" }
     func cancel() { cancelDrag(); draft = nil; message = "" }
     func finish() {
@@ -434,7 +442,7 @@ struct PanelGrid: View {
             .modifier(PanelCardBackground(block: block))
             .overlay(alignment: .top) {
                 if theme.retro {
-                    NativeRetroTitle(block: block, expanded: expanded) { open(block) }
+                    NativeRetroTitle(block: block, title: model.panelLayout.title(block), expanded: expanded) { open(block) }
                         .padding(theme.appearance == .windows95 ? EdgeInsets(top: 3, leading: 3, bottom: 0, trailing: 3) : EdgeInsets())
                 }
             }
@@ -621,6 +629,7 @@ struct PanelGrid: View {
     }
     private func open(_ block: PanelBlockKind) {
         guard !layout.editing, layout.dragging == nil else { return }
+        if block == .builds, let record = model.builds.panelActivity, !record.status.isPending { model.showBuildResult(record.id); return }
         let policy = MimicMotionPolicy(source: .current, reduceMotion: model.motionSettings.nativeReduceMotion, multiplier: model.motionSettings.multiplier, retro: theme.retro)
         withAnimation(policy.moves ? policy.animation(.disclosure) : nil) { layout.open(block) }
         if block == .ci { model.clearCIInspection() }

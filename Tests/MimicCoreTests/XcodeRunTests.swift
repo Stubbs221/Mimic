@@ -36,32 +36,32 @@ struct XcodeRunTests {
         func entry(_ title: String, active: Bool = false, simulator: Bool = true, platform: String = "com.apple.platform.iphonesimulator") -> BridgeValue {
             .object(["displayTitle": .string(title), "isActive": .bool(active), "isSimulator": .bool(simulator), "isGenericDevice": .bool(false), "platformIdentifier": .string(platform)])
         }
-        func list(_ entries: [BridgeValue], scheme: String = "ivi.ru", active: String = "QA iPhone") -> BridgeValue {
+        func list(_ entries: [BridgeValue], scheme: String = "ExampleApp", active: String = "QA iPhone") -> BridgeValue {
             .object(["activeSchemeName": .string(scheme), "activeDestinationDisplayTitle": .string(active), "destinations": .array(entries)])
         }
         let selected = list([entry("QA iPhone", active: true), entry("UI iPhone")])
-        #expect(XcodeRunVerification.destinationMatches(selected, scheme: "ivi.ru", title: "QA iPhone", isError: false))
-        #expect(!XcodeRunVerification.destinationMatches(selected, scheme: "ivi.ru", title: "QA iPhone", isError: true))
+        #expect(XcodeRunVerification.destinationMatches(selected, scheme: "ExampleApp", title: "QA iPhone", isError: false))
+        #expect(!XcodeRunVerification.destinationMatches(selected, scheme: "ExampleApp", title: "QA iPhone", isError: true))
         #expect(!XcodeRunVerification.destinationMatches(selected, scheme: "Other", title: "QA iPhone", isError: false))
-        #expect(!XcodeRunVerification.destinationMatches(list([entry("QA iPhone"), entry("UI iPhone", active: true)], active: "UI iPhone"), scheme: "ivi.ru", title: "QA iPhone", isError: false))
-        #expect(!XcodeRunVerification.destinationMatches(list([entry("QA iPhone", active: true), entry("QA iPhone")]), scheme: "ivi.ru", title: "QA iPhone", isError: false))
-        #expect(!XcodeRunVerification.destinationMatches(list([entry("QA iPhone", active: true, simulator: false, platform: "com.apple.platform.iphoneos")]), scheme: "ivi.ru", title: "QA iPhone", isError: false))
+        #expect(!XcodeRunVerification.destinationMatches(list([entry("QA iPhone"), entry("UI iPhone", active: true)], active: "UI iPhone"), scheme: "ExampleApp", title: "QA iPhone", isError: false))
+        #expect(!XcodeRunVerification.destinationMatches(list([entry("QA iPhone", active: true), entry("QA iPhone")]), scheme: "ExampleApp", title: "QA iPhone", isError: false))
+        #expect(!XcodeRunVerification.destinationMatches(list([entry("QA iPhone", active: true, simulator: false, platform: "com.apple.platform.iphoneos")]), scheme: "ExampleApp", title: "QA iPhone", isError: false))
     }
     @Test func buildIssuesKeepXcodeLocationsAndMessages() {
         let entries: [BridgeValue] = [
-            .object(["classification": .string("error"), "message": .string("Module file 'Foundation.pcm' not found"), "filePath": .string("/ios3/resource_bundle_accessor.h"), "lineNumber": .number(3)]),
+            .object(["classification": .string("error"), "message": .string("Module file 'Foundation.pcm' not found"), "filePath": .string("/ExampleProject/resource_bundle_accessor.h"), "lineNumber": .number(3)]),
             .object(["classification": .string("warning"), "message": .string("Deprecated")]),
         ]
-        #expect(XcodeRunVerification.issues(entries) == "/ios3/resource_bundle_accessor.h:3: error: Module file 'Foundation.pcm' not found\nwarning: Deprecated")
+        #expect(XcodeRunVerification.issues(entries) == "/ExampleProject/resource_bundle_accessor.h:3: error: Module file 'Foundation.pcm' not found\nwarning: Deprecated")
         #expect(XcodeRunVerification.issues(nil).isEmpty)
     }
     @Test func launchedProcessMustLiveInTheExactSimulatorContainer() {
         let device = "56631DFB-BA54-40C2-BF6C-CC7B4F0A31E5"
-        let path = "/Users/fixture/Library/Developer/CoreSimulator/Devices/\(device)/data/Containers/Bundle/Application/0B5D/ivi.app/ivi"
+        let path = "/Users/fixture/Library/Developer/CoreSimulator/Devices/\(device)/data/Containers/Bundle/Application/0B5D/ExampleApp.app/ExampleApp"
         #expect(XcodeRunVerification.processBelongsToSimulator(executablePath: path, deviceID: device))
         #expect(XcodeRunVerification.processBelongsToSimulator(executablePath: path, deviceID: device.lowercased()))
         #expect(!XcodeRunVerification.processBelongsToSimulator(executablePath: path.replacingOccurrences(of: device, with: "EC009D1B-10EF-4BF0-8789-988231F3FEB6"), deviceID: device))
-        #expect(!XcodeRunVerification.processBelongsToSimulator(executablePath: "/Applications/ivi.app/ivi", deviceID: device))
+        #expect(!XcodeRunVerification.processBelongsToSimulator(executablePath: "/Applications/ExampleApp.app/ExampleApp", deviceID: device))
         #expect(!XcodeRunVerification.processBelongsToSimulator(executablePath: path, deviceID: "QA iPhone"))
     }
     @Test func nativeRunRetainsExactSchemeAndSimulatorButDoesNotPermitOtherMCPIntents() throws {
@@ -106,7 +106,24 @@ struct XcodeRunTests {
         parameters.configuration = "Release"
         #expect(try path(first, parameters) != original)
         #expect(original.path.hasPrefix(root.path + "/CompilationCache/"))
-        parameters.operation = .test
+        parameters.backend = .xcodeMCP
         #expect(throws: BuildError.arguments) { try path(first, parameters) }
+    }
+    @Test func buildEnumerationAndTestsShareIncrementalStorage() throws {
+        let root = URL(fileURLWithPath: "/fixture/History")
+        let project = ProjectContext(path: "/fixture/Checkout", branch: "main", commit: "one", appleTarget: .init(path: "App.xcodeproj"))
+        var parameters = BuildParameters(scheme: "App", destinationID: UUID().uuidString)
+        func path() throws -> URL {
+            try BuildCompilationCache.directory(root: root, project: project, developer: "/fixture/Developer", parameters: parameters, profileRevision: "profile")
+        }
+        let build = try path()
+        parameters.intent = .catalogue; parameters.testPlan = "UnitTests"
+        #expect(try path() == build)
+        parameters.intent = nil; parameters.operation = .test; parameters.testIdentifiers = ["AppTests/Checkout/testOne()"]
+        #expect(try path() == build)
+        parameters.testIdentifiers = ["AppTests/Checkout/testTwo()"]
+        #expect(try path() == build)
+        parameters.intent = .cleanup
+        #expect(throws: BuildError.arguments) { try path() }
     }
 }

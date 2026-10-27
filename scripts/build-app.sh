@@ -94,7 +94,9 @@ cp "$PRODUCTS/MimicMCP" "$APP/Contents/Helpers/MimicMCP"
 cp "$PRODUCTS/MimicCLI" "$APP/Contents/Helpers/MimicCLI"
 cp "$PRODUCTS/SimulatorVideoHost" "$APP/Contents/Helpers/SimulatorVideoHost"
 cp "$PRODUCTS/SimulatorInputHost" "$APP/Contents/Helpers/SimulatorInputHost"
-for resource_name in Mimic_Mimic Mimic_MimicCore Mimic_MimicMCP SwiftTerm_SwiftTerm ZIPFoundation_ZIPFoundation; do
+# SwiftPM may leave deleted resources in an incremental product bundle. Stage our declared files only.
+python3 "$PWD/scripts/check-packaged-resources.py" --sources "$PWD" --stage-products "$PRODUCTS" --destination "$APP/Contents/Resources"
+for resource_name in SwiftTerm_SwiftTerm ZIPFoundation_ZIPFoundation; do
   resource="$PRODUCTS/$resource_name.bundle"
   [ -d "$resource" ] || continue
   cp -R "$resource" "$APP/Contents/Resources/"

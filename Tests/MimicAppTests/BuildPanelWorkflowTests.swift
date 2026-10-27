@@ -44,7 +44,7 @@ import MimicCore
             return command("printf '%s\\n' \"$1\" >> \"$2\"; " + (delay == stage ? "sleep 30; " : "") + "exit $3", [operation, root.appendingPathComponent("calls").path, failure == stage ? "7" : "0"])
         }, discover: { _, _, _, _, _ in
             var catalogue = BuildCatalogue(); catalogue.schemes = ["Fixture"]; catalogue.configurations = ["Debug"]
-            catalogue.testPlans = plans
+            catalogue.testPlans = plans; catalogue.testTargets = [.init(name: "FixtureTests", testPlan: plans.first ?? "")]
             catalogue.destinations = [.init(id: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", name: "Fixture iPhone")]; return catalogue
         })
         let project = project; builds.currentProject = { project }
@@ -138,17 +138,22 @@ import MimicCore
         defer { model.stopAndExit() }
         model.projects = [fixture.project]; model.selectedProjectPath = fixture.project.path; fixture.builds.schedule = { }
         try PanelWorkspaceStore(defaults: fixture.defaults).save(.init(checkout: fixture.project.path), for: "fixture-chat")
-        let integration = MimicIntegration(model: model, defaults: fixture.defaults)
+        let discovery = BuildDiscovery(inspect: { _, _, _ in
+            var catalogue = BuildCatalogue(); catalogue.schemes = ["Fixture"]; catalogue.configurations = ["Debug"]
+            catalogue.destinations = [.init(id: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", name: "Fixture iPhone")]
+            catalogue.testTargets = [.init(name: "FixtureTests")]; return catalogue
+        })
+        let integration = MimicIntegration(model: model, defaults: fixture.defaults, discovery: discovery)
         let context = MimicIntegration.context(fixture.project)
-        var parameters = fixture.parameters; parameters.intent = nil; parameters.testIdentifiers = ["FixtureTests/Checkout/testTwo()"]
+        var parameters = fixture.parameters; parameters.intent = nil; parameters.testTarget = "FixtureTests"
         var fields = try #require(BridgeValue.encode(parameters).object); fields["developerDirectory"] = .string("/fixture/Developer")
         var payload: [String: BridgeValue] = ["context": context, "operation": .string("save"), "parameters": .object(fields), "requestID": .string(""), "activityID": .string(""), "productID": .string("")]
         func call() async throws -> BridgeValue { try await integration.handle(.init(method: "panel_build_control", parameters: payload, threadID: "fixture-chat")) }
         _ = try await call(); payload["operation"] = .string("get"); payload["parameters"] = .object([:])
-        let saved = try await call(); #expect(saved["draft"]["testIdentifiers"] == .array([.string("FixtureTests/Checkout/testTwo()")]))
+        let saved = try await call(); #expect(saved["draft"]["testTarget"] == .string("FixtureTests"))
         let id = UUID(); payload["parameters"] = .object(fields); payload["operation"] = .string("tests"); payload["requestID"] = .string(id.uuidString)
         _ = try await call(); _ = try await call()
-        #expect(fixture.builds.records.count == 1); #expect(fixture.builds.records[0].parameters.testIdentifiers == parameters.testIdentifiers)
+        #expect(fixture.builds.records.count == 1); #expect(fixture.builds.records[0].parameters.testTarget == "FixtureTests"); #expect(fixture.builds.records[0].parameters.testIdentifiers.isEmpty)
         payload["requestID"] = .string(UUID().uuidString)
         await #expect(throws: BuildError.capacity) { try await call() }
         fixture.builds.cancel(id)
@@ -156,14 +161,16 @@ import MimicCore
         await #expect(throws: BuildError.context) { try await call() }
         #expect(fixture.builds.records.count == 1)
     }
-    @Test func compatibleTestPlanAndMarksSurviveOpeningBuildCard() async throws {
+    @Test func targetSelectionSurvivesOpeningBuildCardAndResolvesItsPlan() async throws {
         let fixture = try PanelBuildFixture(plans: ["Selected", "Other"]); defer { fixture.cleanup() }
         var parameters = fixture.parameters; parameters.intent = nil; parameters.testPlan = "Selected"; parameters.testIdentifiers = ["FixtureTests/Checkout/testOne()"]
         fixture.builds.savePanelDraft(parameters, project: fixture.project, developer: "/fixture/Developer")
         await fixture.builds.restoreDraft(project: fixture.project); await fixture.builds.refreshCatalogue(project: fixture.project)
         #expect(fixture.builds.draft.testPlan == "Selected"); #expect(fixture.builds.draft.testIdentifiers == parameters.testIdentifiers)
         #expect(fixture.builds.testsCompatible)
-        fixture.builds.draft.testPlan = ""; #expect(!fixture.builds.testsCompatible)
+        fixture.builds.draft.testPlan = ""; #expect(fixture.builds.testsCompatible)
+        #expect(fixture.builds.draftFor(.test).testPlan == "Selected")
+        fixture.builds.draft.testTarget = "RemovedTests"; #expect(!fixture.builds.testsCompatible)
     }
     @Test func privateRunUsesXcodeMCPAndRetainsTheSelectedSimulatorOnRetry() async throws {
         let fixture = try PanelBuildFixture(); defer { fixture.cleanup() }
@@ -188,11 +195,99 @@ import MimicCore
     @Test func unverifiedPreparationIsNeverReused() async throws {
         let fixture = try PanelBuildFixture(); defer { fixture.cleanup() }
         var parameters = fixture.parameters; parameters.intent = .catalogue
-        _ = try await fixture.run(parameters); try await fixture.wait { !fixture.builds.busy }
+        let catalogue = try await fixture.run(parameters); try await fixture.wait { !fixture.builds.busy }
         parameters.intent = nil; parameters.operation = .test; parameters.testIdentifiers = ["FixtureTests/Checkout/testTwo()"]
         let record = try await fixture.builds.submit(id: UUID(), project: fixture.project, parameters: parameters, source: "fixture")
         #expect(record.preparedDerivedDataPath == nil)
-        let command = try parameters.command(project: fixture.project, derivedDataPath: record.preparedDerivedDataPath)
-        #expect(!command.arguments.contains("-derivedDataPath")); #expect(command.arguments.filter { $0.hasPrefix("-only-testing:") } == ["-only-testing:FixtureTests/Checkout/testTwo()"])
+        // Compiler products can be reused without treating an unverified catalogue as test evidence.
+        #expect(record.compilationDerivedDataPath != nil)
+        #expect(record.compilationDerivedDataPath == fixture.builds.activity(catalogue)?.compilationDerivedDataPath)
+        let command = try parameters.command(project: fixture.project, derivedDataPath: record.compilationDerivedDataPath)
+        #expect(command.arguments.contains("-derivedDataPath")); #expect(!command.arguments.contains("test-without-building"))
+        #expect(command.arguments.filter { $0.hasPrefix("-only-testing:") } == ["-only-testing:FixtureTests/Checkout/testTwo()"])
     }
+    @Test func compactFailureSurvivesSuccessRestartAndOnlyItsOwnDetailsClearIt() async throws {
+        let fixture = try PanelBuildFixture(failure: .catalogue); defer { fixture.cleanup() }
+        var parameters = fixture.parameters; parameters.intent = .catalogue
+        let failed = try await fixture.run(parameters); try await fixture.wait { !fixture.builds.busy }
+        #expect(fixture.builds.panelActivity?.id == failed)
+        parameters.intent = nil
+        let succeeded = try await fixture.run(parameters); try await fixture.wait { !fixture.builds.busy }
+        #expect(fixture.builds.activity(succeeded)?.status == .succeeded)
+        #expect(fixture.builds.panelActivity?.id == failed)
+        fixture.builds.markResultViewed(succeeded)
+        #expect(fixture.builds.panelActivity?.id == failed)
+        let reloaded = BuildCoordinator(directory: fixture.root, helper: URL(fileURLWithPath: "/missing"), defaults: fixture.defaults)
+        defer { reloaded.stop() }
+        reloaded.currentProject = { fixture.project }
+        #expect(reloaded.panelActivity?.id == failed)
+        reloaded.markResultViewed(failed)
+        #expect(reloaded.panelActivity == nil)
+        #expect(fixture.builds.panelActivity == nil)
+        #expect(fixture.builds.activity(failed)?.status == .failed)
+    }
+    @Test func viewingUnknownNeverReleasesItsQueueAndCancelledIsIdle() throws {
+        let fixture = try PanelBuildFixture(); defer { fixture.cleanup() }
+        var unknown = BuildActivity(id: UUID(), project: fixture.project, parameters: fixture.parameters, source: "fixture")
+        unknown.status = .unknown; unknown.queueReleased = false
+        try BuildHistoryStore(directory: fixture.root).save([unknown])
+        let reloaded = BuildCoordinator(directory: fixture.root, helper: URL(fileURLWithPath: "/missing"), defaults: fixture.defaults)
+        reloaded.currentProject = { fixture.project }; defer { reloaded.stop() }
+        reloaded.markResultViewed(unknown.id)
+        #expect(reloaded.panelActivity?.id == unknown.id)
+        #expect(reloaded.panelBusy && reloaded.busy)
+        #expect(reloaded.activity(unknown.id)?.queueReleased == false)
+        unknown.status = .cancelled
+        try BuildHistoryStore(directory: fixture.root).save([unknown])
+        let cancelled = BuildCoordinator(directory: fixture.root, helper: URL(fileURLWithPath: "/missing"), defaults: fixture.defaults)
+        cancelled.currentProject = { fixture.project }; defer { cancelled.stop() }
+        #expect(cancelled.panelActivity == nil)
+    }
+
+    @Test func rendersTargetCardsWithHeaderAndBoundedProgress() async throws {
+        let fixture = try PanelBuildFixture(failure: .catalogue); defer { fixture.cleanup() }
+        let model = TaskCoordinator(directory: fixture.root, buildCoordinator: fixture.builds, defaults: fixture.defaults)
+        model.projects = [fixture.project]; model.selectedProjectPath = fixture.project.path
+        defer { model.stopAndExit() }
+        await fixture.builds.restoreDraft(project: fixture.project)
+        await fixture.builds.refreshCatalogue(project: fixture.project, includeTestPlans: true)
+        fixture.builds.draft = fixture.parameters; fixture.builds.draft.testTarget = "FixtureTests"; fixture.builds.saveDraft(project: fixture.project)
+        let output = URL(fileURLWithPath: "/private/tmp/MimicBuildCards-20261023")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        func render(_ state: String) async throws {
+            for full in [false, true] { for dark in [false, true] {
+                let width: CGFloat = full ? 488 : 238
+                let view = VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) { Image(systemName: "hammer"); Text("Сборки и тесты").font(.system(size: 13, weight: .semibold)); Spacer() }.frame(height: 20)
+                    BuildCardView(model: model, builds: fixture.builds, full: full)
+                }.padding(12).frame(width: width, height: 160).background(dark ? Color.black : Color.white).environment(\.colorScheme, dark ? .dark : .light).environment(\.mimicPanelAppearance, .tileGrid)
+                let host = NSHostingView(rootView: view)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 160), styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+                try await Task.sleep(for: .milliseconds(100))
+                host.layoutSubtreeIfNeeded()
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                let data = try #require(bitmap.representation(using: .png, properties: [:]))
+                window.orderOut(nil); window.close()
+                try data.write(to: output.appendingPathComponent(state + "-" + (full ? "full" : "mini") + "-" + (dark ? "dark" : "light") + ".png"))
+            } }
+        }
+        try await render("idle")
+        var params = fixture.parameters; params.intent = .catalogue
+        _ = try await fixture.run(params); try await fixture.wait { !fixture.builds.busy }
+        try await render("failed")
+        #expect(fixture.builds.panelActivity?.status == .failed)
+    }
+
+    @Test func targetWithExitZeroButNoObservedTestsRetainsFailure() async throws {
+        let fixture = try PanelBuildFixture(); defer { fixture.cleanup() }
+        var parameters = fixture.parameters; parameters.intent = nil; parameters.operation = .test; parameters.testTarget = "FixtureTests"
+        let id = try await fixture.run(parameters); try await fixture.wait { !fixture.builds.busy }
+        #expect(fixture.builds.activity(id)?.exitCode == 0)
+        #expect(fixture.builds.activity(id)?.status == .failed)
+        #expect(fixture.builds.activity(id)?.errorCode == "testsUnverified")
+        #expect(fixture.builds.panelActivity?.id == id)
+    }
+
 }

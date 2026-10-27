@@ -97,7 +97,7 @@ import MimicCore
     /// Real native snapshots exercise bounded chrome and overlays with disposable data and no admitted work.
     @Test func b2ChromeRendersLongBranchEmptyCatalogRemovalAndLargeText() async throws {
         let suite = "PanelB2Renders-" + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(suite).appendingPathComponent("ios3")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(suite).appendingPathComponent("ExampleProject")
         let model = TaskCoordinator(directory: root, defaults: defaults), layout = model.panelLayout
         defer { model.records = []; model.stopAndExit(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
         model.projects = [.init(path: root.path, branch: "feature/vmaslov/IOS-20658-another-one-svpk-nav-issue")]; model.selectedProjectPath = root.path

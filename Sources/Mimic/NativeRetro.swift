@@ -206,6 +206,7 @@ struct NativeRetroArtwork: NSViewRepresentable {
 
 struct NativeRetroTitle: View {
     let block: PanelBlockKind
+    let title: String
     let expanded: Bool
     let action: () -> Void
     private var theme = MimicTheme()
@@ -216,13 +217,13 @@ struct NativeRetroTitle: View {
             if let image = NativeRetro.image(NativeRetro.icon(block), appearance: theme.appearance) {
                 Image(nsImage: image).interpolation(.none).frame(width: 16, height: 16).accessibilityHidden(true)
             }
-            Text(text(block.titleKey)).font(Font(NativeRetro.font(theme.appearance, role: .heading, bold: true, scale: textScale)))
-                .foregroundStyle(.white).lineLimit(1).mimicHelp(text(block.titleKey))
+            Text(title).font(Font(NativeRetro.font(theme.appearance, role: .heading, bold: true, scale: textScale)))
+                .foregroundStyle(.white).lineLimit(1).mimicHelp(title)
                 .shadow(color: xp ? Color(nsColor: NativeRetro.rgb(0x0f0f8a)) : .clear, radius: 0, x: 1, y: 1)
             Spacer(minLength: 0)
             Button(action: action) { Color.clear.frame(width: xp ? 21 : 16, height: xp ? 21 : 14) }
                 .buttonStyle(NativeRetroPrimitiveButtonStyle(height: xp ? 21 : 14, caption: expanded ? "restore" : "maximize"))
-                .accessibilityLabel(text(expanded ? "panel.collapsed" : "panel.expanded") + ": " + text(block.titleKey))
+                .accessibilityLabel(text(expanded ? "panel.collapsed" : "panel.expanded") + ": " + title)
                 .accessibilityIdentifier("panel.caption." + block.rawValue).background(PanelControlRegion())
         }.padding(.leading, xp ? 7 : 5).padding(.trailing, 3)
             .frame(height: NativeRetro.titleHeight(theme.appearance) * textScale)

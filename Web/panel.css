@@ -462,3 +462,30 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 .build-catalogue-progress .build-catalogue-label{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .build-catalogue-progress .build-catalogue-counter{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}
 .build-catalogue-progress .build-phase{gap:8px}
+
+/* Build B: the shared title stays in the grid; compact controls fill the remaining tile height. */
+.build-card-controls [hidden],.build-popover [hidden]{display:none!important}
+.build-card-controls[data-mode]:not([data-mode=extended]){gap:0;justify-content:center;height:100%;min-height:0}
+.build-card-controls[data-mode=full] .build-full-controls{grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:12px}
+.build-card-controls[data-mode=full] .build-launch-actions{grid-column:2;grid-row:1;gap:4px}
+.build-card-controls[data-mode]:not([data-mode=extended]) select{height:calc(28px * var(--bootstrap-text-scale,1));padding:2px 6px;font-size:calc(11px * var(--bootstrap-text-scale,1));text-overflow:ellipsis}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-action{height:calc(28px * var(--bootstrap-text-scale,1));min-height:0;font-size:calc(11px * var(--bootstrap-text-scale,1));padding:2px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.build-card-controls[data-mode=mini] .build-mini-controls{gap:4px}
+.build-card-controls[data-mode=mini] .build-mini-controls>label{display:block;margin:0}
+.build-card-controls[data-mode=mini] .build-mini-controls>label select{width:100%;height:calc(24px * var(--bootstrap-text-scale,1))}
+.build-card-controls[data-mode=mini] .build-mini-controls>.build-launch-actions{gap:4px}
+.build-card-controls[data-mode=mini] .build-secondary-actions{gap:8px}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-current-work{margin:0;width:100%;min-width:0;gap:8px}
+.build-card-controls[data-mode=full] .build-current-work{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:12px;align-items:center}
+.build-work-progress{display:flex;flex-direction:column;gap:6px;min-width:0}
+.build-work-progress p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.build-work-actions{display:flex;flex-direction:column;align-items:stretch;gap:6px;min-width:0}
+.build-work-actions time{font-variant-numeric:tabular-nums}
+.build-current-work[data-failed=true]{cursor:pointer}
+.build-current-work[data-failed=true] .build-progress-fill{background:var(--error,#c64e53)}
+.build-current-work:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+.build-error-open{font-weight:600;text-decoration:underline;text-underline-offset:3px}
+.build-settings h3,.build-test-picker h3{font-size:14px;margin:0}
+.build-card-controls[data-mode=extended] .build-settings-fields label,.build-card-controls[data-mode=extended] .build-test-picker>label{display:grid;grid-template-columns:108px minmax(0,1fr);align-items:center;gap:12px;color:var(--muted)}
+.build-card-controls[data-mode=extended] .build-settings-fields select,.build-card-controls[data-mode=extended] .build-test-picker select{color:var(--color-text-primary,var(--mimic-ink,#232323));width:100%;min-width:0}
+.build-test-picker{border-top:1px solid var(--line);padding-top:16px}

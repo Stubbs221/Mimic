@@ -9,11 +9,12 @@ import Foundation
 public struct HistoryStore: Sendable {
     public let directory: URL
     public let limit: Int
-    public init(directory: URL, limit: Int = 100) { self.directory = directory; self.limit = limit }
+    public let compatibility: ProfileCompatibility?
+    public init(directory: URL, limit: Int = 100, compatibility: ProfileCompatibility? = nil) { self.directory = directory; self.limit = limit; self.compatibility = compatibility }
     public func load() throws -> [TaskRecord] {
         let path = self.directory.appendingPathComponent("history.json")
         guard FileManager.default.fileExists(atPath: path.path) else { return [] }
-        var records = try JSONDecoder().decode([TaskRecord].self, from: Data(contentsOf: path))
+        var records = try ProfileCompatibility.decoder(compatibility).decode([TaskRecord].self, from: Data(contentsOf: path))
         for index in records.indices where records[index].status == .running || records[index].status == .queued {
             records[index].status = .interrupted; records[index].finishedAt = Date()
         }
@@ -38,7 +39,7 @@ public struct HistoryStore: Sendable {
         if !cache.loaded {
             let original = (try? Data(contentsOf: historyURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [[String: Any]] } ?? []
             for entry in original {
-                if let bytes = try? JSONSerialization.data(withJSONObject: entry), let record = try? JSONDecoder().decode(TaskRecord.self, from: bytes) {
+                if let bytes = try? JSONSerialization.data(withJSONObject: entry), let record = try? ProfileCompatibility.decoder(compatibility).decode(TaskRecord.self, from: bytes) {
                     cache.entries[record.id] = .init(record: record, object: entry)
                 }
             }

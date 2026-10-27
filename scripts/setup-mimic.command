@@ -108,7 +108,7 @@ cleanup_backups() {
     [ -d "$CANDIDATE" ] && [ ! -L "$CANDIDATE" ] || continue
     [ "$CANDIDATE" != "$DESTINATION" ] && [ "$CANDIDATE" != "$APP" ] || continue
     CANDIDATE_BUNDLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CANDIDATE/Contents/Info.plist" 2>/dev/null || true)"
-    case "$CANDIDATE_BUNDLE" in local.vmaslov.Mimic|local.vmaslov.IVIToolbox) ;; *) continue ;; esac
+    [ "$CANDIDATE_BUNDLE" = local.vmaslov.Mimic ] || continue
     CANDIDATE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$CANDIDATE/Contents/Info.plist" 2>/dev/null || true)"
     CANDIDATE_EXECUTABLE="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$CANDIDATE/Contents/Info.plist" 2>/dev/null || true)"
     [ "$CANDIDATE_NAME" = Mimic ] && [ "$CANDIDATE_EXECUTABLE" = Mimic ] || continue

@@ -28,7 +28,7 @@ import ZIPFoundation
             #expect(record.action == .bootstrap); #expect(record.options == options); #expect(record.metadataOnly)
             #expect(record.profileExecution?.snapshot == snapshot)
         }
-        for role in [ProfileToolRole.generateUI, .generateSicilia, .generateGalera] {
+        for role in [ProfileToolRole.generateUI, .generateModule, .generateFeature] {
             let record = try snapshot.execution(role: role, values: [.name: "Header"]).record(id: UUID(), project: ProjectContext(path: "/private/tmp/fixture"))
             #expect(record.action == .generation); #expect(record.generation?.kind == role.generator); #expect(record.generation?.name == "Header")
             #expect(!record.metadataOnly)
@@ -88,12 +88,47 @@ import ZIPFoundation
         var record = TaskRecord(action: .generation, project: ProjectContext(path: root.path), generation: GenerationRequest(kind: .module, name: "Header", digest: "fixture"))
         record.status = .succeeded; record.finishedAt = Date()
         var value = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
-        value["action"] = "celestial"; var generation = try #require(value["generation"] as? [String: Any]); generation["kind"] = "sicilia"; value["generation"] = generation
+        value["action"] = "legacy-generator"; var generation = try #require(value["generation"] as? [String: Any]); generation["kind"] = "legacy-template"; value["generation"] = generation
         let path = root.appendingPathComponent("history.json"); try JSONSerialization.data(withJSONObject: [value]).write(to: path)
-        let store = HistoryStore(directory: root), restored = try store.load()
+        let aliases = ProfileCompatibility(actions: ["legacy-generator": "generation"], generators: ["legacy-template": "module"])
+        let store = HistoryStore(directory: root, compatibility: aliases), restored = try store.load()
         #expect(restored.first?.action == .generation); #expect(restored.first?.generation?.kind == .module)
         try store.save(restored)
         let saved = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [[String: Any]])
-        #expect(saved.first?["action"] as? String == "celestial"); #expect((saved.first?["generation"] as? [String: Any])?["kind"] as? String == "sicilia")
+        #expect(saved.first?["action"] as? String == "legacy-generator"); #expect((saved.first?["generation"] as? [String: Any])?["kind"] as? String == "legacy-template")
+    }
+    @Test func presentationIsOptionalProfileDataAndRejectsInvalidLabels() throws {
+        var value = try manifest()
+        let plain = try profile(value)
+        #expect(plain.interface?.toolTitles == nil); #expect(plain.interface?.generatorTitles == nil)
+        var interface = try #require(value["interface"] as? [String: Any])
+        interface["toolTitles"] = ["generation": "Team Generator", "localization": "Team Translations"]
+        interface["generatorTitles"] = ["module": "Team Module", "feature": "Team Feature"]
+        interface["generatorDescriptions"] = ["module": "Creates the team's module template."]
+        interface["toolEffects"] = ["localization": "Updates the team's translation output."]
+        value["interface"] = interface
+        let named = try profile(value); try ProfileValidation.validate(named, files: ["profile.json"])
+        #expect(named.interface?.toolTitles?["generation"] == "Team Generator")
+        #expect(named.interface?.generatorTitles?["module"] == "Team Module")
+        #expect(named.interface?.generatorDescriptions?["module"] == "Creates the team's module template.")
+        #expect(named.interface?.toolEffects?["localization"] == "Updates the team's translation output.")
+        let encoded = try JSONEncoder().encode(named.interface)
+        #expect(try JSONDecoder().decode(ProfileInterface.self, from: encoded) == named.interface)
+        for labels in [["unknown": "Team Tool"], ["generation": " "], ["generation": "first\nsecond"], ["generation": String(repeating: "x", count: 81)]] {
+            interface["toolTitles"] = labels; value["interface"] = interface
+            #expect(throws: (any Error).self) { try ProfileValidation.validate(profile(value), files: ["profile.json"]) }
+        }
+    }
+    @Test func legacyVocabularyRequiresExplicitProfileAliases() throws {
+        let aliases = ProfileCompatibility(actions: ["old-action": "generation"], generators: ["old-template": "module"], roles: ["old-role": "generateModule"])
+        try aliases.validate()
+        let data = Data(#""old-role""#.utf8)
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(ProfileToolRole.self, from: data) }
+        #expect(try ProfileCompatibility.decoder(aliases).decode(ProfileToolRole.self, from: data) == .generateModule)
+        #expect(try ProfileCompatibility.decoder(aliases).decode(PanelBlockKind.self, from: data) == .generateModule)
+        #expect(try ProfileCompatibility.decoder(aliases).decode(GeneratorKind.self, from: Data(#""old-template""#.utf8)) == .module)
+        #expect(try ProfileCompatibility.decoder(aliases).decode(MimicAction.self, from: Data(#""old-action""#.utf8)) == .generation)
+        #expect(throws: (any Error).self) { try ProfileCompatibility(actions: ["format": "generation"]).validate() }
+        #expect(throws: (any Error).self) { try ProfileCompatibility(roles: ["old-role": "unknown"]).validate() }
     }
 }

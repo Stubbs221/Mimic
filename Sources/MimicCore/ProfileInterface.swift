@@ -7,27 +7,35 @@ import Foundation
 
 /// Stable UI semantics. Action IDs, parameter names and scripts belong to the imported profile.
 public enum ProfileToolRole: String, Codable, CaseIterable, Sendable {
-    case bootstrap, localization, protocols, format, generateUI, generateSicilia, generateGalera
+    case bootstrap, localization, protocols, format, generateUI, generateModule, generateFeature
     case fullCleanup, derivedDataCleanup, uiTests, qualityGates, beta
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer(), value = try container.decode(String.self)
+        let aliases = (decoder.userInfo[ProfileCompatibility.codingKey] as? ProfileCompatibility)?.roles ?? [:]
+        guard let role = Self(rawValue: aliases[value] ?? value) else {
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown profile role")
+        }
+        self = role
+    }
     public var localAction: MimicAction? {
         switch self {
         case .bootstrap: .bootstrap
         case .localization: .localization
         case .protocols: .proto
         case .format: .format
-        case .generateUI, .generateSicilia, .generateGalera: .generation
+        case .generateUI, .generateModule, .generateFeature: .generation
         case .fullCleanup: .fullCleanup
         case .derivedDataCleanup: .derivedDataCleanup
         case .uiTests, .qualityGates, .beta: nil
         }
     }
     public var generator: GeneratorKind? {
-        switch self { case .generateUI: .ui; case .generateSicilia: .module; case .generateGalera: .feature; default: nil }
+        switch self { case .generateUI: .ui; case .generateModule: .module; case .generateFeature: .feature; default: nil }
     }
     public var fields: [ProfileFormField: ParameterKind] {
         switch self {
         case .bootstrap: [.platform: .platform, .device: .boolean, .match: .boolean, .full: .boolean, .dependencies: .boolean, .uiDependencies: .boolean, .setup: .boolean]
-        case .generateUI, .generateSicilia, .generateGalera: [.name: .text]
+        case .generateUI, .generateModule, .generateFeature: [.name: .text]
         case .uiTests: [.branch: .branch, .plan: .choice]
         case .qualityGates: [.branch: .branch, .locales: .boolean, .unitIOS: .boolean, .unitTVOS: .boolean, .snapshotIOS: .boolean, .snapshotTVOS: .boolean, .buildIOS: .boolean, .buildTVOS: .boolean, .performance: .boolean]
         case .beta: [.branch: .branch, .target: .choice, .rebase: .text, .upload: .choice]
@@ -56,9 +64,24 @@ public struct ProfileToolBinding: Codable, Equatable, Sendable {
 public struct ProfileInterface: Codable, Equatable, Sendable {
     public let version: Int
     public let bindings: [ProfileToolBinding]
+    /// Team-specific names are optional profile data; the application supplies neutral fallbacks.
+    public var toolTitles: [String: String]? = nil
+    public var generatorTitles: [String: String]? = nil
+    public var toolDescriptions: [String: String]? = nil
+    public var toolEffects: [String: String]? = nil
+    public var generatorDescriptions: [String: String]? = nil
     public func binding(_ role: ProfileToolRole) -> ProfileToolBinding? { self.bindings.first { $0.role == role } }
-    public init(version: Int = 1, bindings: [ProfileToolBinding]) { self.version = version; self.bindings = bindings }
+    public init(version: Int = 1, bindings: [ProfileToolBinding], toolTitles: [String: String]? = nil, generatorTitles: [String: String]? = nil, toolDescriptions: [String: String]? = nil, toolEffects: [String: String]? = nil, generatorDescriptions: [String: String]? = nil) {
+        self.version = version; self.bindings = bindings; self.toolTitles = toolTitles; self.generatorTitles = generatorTitles
+        self.toolDescriptions = toolDescriptions; self.toolEffects = toolEffects; self.generatorDescriptions = generatorDescriptions
+    }
     public func validate(profile: MimicProfile) throws {
+        for (titles, keys) in [(toolTitles, Set(ProjectTool.allCases.map(\.rawValue))), (generatorTitles, Set(GeneratorKind.allCases.map(\.rawValue)))] {
+            guard (titles ?? [:]).allSatisfy({ keys.contains($0.key) && !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.value.count <= 80 && !$0.value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }) else { throw ProfileError.interface }
+        }
+        for (descriptions, keys) in [(toolDescriptions, Set(ProjectTool.allCases.map(\.rawValue))), (toolEffects, Set(ProjectTool.allCases.map(\.rawValue))), (generatorDescriptions, Set(GeneratorKind.allCases.map(\.rawValue)))] {
+            guard (descriptions ?? [:]).allSatisfy({ keys.contains($0.key) && !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.value.count <= 1024 && !$0.value.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) }) else { throw ProfileError.interface }
+        }
         guard version == 1, Set(bindings.map(\.role)) == Set(ProfileToolRole.allCases), bindings.count == ProfileToolRole.allCases.count,
               Set(bindings.map(\.actionID)).count == bindings.count else { throw ProfileError.interface }
         for binding in bindings {
@@ -80,6 +103,29 @@ public struct ProfileInterface: Codable, Equatable, Sendable {
             }
             // Specialized forms must account for every field; hidden unreviewed inputs cannot be submitted.
             guard Set(action.parameters.map(\.id)) == Set(binding.fields.values) else { throw ProfileError.interface }
+        }
+    }
+}
+
+// MARK: - Profile-owned compatibility
+
+/// Aliases preserve a team's existing local history and layouts without shipping its vocabulary.
+public struct ProfileCompatibility: Codable, Equatable, Sendable {
+    public var actions: [String: String]? = nil
+    public var generators: [String: String]? = nil
+    public var roles: [String: String]? = nil
+    public init(actions: [String: String]? = nil, generators: [String: String]? = nil, roles: [String: String]? = nil) {
+        self.actions = actions; self.generators = generators; self.roles = roles
+    }
+    static let codingKey = CodingUserInfoKey(rawValue: "profileCompatibility")!
+    public static func decoder(_ compatibility: Self? = nil) -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.userInfo[codingKey] = compatibility
+        return decoder
+    }
+    public func validate() throws {
+        for (aliases, keys) in [(actions, Set(MimicAction.allCases.map(\.rawValue))), (generators, Set(GeneratorKind.allCases.map(\.rawValue))), (roles, Set(ProfileToolRole.allCases.map(\.rawValue)))] {
+            guard (aliases?.count ?? 0) <= 64, (aliases ?? [:]).allSatisfy({ !$0.key.isEmpty && $0.key.utf8.count <= 100 && !keys.contains($0.key) && keys.contains($0.value) }) else { throw ProfileError.interface }
         }
     }
 }

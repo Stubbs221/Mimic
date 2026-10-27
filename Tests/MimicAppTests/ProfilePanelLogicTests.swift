@@ -121,11 +121,11 @@ import MimicCore
 
     @Test func failedOrUnavailableSettingsInvalidateOldServiceRouting() throws {
         let fixture = try PanelLogicFixture(); defer { fixture.close() }
-        let tool = try JSONDecoder().decode(ServiceTool.self, from: Data(#"{"id":"service","title":"Service","requiredFiles":["marker"],"baseURLTemplate":"https://api.{namespace}.example.test","source":{"panelID":"settings","namespaceField":"target","appVersionField":"first"},"mcpAllowed":true,"actions":[]}"#.utf8))
+        let tool = try JSONDecoder().decode(ServiceTool.self, from: Data(#"{"id":"service","title":"Service","requiredFiles":["marker"],"baseURLTemplate":"https://api.{namespace}.example.test","source":{"panelID":"settings","namespaceField":"target","appVersionField":"first","namespaceSuffixes":[".test"]},"mcpAllowed":true,"actions":[]}"#.utf8))
         var saved = TaskRecord(action: .format, project: fixture.project)
         saved.profileExecution = ProfileExecution(snapshot: fixture.snapshot, actionID: "settings", parameters: ["device": fixture.form.device, "application": "demo"])
         saved.status = .succeeded
-        saved.panelResult = try JSONDecoder().decode(ProfilePanelResult.self, from: Data(#"{"status":"saved","values":{"target":"testing.ing","first":"123"},"revision":"r0","devices":[],"developerMode":true}"#.utf8))
+        saved.panelResult = try JSONDecoder().decode(ProfilePanelResult.self, from: Data(#"{"status":"saved","values":{"target":"testing.test","first":"123"},"revision":"r0","devices":[],"developerMode":true}"#.utf8))
         fixture.model.records = [saved]
         let selection = [fixture.form.device, "demo"]
         #expect(fixture.model.serviceContext(tool: tool, project: fixture.project, snapshot: fixture.snapshot, selection: selection).namespace == "testing")

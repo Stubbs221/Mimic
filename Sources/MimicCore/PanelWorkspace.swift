@@ -23,9 +23,9 @@ public struct PanelWorkspace: Codable, Equatable, Sendable {
 @MainActor public final class PanelWorkspaceStore {
     private let defaults: UserDefaults
     private var workspaces: [String: PanelWorkspace]
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard, compatibility: ProfileCompatibility? = nil) {
         self.defaults = defaults
-        workspaces = defaults.data(forKey: "panelWorkspaces").flatMap { try? JSONDecoder().decode([String: PanelWorkspace].self, from: $0) } ?? [:]
+        workspaces = defaults.data(forKey: "panelWorkspaces").flatMap { try? ProfileCompatibility.decoder(compatibility).decode([String: PanelWorkspace].self, from: $0) } ?? [:]
     }
     public func load(_ threadID: String) -> PanelWorkspace { workspaces[threadID] ?? PanelWorkspace() }
     public func save(_ workspace: PanelWorkspace, for threadID: String) throws {

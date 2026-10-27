@@ -20,7 +20,7 @@ import MimicCore
         model.projects = [project]; model.selectedProjectPath = project.path; model.activeProfile = snapshot
         var record = TaskRecord(id: UUID(), action: .format, project: project)
         record.profileExecution = ProfileExecution(snapshot: snapshot, actionID: panel.actionID, parameters: ["device": device, "application": application, "values": "unconfirmed-draft"])
-        record.panelResult = try JSONDecoder().decode(ProfilePanelResult.self, from: JSONSerialization.data(withJSONObject: ["status": "saved", "values": [tool.source.namespaceField: "fixture.ing", tool.source.appVersionField: "456"], "revision": "confirmed", "devices": [], "developerMode": true]))
+        record.panelResult = try JSONDecoder().decode(ProfilePanelResult.self, from: JSONSerialization.data(withJSONObject: ["status": "saved", "values": [tool.source.namespaceField: "fixture" + (tool.source.namespaceSuffixes?.first ?? ""), tool.source.appVersionField: "456"], "revision": "confirmed", "devices": [], "developerMode": true]))
         record.status = .succeeded; model.records = [record]
         let integration = MimicIntegration(model: model, defaults: defaults)
         for owner in ["chat-a", "chat-b"] { try integration.workspaceStore.save(PanelWorkspace(checkout: project.path, drafts: [panel.actionID: ["device": device, "application": application, "values": "unconfirmed-draft"]]), for: owner) }

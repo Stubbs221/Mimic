@@ -121,13 +121,33 @@ import os
     var active: BuildActivity? { records.first { $0.id == launchID } }
     var pendingCount: Int { records.filter { $0.status == .queued }.count }
     var overlayActivity: BuildActivity? { active ?? records.last { $0.startedAt != nil } }
-    var panelActivity: BuildActivity? { guard let project = currentProject() else { return nil }; return records.last { $0.project == project && $0.status.isPending } ?? records.last { $0.project == project } }
-    var panelBusy: Bool { manualSubmitting || admittingCount > 0 || records.contains { $0.project == currentProject() && $0.status.isPending } }
+    /// History is immutable presentation input; viewing a failure only changes its durable acknowledgement.
+    func panelActivity(project: ProjectContext) -> BuildActivity? {
+        let scoped = records.filter { $0.project == project }
+        if let pending = scoped.first(where: { $0.status == .running || $0.status == .preparing }) ?? scoped.first(where: { $0.status == .queued }) { return pending }
+        if let unknown = scoped.last(where: { $0.status == .unknown && $0.queueReleased != true }) { return unknown }
+        guard let failure = scoped.last(where: { [.failed, .interrupted, .unknown].contains($0.status) }),
+              defaults.string(forKey: failureViewedKey(project)) != failure.id.uuidString else { return nil }
+        return failure
+    }
+    var panelActivity: BuildActivity? { currentProject().flatMap { panelActivity(project: $0) } }
+    private func failureViewedKey(_ project: ProjectContext) -> String {
+        "build.failureViewed." + project.path + "|" + project.branch + "|" + (project.appleTarget?.path ?? "")
+    }
+    func markResultViewed(_ id: UUID) {
+        guard let record = activity(id), [.failed, .interrupted, .unknown].contains(record.status),
+              records.last(where: { $0.project == record.project && [.failed, .interrupted, .unknown].contains($0.status) })?.id == id else { return }
+        defaults.set(id.uuidString, forKey: failureViewedKey(record.project)); revision = UUID()
+    }
+    var panelBusy: Bool { manualSubmitting || admittingCount > 0 || records.contains { $0.project == currentProject() && ($0.status.isPending || $0.status == .unknown && $0.queueReleased != true) } }
     var draftCompatible: Bool {
-        if draft.backend == .xcodeMCP { return xcodeSimulatorConfirmed && xcode.hasWorkspace(draft.workspaceTab, path: currentProject()?.workspace ?? "") && xcode.project == currentProject() }
         return catalogueContext == currentProject() && catalogueScheme == draft.scheme && (try? catalogue.validate(draftFor(.build))) != nil
     }
-    var testsCompatible: Bool { draftCompatible && (draft.backend == .xcodeMCP || (catalogue.testPlans.count <= 1 || !draft.testPlan.isEmpty) && (draft.testPlan.isEmpty || catalogue.testPlans.contains(draft.testPlan))) }
+    var testsCompatible: Bool {
+        guard catalogueContext == currentProject(), draft.testTarget != nil else { return false }
+        let parameters = draftFor(.test)
+        return (try? parameters.validate()) != nil && (try? catalogue.validate(parameters)) != nil
+    }
     var availableTests: BuildTestCatalogue? {
         guard let project = currentProject() else { return nil }
         return testCatalogue(project: project, parameters: draft, developer: catalogueDeveloper)
@@ -136,8 +156,13 @@ import os
     /// Compact actions use the same draft and admission ledger; opening a picker never submits work.
     func draftFor(_ operation: BuildOperation, intent: BuildIntent? = nil) -> BuildParameters {
         var parameters = draft; parameters.operation = operation; parameters.intent = intent
+        parameters.backend = .cli; parameters.workspaceTab = ""
         parameters.platform = catalogue.destinations.first { $0.id == parameters.destinationID }?.platform
-        if operation == .build { parameters.testIdentifiers = []; if intent != .catalogue { parameters.testPlan = "" } }
+        if operation == .test, let target = parameters.testTarget {
+            parameters.backend = .cli; parameters.workspaceTab = ""; parameters.testIdentifiers = []
+            parameters.testPlan = catalogue.testTargets?.first(where: { $0.name == target })?.testPlan ?? parameters.testPlan
+        }
+        if operation == .build { parameters.testTarget = nil; parameters.testIdentifiers = []; if intent != .catalogue { parameters.testPlan = "" } }
         if parameters.backend == .xcodeMCP, intent != .run { parameters.scheme = ""; parameters.configuration = ""; parameters.destinationID = ""; parameters.testPlan = ""; parameters.platform = nil }
         if intent == .run { parameters.backend = .xcodeMCP; parameters.workspaceTab = "" }
         return parameters
@@ -227,7 +252,7 @@ import os
             }
             let chosen = scheme ?? draft.scheme
             var captured = project; captured.developerDirectory = developer
-            let tests = includeTestPlans || draft.operation == .test
+            let tests = true
             if usesDiscoveryService {
                 progressMonitor = Task { [captured] in
                     while !Task.isCancelled {
@@ -238,11 +263,12 @@ import os
                     }
                 }
             }
-            let result = try await (force ? discover : presentationDiscover)(captured, chosen, includeTestPlans || draft.operation == .test, profile?.id, profile?.revision)
+            let result = try await (force ? discover : presentationDiscover)(captured, chosen, true, profile?.id, profile?.revision)
             guard catalogueRevision == token, currentProject() == project, currentProfile() == profile else { return }
-            let cached = await discoveryService.cachedCatalogue(project: captured, scheme: chosen, includeTestPlans: includeTestPlans || draft.operation == .test, profileID: profile?.id, profileRevision: profile?.revision)
+            let cached = await discoveryService.cachedCatalogue(project: captured, scheme: chosen, includeTestPlans: true, profileID: profile?.id, profileRevision: profile?.revision)
             guard catalogueRevision == token, currentProject() == project, currentProfile() == profile else { return }
             catalogueLoadedAt = cached?.loadedAt ?? Date(); catalogue = result; catalogueContext = project; catalogueScheme = chosen; catalogueDeveloper = developer
+            if let targets = result.testTargets, !targets.contains(where: { $0.name == draft.testTarget }) { draft.testTarget = targets.first?.name }
             if !result.schemes.contains(draft.scheme) { draft.scheme = "" }
             if !result.configurations.contains(draft.configuration) { draft.configuration = result.configurations.contains("Debug") ? "Debug" : "" }
             if !result.destinations.contains(where: { $0.id == draft.destinationID }) { draft.destinationID = "" }
@@ -260,11 +286,12 @@ import os
         guard let developer = try? await resolveDeveloper(project), currentProject() == project, restoredProfile == profile else { return }
         let key = "build.configuration." + project.path + "|" + developer; draftKey = key
         draft = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(BuildParameters.self, from: $0) } ?? .init()
+        draft.backend = .cli; draft.workspaceTab = ""
         if defaults.data(forKey: key + ".selectionContext").flatMap({ try? JSONDecoder().decode(ProjectContext.self, from: $0) }) != project { draft.testIdentifiers = [] }
         var captured = project; captured.developerDirectory = developer
         let cached = await discoveryService.cachedCatalogue(project: captured, scheme: draft.scheme, profileID: currentProfile()?.id, profileRevision: currentProfile()?.revision)
         guard currentProject() == project, restoredProfile == profile else { return }
-        if let cached { catalogue = cached.value; catalogueLoadedAt = cached.loadedAt; catalogueContext = project; catalogueScheme = draft.scheme; catalogueDeveloper = developer }
+        if let cached { if let targets = cached.value.testTargets, !targets.contains(where: { $0.name == draft.testTarget }) { draft.testTarget = targets.first?.name }; catalogue = cached.value; catalogueLoadedAt = cached.loadedAt; catalogueContext = project; catalogueScheme = draft.scheme; catalogueDeveloper = developer }
     }
     func saveDraft(project: ProjectContext) {
         guard currentProject() == project, let key = draftKey else { return }
@@ -279,7 +306,7 @@ import os
         var value = currentProject() == project && draftKey == key ? draft : defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(BuildParameters.self, from: $0) } ?? .init()
         let savedContext = defaults.data(forKey: key + ".selectionContext").flatMap { try? JSONDecoder().decode(ProjectContext.self, from: $0) }
         if savedContext != project { value.testIdentifiers = [] }
-        value.intent = nil
+        value.intent = nil; value.backend = .cli; value.workspaceTab = ""
         return value
     }
     func savePanelDraft(_ parameters: BuildParameters, project: ProjectContext, developer: String) {
@@ -330,11 +357,11 @@ import os
         var record = BuildActivity(id: id, project: project, parameters: parameters, source: source)
         record.sourceProvenance = SourceProvenance(admitted: revision); record.sourceExclusions = exclusions; record.selectionID = selectionID; record.strictSource = sourceRevision != nil; record.requestedTestCases = expectedCases
         record.cleanupArtifacts = cleanupArtifacts; record.cleanupActivityID = cleanupActivityID
-        if parameters.backend == .cli, parameters.operation == .build, parameters.intent == nil || parameters.intent == .run {
+        if parameters.backend == .cli, parameters.intent != .cleanup {
             record.compilationDerivedDataPath = try BuildCompilationCache.directory(root: store.directory, project: project, developer: developer, parameters: parameters, profileRevision: admittedProfile?.revision).path
         }
         if parameters.operation == .test, parameters.backend == .cli, let prepared = records.last(where: { $0.testCatalogue?.matches(project: project, parameters: parameters, developer: developer) == true && revision != nil && $0.sourceProvenance?.finished == revision && $0.sourceProvenance?.stability == "unchangedObserved" }) {
-            let path = store.directory.appendingPathComponent(prepared.id.uuidString + "-DerivedData").path
+            let path = prepared.compilationDerivedDataPath ?? store.directory.appendingPathComponent(prepared.id.uuidString + "-DerivedData").path
             if FileManager.default.fileExists(atPath: path) { record.preparedDerivedDataPath = path }
         }
         record.destinationName = catalogue.destinations.first { $0.id == parameters.destinationID }?.name
@@ -674,11 +701,20 @@ import os
         updateTimer?.cancel(); updateTimer = nil
         deliverOutput(id)
         let truncated = logTruncation.contains(id) || outputs[id]?.truncated == true || records.first { $0.id == id }?.truncated == true
+        var finalStatus = status, finalError = error
+        if status == .succeeded, var completed = active, completed.parameters.testTarget != nil {
+            completed.status = .succeeded; completed.finishedAt = Date()
+            let bytes = output(id)
+            let result = await Task.detached { BuildResultReader.read(record: completed, output: bytes) }.value
+            guard launchID == id else { return }
+            if Task.isCancelled { finalStatus = .cancelled }
+            else if result.verification?.verdict != "passed" { finalStatus = .failed; finalError = "testsUnverified" }
+        }
         workers[id] = nil; testProgress[id] = nil; logTruncation.remove(id); session = nil; launchID = nil; preparation = nil; continuationTask = nil
         update(id) {
-            $0.status = status; $0.finishedAt = Date(); $0.errorCode = error; $0.truncated = truncated; $0.needsInput = false
-            $0.phase = "build.phase." + status.rawValue
-            if status == .unknown { $0.tracking = .lost }
+            $0.status = finalStatus; $0.finishedAt = Date(); $0.errorCode = finalError; $0.truncated = truncated; $0.needsInput = false
+            $0.phase = "build.phase." + finalStatus.rawValue
+            if finalStatus == .unknown { $0.tracking = .lost }
         }
         let ids = Set(records.suffix(8).map(\.id)); outputs = outputs.filter { ids.contains($0.key) }
         if records.first(where: { $0.id == id })?.hasPrivateInput == true { outputs[id] = nil; savedTails[id] = nil }

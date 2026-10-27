@@ -43,7 +43,7 @@ Materials for preliminary **candidate 1.6.0/160**, prepared on October 13. Task-
 
 | 🧩 Your panel | 🛠 Your team's tools | 🚦 Checks at hand |
 | --- | --- | --- |
-| **Tile Grid** — tile order, sizing and independent macOS/Codex layouts. Light and dark themes, with the previous interface still available. | **Celestial, Babylon, Protobuf, SwiftFormat** and cleanup tools. Up to three shared favorites; Celestial previews the files first. | **Build, run and selected tests** on a specific Simulator. Jenkins/GitLab: UI tests, Quality Gates, Beta, status and results. |
+| **Tile Grid** — tile order, sizing and independent macOS/Codex layouts. Light and dark themes, with the previous interface still available. | **Generation, Localization, Protobuf, SwiftFormat** and cleanup tools. Up to three shared favorites; Generation previews the files first. | **Build, run and selected tests** on a specific Simulator. Jenkins/GitLab: UI tests, Quality Gates, Beta, status and results. |
 | **Bootstrap and terminals** — a sequential queue, stages, progress, cancellation and history. | **Branches and rebase** — optional rebase onto develop, a backup of local edits and conflict handoff to Codex. | **AI limits and statistics** — remaining capacity, reset times and usage trends for supported tools. |
 
 ## Interface and demonstration

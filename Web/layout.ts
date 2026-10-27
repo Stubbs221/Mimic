@@ -1,6 +1,6 @@
 // Created by Василий Маслов on 06.10.2026.
 /** Serialized counterpart of MimicCore.PanelLayout. Mutations return validated transaction values. */
-export const catalog=['bootstrap','utils','builds','ci','simulators','workItem','generateUI','generateSicilia','generateGalera','localization','protocols','format','fullCleanup','derivedDataCleanup','uiTests','qualityGates','beta'] as const;
+export const catalog=['bootstrap','utils','builds','ci','simulators','workItem','generateUI','generateModule','generateFeature','localization','protocols','format','fullCleanup','derivedDataCleanup','uiTests','qualityGates','beta'] as const;
 export type Block=typeof catalog[number]|`profile:${string}:${string}`;
 export type Row={id:string;slots:(Block|null)[]};
 export type Layout={version:number;revision:number;rows:Row[]};

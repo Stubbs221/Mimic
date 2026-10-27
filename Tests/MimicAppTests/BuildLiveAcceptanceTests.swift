@@ -4,7 +4,7 @@ import Testing
 import MimicCore
 @testable import Mimic
 
-/// Opt-in smoke against a generated simulator-only workspace, never the working ios3 checkout.
+/// Opt-in smoke against a generated simulator-only workspace, never the working ExampleProject checkout.
 @Suite(.serialized, .timeLimit(.minutes(10))) @MainActor struct BuildLiveAcceptanceTests {
     @Test func buildFailureAndOneExplicitTestOnIsolatedProject() async throws {
         guard let path = ProcessInfo.processInfo.environment["MIMIC_BUILD_FIXTURE"], let destination = ProcessInfo.processInfo.environment["MIMIC_BUILD_DESTINATION"] else { return }

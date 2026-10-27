@@ -12,6 +12,10 @@ extension MimicIntegration {
         let pinned = try await BuildDiscovery.pinned(project)
         _ = try expected(context, threadID: request.threadID)
         let developer = pinned.developerDirectory ?? ""
+        if operation == "viewed" {
+            guard let id = p["activityID"]?.string.flatMap(UUID.init(uuidString:)), let record = model.builds.activity(id), record.project == project else { throw BuildError.context }
+            model.builds.markResultViewed(id); return .object(["viewed": .bool(true)])
+        }
         if operation == "refresh" {
             await discovery.invalidate(project: pinned, profileID: context["profileID"].string, profileRevision: context["profileRevision"].string)
             _ = try expected(context, threadID: request.threadID)
@@ -28,7 +32,7 @@ extension MimicIntegration {
             guard let id = p["activityID"]?.string.flatMap(UUID.init(uuidString:)), let record = model.builds.records.first(where: { $0.id == id && $0.project == project }), canAccess(record.project, threadID: request.threadID), let product = p["productID"]?.string else { throw BuildError.context }
             try model.builds.chooseProduct(product, activityID: id); return BuildBridge.summary(record)
         }
-        guard let fields = p["parameters"]?.object, Set(fields.keys).isSubset(of: ["operation", "backend", "scheme", "configuration", "destinationID", "platform", "testPlan", "testIdentifiers", "workspaceTab", "simulatorConfirmed", "developerDirectory"]), fields["simulatorConfirmed"] == nil || fields["simulatorConfirmed"] == .bool(true) || fields["simulatorConfirmed"] == .bool(false) else { throw BuildError.arguments }
+        guard let fields = p["parameters"]?.object, Set(fields.keys).isSubset(of: ["operation", "backend", "scheme", "configuration", "destinationID", "platform", "testPlan", "testIdentifiers", "testTarget", "workspaceTab", "simulatorConfirmed", "developerDirectory"]), fields["simulatorConfirmed"] == nil || fields["simulatorConfirmed"] == .bool(true) || fields["simulatorConfirmed"] == .bool(false) else { throw BuildError.arguments }
         guard fields["developerDirectory"]?.string == developer else { throw BuildError.context }
         var parameters = try JSONDecoder().decode(BuildParameters.self, from: JSONEncoder().encode(p["parameters"]!))
         guard ([parameters.scheme, parameters.configuration, parameters.destinationID, parameters.workspaceTab, parameters.testPlan] + parameters.testIdentifiers).allSatisfy({ $0.utf8.count <= 1024 && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }), parameters.testIdentifiers.count <= 100 else { throw BuildError.arguments }
@@ -40,7 +44,14 @@ extension MimicIntegration {
         parameters.intent = operation == "run" ? .run : operation == "catalogue" ? .catalogue : nil
         if operation == "run", parameters.backend == .cli { parameters.backend = .xcodeMCP }
         if operation == "run" { parameters.workspaceTab = "" }
-        if parameters.operation == .build { parameters.testIdentifiers = []; if operation != "catalogue" { parameters.testPlan = "" } }
+        if operation == "tests" {
+            parameters.backend = .cli; parameters.workspaceTab = ""; parameters.testIdentifiers = []
+            let catalogue = try await discovery.selectionCatalogue(project: pinned, scheme: parameters.scheme, includeTestPlans: true, profileID: context["profileID"].string, profileRevision: context["profileRevision"].string)
+            _ = try expected(context, threadID: request.threadID)
+            guard let target = catalogue.testTargets?.first(where: { $0.name == parameters.testTarget }) else { throw BuildError.testsRequired }
+            parameters.testPlan = target.testPlan
+        }
+        if parameters.operation == .build { parameters.testTarget = nil; parameters.testIdentifiers = []; if operation != "catalogue" { parameters.testPlan = "" } }
         if parameters.backend == .xcodeMCP, parameters.intent != .run { parameters.scheme = ""; parameters.configuration = ""; parameters.destinationID = ""; parameters.testPlan = ""; parameters.platform = nil }
         try parameters.validate()
         let record = try await model.builds.submit(id: id, project: project, parameters: parameters, source: "Codex · вручную", simulatorConfirmed: operation == "run" || fields["simulatorConfirmed"] == .bool(true))

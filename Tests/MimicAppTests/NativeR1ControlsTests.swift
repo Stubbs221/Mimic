@@ -48,7 +48,7 @@ import MimicCore
     @Test(arguments: [PanelAppearance.windows95, .windowsXP])
     func selectionHighlightIsProvisionalAndCancellationDoesNotCommit(appearance: PanelAppearance) throws {
         let selection = NativeRetroSelectionControl(frame: .init(x: 0, y: 0, width: 250, height: 23)); selection.appearanceChoice = appearance
-        selection.titles = ["Alpha", "Babylon", "SwiftFormat"]; selection.selectedIndex = 0
+        selection.titles = ["Alpha", "Локализация", "SwiftFormat"]; selection.selectedIndex = 0
         #expect(selection.accessibilityValue() as? String == "Alpha")
         var commits: [Int] = []; selection.commit = { commits.append($0) }
         let window = window(selection); defer { selection.closePopup(); window.contentView = nil; window.close() }

@@ -33,7 +33,7 @@ import MimicCore
             let root = root
             builds = BuildCoordinator(directory: root.appendingPathComponent("support"), helper: helper, defaults: defaults, inspect: { $0 }, resolveDeveloper: { $0.developerDirectory! }, makeCommand: { record, path in
                 try Data("called".utf8).write(to: root.appendingPathComponent(record.id.uuidString + ".called"))
-                try FileManager.default.createDirectory(atPath: URL(fileURLWithPath: path!).deletingPathExtension().path + "-DerivedData", withIntermediateDirectories: true)
+                try FileManager.default.createDirectory(atPath: record.compilationDerivedDataPath ?? URL(fileURLWithPath: path!).deletingPathExtension().path + "-DerivedData", withIntermediateDirectories: true)
                 if record.parameters.intent == .catalogue {
                     let base = URL(fileURLWithPath: path!).deletingPathExtension().path
                     try Data(#"{"values":["Tests/Suite/plain()","Tests/Suite/second()","Tests/Suite/check(value:)"]}"#.utf8).write(to: URL(fileURLWithPath: base + ".tests.json"))
@@ -132,6 +132,8 @@ import MimicCore
         let catalogue = try await fixture.runCatalogue(), selection = try await fixture.selection(catalogue), id = UUID()
         _ = try await fixture.integration.handle(.init(method: "run_verified_tests", parameters: ["context": MimicIntegration.context(fixture.project), "selectionID": .string(selection), "requestID": .string(id.uuidString)]))
         let record = try #require(fixture.builds.activity(id)); #expect(record.preparedDerivedDataPath != nil)
+        #expect(record.preparedDerivedDataPath == fixture.builds.activity(catalogue)?.compilationDerivedDataPath)
+        #expect(record.compilationDerivedDataPath == record.preparedDerivedDataPath)
         try Data().write(to: fixture.root.appendingPathComponent("editDuringRun"))
         fixture.builds.start(record); try await fixture.wait(id)
         #expect(fixture.builds.activity(id)?.status == .succeeded)

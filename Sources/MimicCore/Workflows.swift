@@ -14,9 +14,8 @@ public enum GeneratorKind: String, Codable, CaseIterable, Sendable {
     case feature
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer(), value = try container.decode(String.self)
-        if value == "sicilia" { self = .module }
-        else if value == "galera" { self = .feature }
-        else if let kind = Self(rawValue: value) { self = kind }
+        let aliases = (decoder.userInfo[ProfileCompatibility.codingKey] as? ProfileCompatibility)?.generators ?? [:]
+        if let kind = Self(rawValue: aliases[value] ?? value) { self = kind }
         else { throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown generator") }
     }
     public var titleKey: String { "generator." + rawValue }

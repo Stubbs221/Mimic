@@ -70,10 +70,10 @@ public struct ProfileRemoteRun: Codable, Identifiable, Sendable {
     private var admitting = Set<UUID>()
     private var console: [UUID: Data] = [:]
     private var offsets: [UUID: Int] = [:]
-    public init(directory: URL, jenkins: JenkinsClient, gitlab: GitLabClient, jenkinsToken: @escaping (JenkinsConnection) throws -> String, gitlabToken: @escaping (GitLabConnection) throws -> String) {
+    public init(directory: URL, jenkins: JenkinsClient, gitlab: GitLabClient, jenkinsToken: @escaping (JenkinsConnection) throws -> String, gitlabToken: @escaping (GitLabConnection) throws -> String, compatibility: ProfileCompatibility? = nil) {
         self.directory = directory; self.jenkins = jenkins; self.gitlab = gitlab
         self.jenkinsToken = jenkinsToken; self.gitlabToken = gitlabToken
-        if let data = try? Data(contentsOf: directory.appendingPathComponent("profile-remote-runs.json")), let restored = try? JSONDecoder().decode([ProfileRemoteRun].self, from: data) {
+        if let data = try? Data(contentsOf: directory.appendingPathComponent("profile-remote-runs.json")), let restored = try? ProfileCompatibility.decoder(compatibility).decode([ProfileRemoteRun].self, from: data) {
             self.runs = restored
             for i in runs.indices where runs[i].status == "submitting" { runs[i].status = "unknown" }
         }

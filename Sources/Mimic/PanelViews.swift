@@ -92,10 +92,11 @@ struct MimicPanel: View {
                     if self.model.hasCompatibleProfile { HomePage(model: self.model) }
                     else { ProfileSetupView(model: self.model) }
                 }.padding(MimicMetrics.documentInset)
+                    .padding(.vertical, model.appearance.selection == .tileGrid ? MimicScrollEdge.depth - MimicMetrics.documentInset : 0)
                     // The R1 rail overlays the native clip view; keep the document inset beside it.
                     .padding(.trailing, theme.retro ? 17 : 0)
                     .background(MimicDocumentVisibility(page: .home, visible: self.model.panelPage == .home))
-            }.scrollIndicators(.hidden).modifier(MimicScrollEdges())
+            }.scrollIndicators(.hidden).modifier(MimicScrollEdges(gradient: model.appearance.selection == .tileGrid))
                 .modifier(MimicPanelScrollDriver(model: self.model, scroll: self.model.panelScroll, page: .home, proxy: proxy))
         }
     }
@@ -181,10 +182,11 @@ struct SettingsDocument: View {
                                 if compact { SettingsCategoryNavigation(model: model, compact: true) }
                                 PanelMessages(model: model)
                                 SettingsContent(model: model)
-                            }.padding(.vertical, 16).padding(.trailing, 16).padding(.leading, compact ? 16 : 0)
+                            }.padding(.vertical, model.appearance.selection == .tileGrid ? MimicScrollEdge.depth : 16)
+                                .padding(.trailing, 16).padding(.leading, compact ? 16 : 0)
                                 .padding(.trailing, theme.retro ? 17 : 0)
                                 .background(MimicDocumentVisibility(page: .settings, visible: model.panelPage == .settings))
-                        }.scrollIndicators(.hidden).modifier(MimicScrollEdges())
+                        }.scrollIndicators(.hidden).modifier(MimicScrollEdges(gradient: model.appearance.selection == .tileGrid))
                             .modifier(MimicPanelScrollDriver(model: model, scroll: model.settingsScroll, page: .settings, proxy: proxy))
                     }
                 }

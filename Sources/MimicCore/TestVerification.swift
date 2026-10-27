@@ -27,8 +27,8 @@ public enum TestVerificationReader {
     private struct Fact { let method: String; let caseID: String; let status: String }
     /// Only structural parentage establishes case→method identity. There is no fuzzy ID matching.
     public static func verify(record: BuildActivity, nodes: [[String: Any]]?, summary: BuildResult.TestSummary?, detailsComplete: Bool) -> TestVerification {
-        var result = TestVerification(); result.requested = record.parameters.testIdentifiers
-        result.selection = record.selectionID == nil ? "unverified" : "catalogueVerified"
+        var result = TestVerification(); result.requested = record.parameters.testTarget.map { [$0] } ?? record.parameters.testIdentifiers
+        result.selection = record.parameters.testTarget != nil ? "target" : record.selectionID == nil ? "unverified" : "catalogueVerified"
         var facts: [Fact] = [], complete = detailsComplete, observedFailure = false
         func walk(_ nodes: [[String: Any]], parent: String?, depth: Int) {
             guard depth < 24 else { complete = false; return }
@@ -54,7 +54,7 @@ public enum TestVerificationReader {
             if summary.total != methods && summary.total != cases { complete = false }
         }
         let requested = Set(result.requested)
-        func selected(_ id: String) -> Bool { requested.contains(id) || requested.contains(where: { $0.split(separator: "/").count == 2 && id.hasPrefix($0 + "/") }) }
+        func selected(_ id: String) -> Bool { record.parameters.testTarget.map { id.hasPrefix($0 + "/") } == true || requested.contains(id) || requested.contains(where: { $0.split(separator: "/").count == 2 && id.hasPrefix($0 + "/") }) }
         let knownStatuses: Set<String> = ["Passed", "Failed", "Skipped", "Expected Failure", "ExpectedFailure"]
         if facts.contains(where: { !knownStatuses.contains($0.status) }) { complete = false }
         let executed = Set(facts.filter { $0.status != "Skipped" }.map(\.method))
@@ -67,7 +67,7 @@ public enum TestVerificationReader {
             let missing = expected.filter { !executedCases.contains($0.hasPrefix("test://") ? String($0.dropFirst(7)) : $0) }
             if !missing.isEmpty { result.unmatchedCases[method] = missing }
         }
-        let unmatched = requested.filter { id in id.split(separator: "/").count == 2 ? !executed.contains(where: { $0.hasPrefix(id + "/") }) : !executed.contains(id) }
+        let unmatched = requested.filter { id in id.split(separator: "/").count <= 2 ? !executed.contains(where: { $0.hasPrefix(id + "/") }) : !executed.contains(id) }
         let unexpected = executed.filter { !selected($0) }
         let anyFailed = record.status == .failed || observedFailure || facts.contains { $0.status == "Failed" } || (summary?.failed ?? 0) > 0
         result.extractionComplete = complete

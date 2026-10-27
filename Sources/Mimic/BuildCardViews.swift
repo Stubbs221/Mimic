@@ -2,196 +2,150 @@
 import SwiftUI
 import MimicCore
 
-/// All sizes own useful controls. Detail navigation is supplied by the card header, outside this control region.
+/// The grid supplies the icon/title once. Every compact size owns its launch and cancellation controls.
 struct BuildCardView: View {
     @ObservedObject var model: TaskCoordinator
     @ObservedObject var builds: BuildCoordinator
     var full = false
     var extended = false
+    @Environment(\.mimicTextScale) private var textScale
     @State private var popup = ""
-    @State private var action = "run"
-    @State private var search = ""
+    @State private var action = "tests"
     private var presented: Binding<Bool> { Binding(get: { !popup.isEmpty }, set: { if !$0 { popup = "" } }) }
-    private struct ContextKey: Hashable {
-        let path: String?, branch: String?, commit: String?, developer: String?, target: String?, configuration: String?, profile: String?, revision: String?
+    private var targets: [BuildTestTarget] { builds.catalogue.testTargets ?? [] }
+    private var destination: String { builds.catalogue.destinations.first { $0.id == builds.draft.destinationID }?.name ?? text("build.chooseDevice") }
+    private var context: String { [model.project?.path, model.project?.branch, model.project?.commit, model.activeProfile?.revision].compactMap { $0 }.joined(separator: "|") }
+    private var targetSelection: Binding<String> {
+        Binding(get: { builds.draft.testTarget ?? "" }, set: { value in
+            builds.draft.testTarget = value.isEmpty ? nil : value
+            builds.draft.testIdentifiers = []
+            builds.draft.testPlan = targets.first { $0.name == value }?.testPlan ?? ""
+        })
     }
-    private var contextKey: ContextKey {
-        ContextKey(path: model.project?.path, branch: model.project?.branch, commit: model.project?.commit,
-                   developer: model.project?.developerDirectory, target: model.project?.appleTarget?.path,
-                   configuration: model.project?.appleTarget?.configurationProject, profile: model.activeProfile?.id, revision: model.activeProfile?.revision)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: extended ? 12 : 4) {
             if extended {
                 Picker(text("build.action"), selection: $action) {
-                    Text(text("build.tab.build")).tag("build")
-                    Text(text("build.tab.run")).tag("run")
-                    Text(text("build.tab.tests")).tag("tests")
+                    Text(text("build.tab.build")).tag("build"); Text(text("build.tab.run")).tag("run"); Text(text("build.tab.tests")).tag("tests")
                 }.pickerStyle(.segmented).mimicSegments(selection: $action, options: [.init(text("build.tab.build"), "build"), .init(text("build.tab.run"), "run"), .init(text("build.tab.tests"), "tests")]).accessibilityIdentifier("build.tabs")
-                Text(text("build.purpose")).mimicFont(.caption).foregroundStyle(.secondary)
                 settings
-                if action == "tests" { testPicker }
-                else { actionButton(action, primary: true) }
-            } else if builds.panelActivity?.status.isPending != true {
-                compactControls
-                Spacer(minLength: 0)
-            }
-            if !extended, builds.loading, builds.panelActivity?.status.isPending != true, let progress = builds.catalogueProgress {
-                BuildCatalogueProgressView(progress: progress)
-            } else if let record = builds.panelActivity {
-                BuildInlineStatus(builds: builds, record: record, compact: !extended, chooseProduct: { popup = "products" })
-                if extended, record.stage == .products, record.status.isPending, record.products?.count ?? 0 > 1 {
-                    Button(text("build.chooseProduct")) { popup = "products" }.buttonStyle(MimicAuxiliaryButtonStyle())
+                if action == "tests" { targetSection }
+                launch(action, primary: true)
+                if let record = builds.panelActivity { BuildInlineStatus(builds: builds, record: record) }
+                if let record = builds.records.last(where: { $0.project == model.project }) {
+                    Button(text("build.output")) { builds.showResult(record.id) }.buttonStyle(MimicAuxiliaryButtonStyle())
                 }
-                if extended, !record.status.isPending { Button(text("build.output")) { builds.showResult(record.id) }.buttonStyle(MimicAuxiliaryButtonStyle()) }
-            } else if !extended { Text(text(model.project == nil ? "build.project.required" : "build.purpose.compact")).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(1).mimicHelp(text("build.purpose")) }
-            if !builds.message.isEmpty { Text(builds.message).mimicFont(.caption).foregroundStyle(.orange).lineLimit(extended ? nil : 1).mimicHelp(builds.message) }
-        }.frame(maxWidth: .infinity, maxHeight: extended ? nil : .infinity, alignment: .topLeading)
+            } else if let record = builds.panelActivity {
+                BuildInlineStatus(builds: builds, record: record, compact: true, full: full, chooseProduct: { popup = "products" })
+
+            } else { compactControls }
+            if extended, !builds.message.isEmpty { Text(builds.message).mimicFont(.caption).foregroundStyle(.orange) }
+        }.frame(maxWidth: .infinity, maxHeight: extended ? nil : .infinity, alignment: extended ? .topLeading : .center)
+            .contentShape(Rectangle())
+            .onTapGesture { if !extended, let record = builds.panelActivity, !record.status.isPending { builds.showResult(record.id) } }
             .background(PanelControlRegion())
             .mimicPopover(isPresented: presented) {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack { Text(text(popup == "tests" ? "build.tab.tests" : popup == "products" ? "build.chooseProduct" : "build.parameters.title")).mimicFont(.heading); Spacer(); Button(text("close")) { popup = "" }.buttonStyle(.plain) }
-                    if popup == "tests" { settings; testPicker }
-                    else if popup == "products" { products }
-                    else { settings; if popup != "settings" { actionButton(action, primary: true) } }
+                    HStack { Text(text(popup == "products" ? "build.chooseProduct" : "build.parameters.title")).mimicFont(.heading); Spacer(); Button(text("close")) { popup = "" }.buttonStyle(.plain) }
+                    if popup == "products" { products } else { settings }
                 }.padding(16).frame(width: 400).fixedSize(horizontal: false, vertical: true)
             }
-            .task(id: contextKey) { if let project = model.project { await builds.restoreDraft(project: project) } }
+            .task(id: context) { if let project = model.project { await builds.restoreDraft(project: project) } }
             .onChange(of: builds.draft) { _, _ in if let project = model.project { builds.saveDraft(project: project) } }
-            .onChange(of: builds.panelActivity?.stage) { _, stage in if stage == .products, builds.panelActivity?.products?.count ?? 0 > 1 { popup = "products" } }
             .onChange(of: builds.panelActivity?.products) { _, value in if builds.panelActivity?.stage == .products, value?.count ?? 0 > 1 { popup = "products" } }
-            .onChange(of: contextKey) { _, _ in popup = ""; search = "" }
             .onChange(of: builds.panelActivity?.status) { _, value in if popup == "products", value?.isPending != true { popup = "" } }
-            .onChange(of: popup) { _, value in if ["tests", "settings", "execute"].contains(value), let project = model.project { Task { await builds.refreshCatalogue(project: project, includeTestPlans: value == "tests") } } }
-            .onChange(of: action) { _, value in if value == "tests", let project = model.project { Task { await builds.refreshCatalogue(project: project, includeTestPlans: true) } } }
+            .onChange(of: context) { _, _ in popup = "" }
             .accessibilityIdentifier(extended ? "build.extended" : full ? "build.full" : "build.mini")
     }
 
-    // MARK: - Equal-height compact controls
+    // MARK: - Compact launch controls
 
-    /// Full uses width for its selectors; running work replaces launch controls in both sizes.
     @ViewBuilder private var compactControls: some View {
         if full {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    selections.labelsHidden()
-                    Button(text("build.moreSettings")) { popup = "settings" }.buttonStyle(.plain).mimicFont(.caption).lineLimit(1)
-                }.frame(maxWidth: .infinity)
-                compactActions.frame(maxWidth: .infinity)
+            HStack(alignment: .center, spacing: 12) {
+                VStack(spacing: 4) { selections.labelsHidden(); targetPicker.labelsHidden() }.frame(maxWidth: .infinity)
+                VStack(spacing: 4) { launch("tests", primary: true); launch("run"); launch("build") }.frame(maxWidth: .infinity)
             }
         } else {
             Button { popup = "settings" } label: {
-                Text(parametersSummary).mimicFont(.caption).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
-            }.buttonStyle(.plain).mimicHelp(parametersSummary).accessibilityIdentifier("build.parameters")
-            compactActions
+                Text((builds.draft.scheme.isEmpty ? text("build.chooseScheme") : builds.draft.scheme) + " · " + destination + " ⌄")
+                    .mimicFont(.caption).lineLimit(1).truncationMode(.middle).frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(.plain).accessibilityIdentifier("build.parameters")
+            targetPicker.labelsHidden()
+            launch("tests", primary: true)
+            HStack(spacing: 8) { launch("run"); launch("build") }
         }
     }
-    private var compactActions: some View {
-        VStack(spacing: 4) {
-            actionButton("run", primary: true)
-            HStack(spacing: 8) { actionButton("build"); actionButton("tests") }
-        }
-    }
-    private var parametersSummary: String { (builds.draft.scheme.isEmpty ? text("build.chooseScheme") : builds.draft.scheme) + " · " + destination }
-    private var destination: String { builds.catalogue.destinations.first { $0.id == builds.draft.destinationID }?.name ?? text("build.chooseDevice") }
-    private func actionButton(_ value: String, primary: Bool = false) -> some View {
+    private func launch(_ value: String, primary: Bool = false) -> some View {
         Button {
-            action = value
-            if value == "tests" { popup = "tests" }
-            else if builds.draft.scheme.isEmpty && (builds.draft.backend == .cli || value == "run") { popup = "execute" }
-            else { builds.perform(intent: value == "run" ? .run : nil); popup = "" }
-        } label: { Text(text("build.action." + value)).multilineTextAlignment(.center).frame(maxWidth: .infinity).fixedSize(horizontal: false, vertical: true) }
-            .buttonStyle(MimicAuxiliaryButtonStyle(primary: primary, height: extended ? 32 : 28, horizontalPadding: extended ? 12 : 8)).disabled(builds.panelBusy || model.project == nil)
+            if value == "tests" { builds.perform(.test) }
+            else if !builds.draftCompatible { popup = "settings" }
+            else { builds.perform(intent: value == "run" ? .run : nil) }
+        } label: { Text(text(value == "tests" ? "build.tests.runTarget" : value == "run" && !extended ? "build.action.runShort" : "build.action." + value)).lineLimit(1).minimumScaleFactor(0.8).frame(maxWidth: .infinity) }
+            .buttonStyle(MimicAuxiliaryButtonStyle(primary: primary, height: (extended ? 32 : 28) * textScale, horizontalPadding: 8))
+            .disabled(builds.panelBusy || model.project == nil || value == "tests" && !builds.testsCompatible)
             .accessibilityIdentifier("build.action." + value)
     }
     private var selections: some View {
-        VStack(alignment: .leading, spacing: extended || !full ? 8 : 4) {
-            Picker(text("build.scheme"), selection: parameter(\.scheme)) { Text(builds.draft.scheme.isEmpty ? text("build.chooseScheme") : builds.draft.scheme).tag(builds.draft.scheme); ForEach(builds.catalogue.schemes, id: \.self) { Text($0).tag($0) } }
-                .mimicSelection(text("build.scheme"), selection: parameter(\.scheme), options: [.init(text("build.chooseScheme"), "")] + builds.catalogue.schemes.map { .init($0, $0) })
+        VStack(alignment: .leading, spacing: extended ? 8 : 4) {
+            selection(text("build.scheme"), binding: parameter(\.scheme), values: builds.catalogue.schemes.map { .init($0, $0) })
                 .accessibilityIdentifier("build.scheme")
-            Picker(text("build.destination"), selection: parameter(\.destinationID)) { Text(text("build.chooseDevice")).tag(""); ForEach(builds.catalogue.destinations) { Text($0.name).tag($0.id) } }
-                .mimicSelection(text("build.destination"), selection: parameter(\.destinationID), options: [.init(text("build.chooseDevice"), "")] + builds.catalogue.destinations.map { .init($0.name, $0.id) })
+            selection(text("build.destination"), binding: parameter(\.destinationID), values: builds.catalogue.destinations.map { .init($0.name, $0.id) })
                 .accessibilityIdentifier("build.destination")
-        }.disabled(builds.panelBusy || builds.loading && builds.catalogue.schemes.isEmpty)
+        }.disabled(builds.panelBusy)
+    }
+    private func selection(_ label: String, binding: Binding<String>, values: [MimicSelectionOption<String>]) -> some View {
+        let empty = text(label == text("build.tests.target") && values.isEmpty ? "build.tests.noTargets" : "build.choose")
+        let options = [MimicSelectionOption(empty, "")] + values
+        return HStack(spacing: 12) {
+            if (extended || !popup.isEmpty) && label != text("build.tests.target") { Text(label).mimicFont(.caption).foregroundStyle(.secondary).frame(width: 88, alignment: .leading) }
+            BuildSelectionPopup(title: label, selection: binding, options: options, height: extended || !popup.isEmpty ? 32 : full ? 28 : 24)
+                .mimicSelection(label, selection: binding, options: options, labelsHidden: true)
+                .accessibilityLabel(label).mimicHelp(values.first { $0.value == binding.wrappedValue }?.title ?? empty)
+                .frame(maxWidth: .infinity)
+        }
+    }
+    private var targetPicker: some View {
+        selection(text("build.tests.target"), binding: targetSelection, values: targets.map { .init($0.name, $0.name) })
+            .disabled(builds.panelBusy || targets.isEmpty).accessibilityIdentifier("build.tests.target")
+            .mimicHelp(targets.isEmpty ? text("build.tests.noTargets") : builds.draft.testTarget ?? "")
+    }
+    private var targetSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider(); Text(text("build.tests.target")).mimicFont(.heading)
+            targetPicker
+            if targets.isEmpty { Text(text("build.tests.noTargets")).mimicFont(.caption).foregroundStyle(.secondary) }
+        }
     }
     private var settings: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Text(text("build.environment")).mimicFont(.heading)
             selections
-            if builds.catalogueLoadedAt != nil && builds.catalogueStale { Text(text("build.catalogue.stale")).mimicFont(.caption).foregroundStyle(.secondary) }
-            if builds.loading, let progress = builds.catalogueProgress {
-                BuildCatalogueProgressView(progress: progress)
-                Text(text(builds.catalogue.schemes.isEmpty ? "build.catalogue.progress.cold" : "build.catalogue.progress.saved")).mimicFont(.caption).foregroundStyle(.secondary)
-            }
-            if !builds.draftCompatible { Text(text("build.settings.required")).mimicFont(.caption).foregroundStyle(.secondary) }
-            Button(text("build.refreshSettings")) { Task { if let project = model.project { await builds.refreshCatalogue(project: project, force: true) } } }.disabled(builds.loading || builds.panelBusy)
             DisclosureGroup(text("build.moreSettings")) {
-                Picker(text("build.backend"), selection: $builds.draft.backend) { ForEach(BuildBackend.allCases, id: \.self) { Text(text("build.backend." + $0.rawValue)).tag($0) } }
-                    .mimicSelection(text("build.backend"), selection: $builds.draft.backend, options: BuildBackend.allCases.map { .init(text("build.backend." + $0.rawValue), $0) })
-                Picker(text("build.configuration"), selection: parameter(\.configuration)) { ForEach(builds.catalogue.configurations, id: \.self) { Text($0).tag($0) } }
-                    .mimicSelection(text("build.configuration"), selection: parameter(\.configuration), options: builds.catalogue.configurations.map { .init($0, $0) })
-                if builds.draft.backend == .xcodeMCP { XcodeBuildConfiguration(builds: builds, project: model.project); Text(text("build.run.cliRequired")).mimicFont(.caption) }
-                if !builds.catalogue.testPlans.isEmpty { Picker(text("build.testPlan"), selection: parameter(\.testPlan)) { Text(text("build.choose")).tag(""); ForEach(builds.catalogue.testPlans, id: \.self) { Text($0).tag($0) } }
-                    .mimicSelection(text("build.testPlan"), selection: parameter(\.testPlan), options: [.init(text("build.choose"), "")] + builds.catalogue.testPlans.map { .init($0, $0) }) }
+                selection(text("build.configuration"), binding: parameter(\.configuration), values: builds.catalogue.configurations.map { .init($0, $0) })
             }.disabled(builds.panelBusy)
-        }
-    }
-    private var testPicker: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(text("build.catalogue.explanation")).mimicFont(.caption).foregroundStyle(.secondary)
-            Button(text("build.catalogue.load")) { builds.perform(intent: .catalogue) }.disabled(builds.panelBusy || !builds.testsCompatible || builds.draft.backend != .cli).accessibilityIdentifier("build.catalogue.load")
-            if builds.catalogue.testPlans.count > 1, builds.draft.testPlan.isEmpty { Text(text("build.tests.choosePlan")).mimicFont(.caption).foregroundStyle(.secondary) }
-            if builds.draft.backend != .cli { Text(text("build.run.cliRequired")).mimicFont(.caption).foregroundStyle(.secondary) }
-            TextField(text("build.tests.search"), text: $search).textFieldStyle(.roundedBorder).mimicInput().accessibilityIdentifier("build.tests.search")
-            if let catalogue = builds.availableTests {
-                let filtered = catalogue.tests.filter { search.isEmpty || $0.id.localizedCaseInsensitiveContains(search) }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(Array(Set(filtered.map { $0.target + "/" + $0.className })).sorted(), id: \.self) { group in
-                            Text(group).mimicFont(.body, weight: .semibold).fixedSize(horizontal: false, vertical: true)
-                            ForEach(filtered.filter { $0.target + "/" + $0.className == group }) { test in
-                                Toggle(test.name, isOn: Binding(get: { builds.draft.testIdentifiers.contains(test.id) }, set: { selected in
-                                    if selected { if builds.draft.testIdentifiers.count < 100 { builds.draft.testIdentifiers.append(test.id) } }
-                                    else { builds.draft.testIdentifiers.removeAll { $0 == test.id } }
-                                })).toggleStyle(MimicCheckboxStyle()).mimicHelp(test.id).disabled(builds.panelBusy)
-                            }
-                        }
-                        if filtered.isEmpty { Text(text(catalogue.tests.isEmpty ? "build.tests.empty" : "build.tests.noMatches")).foregroundStyle(.secondary) }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(maxHeight: 240)
-            } else { Text(text("build.tests.notLoaded")).mimicFont(.caption).foregroundStyle(.secondary) }
-            Text(text("build.tests.selected") + ": \(builds.draft.testIdentifiers.count) / 100").mimicFont(.caption)
-            DisclosureGroup(text("build.tests.manual")) {
-                TextEditor(text: Binding(get: { builds.draft.testIdentifiers.joined(separator: "\n") }, set: { builds.draft.testIdentifiers = Array(Set($0.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })).sorted() })).frame(height: 70).mimicInput()
-            }.disabled(builds.panelBusy)
-            Button(text("build.action.testsSelected")) { builds.perform(.test); popup = "" }
-                .buttonStyle(MimicAuxiliaryButtonStyle(primary: true)).disabled(builds.panelBusy || !builds.testsCompatible || (try? builds.draftFor(.test).validate()) == nil)
-                .accessibilityIdentifier("build.tests.start")
+            Button(text("build.refreshSettings")) { Task { if let project = model.project { await builds.refreshCatalogue(project: project, includeTestPlans: true, force: true) } } }
+                .buttonStyle(MimicAuxiliaryButtonStyle()).disabled(builds.loading || builds.panelBusy)
+            if builds.loading, let progress = builds.catalogueProgress { BuildCatalogueProgressView(progress: progress) }
+            if !builds.message.isEmpty { Text(builds.message).mimicFont(.caption).foregroundStyle(.orange) }
         }
     }
     private var products: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(text("build.product.explanation")).mimicFont(.caption)
             if let record = builds.panelActivity {
-                ForEach(record.products ?? []) { product in
-                    Button(product.name) { try? builds.chooseProduct(product.id, activityID: record.id); popup = "" }.mimicHelp(product.bundleIdentifier)
-                }
+                ForEach(record.products ?? []) { product in Button(product.name) { try? builds.chooseProduct(product.id, activityID: record.id); popup = "" } }
                 Button(text("build.stop")) { builds.cancel(record.id); popup = "" }
             }
         }
     }
     private func parameter(_ keyPath: WritableKeyPath<BuildParameters, String>) -> Binding<String> {
         Binding(get: { builds.draft[keyPath: keyPath] }, set: { value in
-            if builds.draft[keyPath: keyPath] != value { builds.draft.testIdentifiers = [] }
-            builds.draft[keyPath: keyPath] = value
-            if keyPath == \BuildParameters.scheme, let project = model.project {
-                Task { await builds.refreshCatalogue(project: project, scheme: value) }
-            }
+            builds.draft[keyPath: keyPath] = value; builds.draft.testIdentifiers = []
+            if keyPath == \.scheme, let project = model.project { Task { await builds.refreshCatalogue(project: project, scheme: value, includeTestPlans: true) } }
         })
     }
 }
 
-/// The timer is local to this label; progress advances only after a discovery step succeeds.
 struct BuildCatalogueProgressView: View {
     let progress: BuildCatalogueProgress
     var body: some View {
@@ -212,33 +166,46 @@ struct BuildCatalogueProgressView: View {
     }
 }
 
+/// Full divides the available content width equally; only its left column contains the progress bar.
 struct BuildInlineStatus: View {
     @ObservedObject var builds: BuildCoordinator
     let record: BuildActivity
     var compact = false
+    var full = false
     var chooseProduct: (() -> Void)?
-    private var identity: String { text(record.actionKey) + " · " + record.parameters.scheme + " · " + buildInitiator(record) }
+    private var identity: String { text(record.actionKey) + " · " + record.parameters.scheme }
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 4 : 6) {
-            if record.status.isPending { Text(identity).mimicFont(.caption).lineLimit(compact ? 2 : nil).truncationMode(.middle).mimicHelp(identity) }
-            HStack(alignment: .firstTextBaseline) {
-                Text(text(record.phase)).foregroundStyle(buildColor(record)).lineLimit(compact ? 1 : nil).mimicHelp(record.errorCode.map { text("build.error." + $0) } ?? text(record.phase))
-                Spacer(minLength: 8)
-                MimicActivityClock(running: record.status.isPending) { _ in Text(buildDuration(record)).monospacedDigit() }
-            }.mimicFont(.caption)
-            BuildProgressView(record: record)
-            if let completed = record.completedStages, record.parameters.intent == .run, !compact || record.status.isPending { Text(String(format: text("build.progress.stages"), completed, record.progressTotal)).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(compact ? 1 : nil) }
-            if let completed = record.completedTestCount, let total = record.selectedTestCount, !compact || record.status.isPending { Text(String(format: text("build.progress.tests"), completed, total)).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(compact ? 1 : nil) }
-            if !compact, let error = record.errorCode { Text(text("build.error." + error)).mimicFont(.caption).foregroundStyle(.orange) }
-            if record.canCancel || compact && record.stage == .products && record.status.isPending && record.products?.count ?? 0 > 1 {
-                HStack(spacing: 8) {
-                    if compact, record.stage == .products, record.status.isPending, record.products?.count ?? 0 > 1 {
-                        Button(text("build.chooseProduct")) { chooseProduct?() }.buttonStyle(MimicAuxiliaryButtonStyle(height: 28, horizontalPadding: 8))
-                    }
-                    if record.canCancel { Button(text(buildStopLabel(record))) { builds.cancel(record.id) }.buttonStyle(MimicAuxiliaryButtonStyle(height: compact ? 28 : 32)).accessibilityIdentifier("build.cancel") }
+        Group {
+            if compact && full {
+                HStack(alignment: .center, spacing: 12) {
+                    progress.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    actions.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 }
+            } else {
+                VStack(alignment: .leading, spacing: 4) { progress; actions }
             }
         }.accessibilityElement(children: .contain)
+    }
+    private var progress: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(identity).mimicFont(.caption).lineLimit(compact ? 1 : nil).truncationMode(.middle).mimicHelp(identity)
+            Text(record.errorCode.map { text("build.error." + $0) } ?? text(record.phase)).mimicFont(.caption).foregroundStyle(buildColor(record)).lineLimit(compact ? 2 : nil).mimicHelp(record.errorCode.map { text("build.error." + $0) } ?? text(record.phase))
+            BuildProgressView(record: record)
+            if !compact, let error = record.errorCode { Text(text("build.error." + error)).mimicFont(.caption).foregroundStyle(.orange) }
+        }
+    }
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            MimicActivityClock(running: record.status.isPending) { _ in Text(buildDuration(record)).monospacedDigit() }.mimicFont(.caption)
+            if record.stage == .products, record.status.isPending, record.products?.count ?? 0 > 1 {
+                Button(text("build.chooseProduct")) { chooseProduct?() }.buttonStyle(MimicAuxiliaryButtonStyle(height: 28, horizontalPadding: 8))
+            }
+            if record.canCancel {
+                Button(text(buildStopLabel(record))) { builds.cancel(record.id) }.buttonStyle(MimicAuxiliaryButtonStyle(height: 28)).accessibilityIdentifier("build.cancel")
+            } else {
+                Button(text("build.output")) { builds.showResult(record.id) }.buttonStyle(MimicAuxiliaryButtonStyle(height: 28)).accessibilityIdentifier("build.error.open")
+            }
+        }
     }
 }
 

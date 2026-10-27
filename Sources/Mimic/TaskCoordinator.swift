@@ -295,6 +295,9 @@ final class TaskCoordinator: ObservableObject {
             return (updated, EnvironmentInspector.diagnostic(project: updated), status.0 == 0 ? GitSummary(porcelain: status.1) : nil)
         }.value
     }) {
+        let directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mimic")
+        let profileStore = ProfileStore(directory: directory.appendingPathComponent("Profiles"))
+        let importedProfile = try? profileStore.active()
         self.simulatorServices = simulatorServices
         self.inspectBootstrapAdmission = inspectBootstrapAdmission
         self.inspectProject = inspectProject
@@ -303,7 +306,7 @@ final class TaskCoordinator: ObservableObject {
         self.systemOptions = MimicSystemOptions(defaults: defaults)
         self.frameDiagnostics = FrameDiagnosticsSettings(defaults: defaults)
         self.appearance = PanelAppearanceStore(defaults: defaults)
-        self.panelLayout = PanelLayoutController(defaults: defaults)
+        self.panelLayout = PanelLayoutController(defaults: defaults, compatibility: importedProfile?.profile.compatibility)
         self.toolsPreferences = ToolsPreferencesModel(defaults: defaults)
         self.branchSwitch = BranchSwitchCoordinator(defaults: defaults)
         self.appIconSettings = AppIconSettings(defaults: defaults)
@@ -329,23 +332,22 @@ final class TaskCoordinator: ObservableObject {
             ClaudeUsageAdapter(credentials: NativeClaudeUsageCredentials(locations: locations))
         ], scanUsage: { await scanner.scanUsage() })
         self.analysis = analysis ?? AnalysisCoordinator(makeRunner: { AIProcessRunner(helper: helper) }, makeProbeRunner: { AIProcessRunner(helper: helper, timeLimit: 8) })
-        let directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Mimic")
         self.serviceTools = ServiceToolCoordinator(defaults: defaults, directory: directory.appendingPathComponent("ServiceTools"))
-        self.history = HistoryStore(directory: directory)
+        self.history = HistoryStore(directory: directory, compatibility: importedProfile?.profile.compatibility)
         self.historyPersistence = TaskHistoryPersistence(store: self.history)
         self.supportDirectory = directory
         self.codexAppearance = CodexPanelAppearanceStore(directory: directory, previous: self.appearance.selection)
         self.appearance.connect(to: self.codexAppearance)
         self.appearanceContinuity = NativeAppearanceContinuity(store: self.appearance, shared: self.codexAppearance)
         if let data = defaults.data(forKey: "agentPreparationReceipts"), let receipts = try? JSONDecoder().decode([String: PreparationReceipt].self, from: data) { preparationReceipts = receipts }
-        self.profileStore = ProfileStore(directory: directory.appendingPathComponent("Profiles"))
-        self.activeProfile = try? self.profileStore.active()
+        self.profileStore = profileStore
+        self.activeProfile = importedProfile
         self.builds = buildCoordinator ?? BuildCoordinator(directory: directory, helper: helper, defaults: defaults)
         self.simulatorScreen = simulatorCoordinator ?? SimulatorCoordinator(directory: directory)
         let jenkinsSettings = jenkinsSettings ?? JenkinsSettings(defaults: defaults)
         self.jenkinsSettings = jenkinsSettings
         self.ciLaunchPreferences = CILaunchPreferences(defaults: defaults)
-        self.profileRemote = ProfileRemoteCoordinator(directory: directory, jenkins: jenkinsSettings.authenticatedClient, gitlab: settings.authenticatedClient, jenkinsToken: { try jenkinsSettings.token(for: $0) }, gitlabToken: { try settings.token(for: $0) })
+        self.profileRemote = ProfileRemoteCoordinator(directory: directory, jenkins: jenkinsSettings.authenticatedClient, gitlab: settings.authenticatedClient, jenkinsToken: { try jenkinsSettings.token(for: $0) }, gitlabToken: { try settings.token(for: $0) }, compatibility: importedProfile?.profile.compatibility)
         self.remoteTests = RemoteTestCoordinator(directory: directory, jenkins: jenkinsSettings.authenticatedClient, gitlab: settings.authenticatedClient, jenkinsToken: { try jenkinsSettings.token(for: $0) }, gitlabToken: { try settings.token(for: $0) })
         self.simulatorUsage = self.usageStore.load()
         do { self.records = try self.history.load() } catch { self.message = text("history.error") + ": " + error.localizedDescription }
@@ -740,11 +742,11 @@ final class TaskCoordinator: ObservableObject {
         guard builds.records.contains(where: { $0.id == id }) else { return }
         selectedTaskID = nil; taskSearch = ""; taskFilter = .all
         revealSection(.tasks); revealHistoryEntry(id); builds.selectedID = id
-        scrollPanel(to: "build." + id.uuidString); showPanel?()
+        scrollPanel(to: "build." + id.uuidString); showPanel?(); builds.markResultViewed(id)
     }
     func toggleBuild(_ id: UUID) {
         selectedTaskID = nil; releasePanelFocus?(); builds.selectedID = builds.selectedID == id ? nil : id
-        if builds.selectedID != nil { scrollPanel(to: "build." + id.uuidString) }
+        if builds.selectedID != nil { scrollPanel(to: "build." + id.uuidString); builds.markResultViewed(id) }
     }
     var filteredBuildRecords: [BuildActivity] {
         builds.records.reversed().filter { record in
@@ -985,7 +987,7 @@ final class TaskCoordinator: ObservableObject {
         case .fullCleanup: role = .fullCleanup
         case .derivedDataCleanup: role = .derivedDataCleanup
         case .generation:
-            switch generation?.kind ?? generatorKind { case .ui: role = .generateUI; case .module: role = .generateSicilia; case .feature: role = .generateGalera }
+            switch generation?.kind ?? generatorKind { case .ui: role = .generateUI; case .module: role = .generateModule; case .feature: role = .generateFeature }
         default: throw ProfileError.action
         }
         let values: [ProfileFormField: String] = action == .bootstrap ? (options ?? bootstrapOptions).profileValues : action == .generation ? [.name: generation?.name ?? generatorName] : [:]
