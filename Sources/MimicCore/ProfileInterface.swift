@@ -12,7 +12,7 @@ public enum ProfileToolRole: String, Codable, CaseIterable, Sendable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer(), value = try container.decode(String.self)
         let aliases = (decoder.userInfo[ProfileCompatibility.codingKey] as? ProfileCompatibility)?.roles ?? [:]
-        guard let role = Self(rawValue: aliases[value] ?? value) else {
+        guard let role = Self(rawValue: aliases[value] ?? ProfileCompatibility.legacyRoles[value] ?? value) else {
             throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown profile role")
         }
         self = role
@@ -109,7 +109,7 @@ public struct ProfileInterface: Codable, Equatable, Sendable {
 
 // MARK: - Profile-owned compatibility
 
-/// Aliases preserve a team's existing local history and layouts without shipping its vocabulary.
+/// Profile aliases extend the built-in compatibility for previously shipped identifiers.
 public struct ProfileCompatibility: Codable, Equatable, Sendable {
     public var actions: [String: String]? = nil
     public var generators: [String: String]? = nil
@@ -118,6 +118,10 @@ public struct ProfileCompatibility: Codable, Equatable, Sendable {
         self.actions = actions; self.generators = generators; self.roles = roles
     }
     static let codingKey = CodingUserInfoKey(rawValue: "profileCompatibility")!
+    // These identifiers were accepted by released versions and can occur in stored data.
+    static let legacyRoles = ["generateSicilia": "generateModule", "generateGalera": "generateFeature"]
+    static let legacyGenerators = ["sicilia": "module", "galera": "feature"]
+    static let legacyActions = ["celestial": "generation", "babylon": "localization"]
     public static func decoder(_ compatibility: Self? = nil) -> JSONDecoder {
         let decoder = JSONDecoder()
         decoder.userInfo[codingKey] = compatibility

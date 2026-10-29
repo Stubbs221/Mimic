@@ -32,6 +32,31 @@ private struct GitFixture {
 }
 
 struct BranchTests {
+    @Test func originEntriesHaveDistinctIDsAndSkipSymbolicHead() async throws {
+        let fixture = try GitFixture(); defer { fixture.remove() }
+        try fixture.git(["update-ref", "refs/remotes/origin/feature/quoted-$value", "HEAD"])
+        try fixture.git(["update-ref", "refs/remotes/other/hidden", "HEAD"])
+        try fixture.git(["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/feature/quoted-$value"])
+        try fixture.git(["branch", "origin/feature/quoted-$value"])
+        let entries = try await LocalGitBranchService().branches(fixture.project)
+        let remote = try #require(entries.first { $0.isRemote })
+        #expect(remote.name == "feature/quoted-$value")
+        #expect(remote.id == "refs/remotes/origin/feature/quoted-$value")
+        #expect(remote.displayName == "origin/feature/quoted-$value")
+        #expect(entries.filter(\.isRemote).count == 1)
+        #expect(Set(entries.map(\.id)).count == entries.count)
+        #expect(entries.contains { !$0.isRemote && $0.name == "origin/feature/quoted-$value" })
+    }
+
+    @Test func ordinaryRemoteSelectionCreatesTrackingBranch() async throws {
+        let fixture = try GitFixture(); defer { fixture.remove() }
+        try fixture.git(["remote", "add", "origin", fixture.root.appendingPathComponent("unused.git").path])
+        try fixture.git(["update-ref", "refs/remotes/origin/remote-$value", "HEAD"])
+        let result = try await LocalGitBranchService().switchBranch("refs/remotes/origin/remote-$value", project: fixture.project)
+        #expect(result.project.branch == "remote-$value")
+        #expect(try fixture.git(["rev-parse", "--symbolic-full-name", "@{upstream}"]).trimmingCharacters(in: .whitespacesAndNewlines) == "refs/remotes/origin/remote-$value")
+    }
+
     @Test func stalledFsmonitorCannotKeepPickerInspectionWaiting() async throws {
         let fixture = try GitFixture(); defer { fixture.remove() }
         let hook = fixture.root.appendingPathComponent(".git/stalled-fsmonitor")

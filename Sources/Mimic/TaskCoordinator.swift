@@ -36,7 +36,11 @@ final class TaskCoordinator: ObservableObject {
     @Published private(set) var importingProfile = false
     @Published var profileProgress: [UUID: String] = [:]
     @Published var awaitingInput: Set<UUID> = []
+    private var inputPromptDetectors: [UUID: TerminalInputPromptDetector] = [:]
     @Published var profilePreviews: [String: ProfilePreview] = [:]
+    @Published var buildResourceStates: [String: BuildResourceState] = [:]
+    @Published var resourceRecoveryAdmissions: Set<String> = []
+    var resourceRecoveryRequests: [UUID: (identity: String, task: Task<UUID, Error>)] = [:]
     private let profileStore: ProfileStore
     private var sanitizedLogPending: [UUID: Data] = [:]
     private var sanitizedLogDropping: Set<UUID> = []
@@ -72,6 +76,9 @@ final class TaskCoordinator: ObservableObject {
     private(set) var bootstrapProgressID: UUID?
     @Published
     private(set) var quickBootstrapActivity: QuickBootstrapActivity?
+    @Published private(set) var mintRecoveryRequest: TaskRecord?
+    /// The same environment is used for admission, installation and the resumed Bootstrap.
+    var bootstrapEnvironment: @Sendable (ProjectContext) -> [String: String] = { EnvironmentInspector.environment(project: $0) }
     @Published
     var expandedSection: PanelSection? {
         didSet {
@@ -207,7 +214,7 @@ final class TaskCoordinator: ObservableObject {
     var agentChangeSnapshots: [UUID: GitActivitySnapshot] = [:]
     var preparationInputs: [UUID: String] = [:]
     var preparationToolchains: [UUID: String] = [:]
-    private var agentMetadataPending: Set<UUID> = []
+    private(set) var agentMetadataPending: Set<UUID> = []
     var identifyPreparationToolchain: (String) async -> String? = { developer in await Task.detached { PreparationToolchain.identify(developer: developer) }.value }
     var preparationReceipts: [String: PreparationReceipt] = [:]
     private let history: HistoryStore
@@ -325,9 +332,7 @@ final class TaskCoordinator: ObservableObject {
         let locations = AIUsageLocations(), scanner = AIUsageActivityScanner()
         self.aiUsage = usageCoordinator ?? AIUsageCoordinator(defaults: defaults, fallback: aiSettings.settings.provider, adapters: [
             CodexUsageAdapter(executable: {
-                if let configured = AIProviderAdapters.resolve(provider: .codex, configuredPath: aiSettings.settings.codexPath) { return configured }
-                guard aiSettings.settings.codexPath.isEmpty, let app = MimicPluginInstaller.findCodex() else { return nil }
-                return ["Contents/Resources/codex-cli/bin/codex", "Contents/Resources/codex", "Contents/Resources/codex-cli"].map { app.appendingPathComponent($0).path }.first { FileManager.default.isExecutableFile(atPath: $0) && !URL(fileURLWithPath: $0).hasDirectoryPath && (try? URL(fileURLWithPath: $0).resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+                AIProviderAdapters.resolve(provider: .codex, configuredPath: aiSettings.settings.codexPath)
             }, home: locations.codex),
             ClaudeUsageAdapter(credentials: NativeClaudeUsageCredentials(locations: locations))
         ], scanUsage: { await scanner.scanUsage() })
@@ -355,6 +360,7 @@ final class TaskCoordinator: ObservableObject {
         self.selectedProjectPath = defaults.string(forKey: "selectedProject") ?? self.projects.first?.path ?? ""
         self.builds.checkPreparation = { [weak self] project, parameters in
             guard let self else { throw BuildError.unavailable }
+            if try await self.refreshBuildResources(project: project, platform: parameters.platform ?? .ios).blocking { throw BuildError.resourcesRequired }
             if await self.preparationState(project: project, platform: parameters.platform ?? .ios)["blocking"] == .bool(true) { throw BuildError.preparationRequired }
         }
         self.launchPreparation.onStateChange = { [weak self] state in self?.launchState = state }
@@ -411,6 +417,18 @@ final class TaskCoordinator: ObservableObject {
         self.builds.currentProfile = { [weak self] in self?.activeProfile }
         self.builds.acceptsProject = { [weak self] in self?.projects.contains($0) == true }
         self.builds.mayAdmit = { [weak self] in self.map { !$0.admissionsClosed && !$0.switchingBranch && !$0.hasGitOperation } ?? false }
+        self.builds.queuePositionForActivity = { [weak self] id in
+            guard let self else { return nil }
+            let all = self.records.filter { $0.status == .queued }.map { ($0.id, $0.createdAt) }
+                + self.builds.records.filter { $0.status == .queued }.map { ($0.id, $0.createdAt) }
+                + self.simulatorScreen.records.filter { $0.status == .queued }.map { ($0.id, $0.createdAt) }
+            return all.sorted { $0.1 < $1.1 }.firstIndex { $0.0 == id }.map { $0 + 1 }
+        }
+        self.builds.otherLocalBlocker = { [weak self] project in
+            guard let self else { return nil }
+            return self.records.first { $0.project.path == project.path && [.queued, .running].contains($0.status) }?.id
+                ?? self.simulatorScreen.records.first { $0.project.path == project.path && ($0.status.isPending || $0.holdsQueue) }?.id
+        }
         self.builds.schedule = { [weak self] in self?.startNext(); self?.finishExitIfReady() }
         self.builds.showResult = { [weak self] in self?.showBuildResult($0) }
         self.builds.showSimulator = { [weak self] record in
@@ -575,7 +593,7 @@ final class TaskCoordinator: ObservableObject {
         return self.project
     }
 
-    var bootstrapLocked: Bool { self.requestingBootstrap || (self.bootstrapRecord.map { $0.status == .running || $0.status == .queued } ?? false) }
+    var bootstrapLocked: Bool { self.mintRecoveryRequest != nil || self.requestingBootstrap || (self.bootstrapRecord.map { $0.status == .running || $0.status == .queued } ?? false) }
     var bootstrapIsBlocked: Bool {
         if case .blockedByXcode = self.launchState { return true }
         return false
@@ -868,7 +886,7 @@ final class TaskCoordinator: ObservableObject {
     @discardableResult
     func startBranchSwitch(_ name: String, project: ProjectContext, requestID: UUID, threadID: String? = nil) throws -> BranchSwitchOperation {
         if let old = try? self.branchSwitch.operation(requestID) {
-            guard old.source == project, old.target == name, old.sourceThreadID == threadID else { throw BranchSwitchError.context }
+            guard old.source == project, old.selectionID == name, old.sourceThreadID == threadID else { throw BranchSwitchError.context }
             return old
         }
         if let blocker = self.branchSwitchBlocker(for: project, requiresSnapshot: threadID == nil) { throw blocker }
@@ -1134,6 +1152,8 @@ final class TaskCoordinator: ObservableObject {
         guard let record = self.records.last(where: {
             $0.simulator?.id == device.id && $0.project.path == self.project?.path && $0.selectedDeveloperDirectory == self.simulatorDeveloper
         }), record.status == .failed, !self.simulatorDismissedFailures.contains(record.id) else { return nil }
+        // A fresh catalogue can confirm recovery outside Mimic, without replaying the failed task.
+        if record.action == .simulatorBoot && device.isBooted || record.action == .simulatorShutdown && device.state == "Shutdown" { return nil }
         return SimulatorPanelFailure(message: record.error ?? text("simulators.operation.error"), taskID: record.id)
     }
     func canActivateSimulator(_ device: SimulatorDevice) -> Bool {
@@ -1366,6 +1386,7 @@ final class TaskCoordinator: ObservableObject {
         guard case let .legacy(id) = choice, let next = records.first(where: { $0.id == id }) else { return }
         let adapterPath = self.adapter.path
         let profileStore = self.profileStore
+        let bootstrapEnvironment = self.bootstrapEnvironment
         self.launchPreparation.start(record: next, inspect: { next in
             await self.prepareAgentMetadata(next)
             return await Task.detached { () -> CommandPreparation in
@@ -1373,11 +1394,18 @@ final class TaskCoordinator: ObservableObject {
                     var actual = try EnvironmentInspector.project(path: next.project.path, developerDirectory: next.project.developerDirectory, appleTarget: next.project.appleTarget)
                     guard QueuePolicy.matches(actual, request: next.project) else { return .failed("checkout.changed") }
                     actual.developerDirectory = next.selectedDeveloperDirectory ?? actual.developerDirectory
-                    var env = EnvironmentInspector.environment(project: actual)
+                    var env = next.action == .bootstrap ? bootstrapEnvironment(actual) : EnvironmentInspector.environment(project: actual)
                     if let execution = next.profileExecution {
                         try profileStore.verify(execution.snapshot)
                         try ProfileGeneratorValidation.revalidate(execution, project: actual)
-                        return try .ready(execution.commands(project: actual)[0])
+                        if let requirement = execution.snapshot.profile.buildResources?.first(where: { $0.recoveryActionID == execution.actionID && $0.recoveryParameters == execution.parameters }) {
+                            let resources = BuildResourceInspector.inspect([requirement], project: actual, platform: requirement.platform)
+                            guard resources.blocker?.canRecover == true else { return .failed("build.resources.changed") }
+                        }
+                        if next.installingMint == true {
+                            return try .ready(BootstrapMintInstallation.command(execution: execution, project: actual, environment: env))
+                        }
+                        return try .ready(execution.commands(project: actual, environment: env)[0])
                     }
                     let missing = EnvironmentInspector.missing(action: next.action, options: next.options, project: actual, environment: env)
                     if !missing.isEmpty { return .failed("missing: " + missing.joined(separator: ", ")) }
@@ -1391,12 +1419,13 @@ final class TaskCoordinator: ObservableObject {
                               next.action == .simulatorBoot ? actualDevice.state == "Shutdown" : actualDevice.isBooted else { return .failed("simulators.changed") }
                     }
                     return try .ready(CommandSpec.make(action: next.action, project: actual, options: next.options, environment: env, generation: next.generation, simulator: next.simulator, adapter: adapterPath))
-                } catch { return .failed("project.invalid") }
+                } catch MimicError.missingTools(let tools) { return .failed("missing: " + tools.joined(separator: ", ")) }
+                catch { return .failed("project.invalid") }
             }.value
         }, launch: { [weak self] command in
             guard let self, self.records.contains(where: { $0.id == next.id && $0.status == .queued }), !self.admissionsClosed else { return }
-            if let execution = next.profileExecution {
-                do { self.pipelineCommands[next.id] = Array(try execution.commands(project: next.executionProject).dropFirst()) }
+            if let execution = next.profileExecution, next.installingMint != true {
+                do { self.pipelineCommands[next.id] = Array(try execution.commands(project: next.executionProject, environment: next.action == .bootstrap ? self.bootstrapEnvironment(next.executionProject) : nil).dropFirst()) }
                 catch { self.cancel(id: next.id); return }
             }
             self.launch(id: next.id, command: command)
@@ -1458,8 +1487,8 @@ final class TaskCoordinator: ObservableObject {
                     self.profileProgress[id] = matcher.0.title
                 }
             }
-            let prompt = DiagnosticText.clean(String(decoding: bytes.suffix(512), as: UTF8.self))
-            if prompt.range(of: #"(?i)(?:password|passphrase|verification code|enter[^\n]{0,80}|\[y/n\]|\(y/n\))[:? >]\s*$"#, options: .regularExpression) != nil { self.awaitingInput.insert(id) }
+            if self.inputPromptDetectors[id, default: TerminalInputPromptDetector()].consume(bytes) { self.awaitingInput.insert(id) }
+            else { self.awaitingInput.remove(id) }
             var buffered = self.buffers[id] ?? Data(); buffered.append(bytes)
             if buffered.count > 512 * 1024 { buffered = Data(buffered.suffix(512 * 1024)); self.truncatedBuffers.insert(id) }
             self.buffers[id] = buffered; self.terminalOutput?(id, bytes)
@@ -1492,7 +1521,23 @@ final class TaskCoordinator: ObservableObject {
 
     private func finished(id: UUID, event: HostEvent?) {
         guard let index = records.firstIndex(where: { $0.id == id }) else { return }
-        if event?.cancelled != true, event?.code == 0, event?.signal == 0, event?.launchError == 0, records[index].profileExecution != nil { records[index].completedProfileSteps = (records[index].completedProfileSteps ?? 0) + 1 }
+        if self.records[index].installingMint == true {
+            let installed = EnvironmentInspector.executable("mint", environment: self.bootstrapEnvironment(self.records[index].executionProject)) != nil
+            if event?.cancelled != true, event?.code == 0, event?.signal == 0, event?.launchError == 0, installed, !self.admissionsClosed {
+                // Keep the same queue position and pinned profile/options. Full admission runs again
+                // before Bootstrap, including checkout validation and the normal Xcode quit flow.
+                self.records[index].installingMint = false; self.records[index].status = .queued
+                self.awaitingInput.remove(id); self.session = nil
+                self.inputPromptDetectors[id] = nil
+                self.bootstrapProgress = BootstrapProgress(options: self.records[index].options, matchers: self.records[index].profileExecution?.action?.progress ?? [])
+                self.checkReadiness(); self.persist(); self.startNext(); return
+            }
+            self.records[index].error = text("bootstrap.mint.failed")
+            if event?.cancelled != true, event?.code == 0, event?.signal == 0, event?.launchError == 0 {
+                self.finished(id: id, event: nil); return
+            }
+        }
+        if event?.cancelled != true, event?.code == 0, event?.signal == 0, event?.launchError == 0, records[index].profileExecution != nil, records[index].installingMint != true { records[index].completedProfileSteps = (records[index].completedProfileSteps ?? 0) + 1 }
         if event?.cancelled != true, event?.code == 0, event?.signal == 0, event?.launchError == 0,
            var remaining = self.pipelineCommands[id], !remaining.isEmpty, !self.admissionsClosed {
             let next = remaining.removeFirst(); self.pipelineCommands[id] = remaining
@@ -1500,6 +1545,7 @@ final class TaskCoordinator: ObservableObject {
         }
         self.pipelineCommands.removeValue(forKey: id)
         self.awaitingInput.remove(id)
+        self.inputPromptDetectors[id] = nil
         self.records[index].finishedAt = Date(); self.records[index].exitCode = event?.code; self.records[index].signal = event?.signal
         if event?.cancelled == true { self.records[index].status = .cancelled }
         else if event?.code == 0, event?.signal == 0, event?.launchError == 0 { self.records[index].status = .succeeded }
@@ -1601,7 +1647,7 @@ final class TaskCoordinator: ObservableObject {
 
     /// Viewing diagnostics does not create an AI session or invoke a provider.
     func diagnosticSnapshot(for record: TaskRecord) -> DiagnosticSnapshot {
-        if let session = self.analysis.sessions[record.id] { return session.snapshot }
+        if let snapshot = self.analysis.sessions[record.id]?.snapshot as? DiagnosticSnapshot { return snapshot }
         let output = record.metadataOnly ? self.diagnostics.fragment(id: record.id) : String(decoding: self.replay(id: record.id), as: UTF8.self)
         let unavailable = output?.isEmpty != false
         return DiagnosticSnapshot(record: record, output: unavailable ? record.error ?? "" : output ?? "", wasTruncated: self.diagnostics.isTruncated(id: record.id) || self.truncatedBuffers.contains(record.id), outputUnavailable: unavailable)
@@ -1690,6 +1736,7 @@ final class TaskCoordinator: ObservableObject {
         self.bootstrapTerminals[id]?.discardReplayAfterPrivateInput()
         guard self.session?.send(data) == true else { self.message = text("terminal.input.rejected"); return false }
         self.awaitingInput.remove(id)
+        self.inputPromptDetectors[id] = nil
         return true
     }
     func resize(id: UUID, columns: Int, rows: Int) { if id == self.activeID { self.session?.resize(columns: columns, rows: rows) } }
@@ -1852,7 +1899,7 @@ extension TaskCoordinator {
         self.saveProjects(); self.refresh()
     }
 
-    func requestProfile(execution: ProfileExecution, expected: ProjectContext? = nil, recordID: UUID = UUID(), quick: Bool = false, reveal: Bool = true, navigate: Bool = true, completion: ((TaskRecord?) -> Void)? = nil) {
+    func requestProfile(execution: ProfileExecution, expected: ProjectContext? = nil, recordID: UUID = UUID(), quick: Bool = false, reveal: Bool = true, navigate: Bool = true, installingMint: Bool = false, completion: ((TaskRecord?) -> Void)? = nil) {
         guard expected != nil || execution.binding?.role != .bootstrap || !self.bootstrapLocked else { completion?(nil); return }
         guard let current = expected ?? self.project, let action = execution.action, action.remote == nil,
               expected == nil || self.projects.contains(current), !self.admissionsClosed, !self.switchingBranch,
@@ -1875,6 +1922,7 @@ extension TaskCoordinator {
         let bootstrap = execution.binding?.role == .bootstrap
         let navigationSource = MimicMotionSource.current
         var request = execution.record(id: recordID, project: current)
+        request.installingMint = installingMint ? true : nil
         if bootstrap && reveal {
             self.requestingBootstrap = true
             self.quickBootstrapActivity = QuickBootstrapActivity(request: request)
@@ -1902,11 +1950,15 @@ extension TaskCoordinator {
                 guard !self.admissionsClosed, self.pendingCount < 100 else { return }
                 guard checked.path == current.path, checked.developerDirectory == current.developerDirectory,
                       expected == nil || (checked == current && self.projects.contains(current)) else { throw MimicError.changedCheckout }
-                _ = try execution.commands(project: checked)
                 request.project = checked
+                let environment = bootstrap ? self.bootstrapEnvironment(checked) : EnvironmentInspector.environment(project: checked)
+                if installingMint {
+                    _ = try BootstrapMintInstallation.command(execution: execution, project: checked, environment: environment)
+                } else { _ = try execution.commands(project: checked, environment: environment) }
                 request.selectedDeveloperDirectory = checked.developerDirectory ?? EnvironmentInspector.capture("/usr/bin/xcode-select", ["-p"]).1
                 let record = request
                 if bootstrap && reveal {
+                    if installingMint { self.mintRecoveryRequest = nil }
                     self.quickBootstrapActivity?.request = record
                     if let index = self.projects.firstIndex(where: { $0 == current }) {
                         self.projects[index] = checked; self.saveProjects(); self.updateCIContext()
@@ -1921,14 +1973,47 @@ extension TaskCoordinator {
                 }
                 self.startNext()
             } catch {
+                if bootstrap && reveal && !installingMint, case MimicError.missingTools(let tools) = error, Set(tools) == ["mint"] {
+                    // Preserve the reviewed launch instead of rebuilding it from mutable form defaults.
+                    self.mintRecoveryRequest = request
+                    self.quickBootstrapActivity = QuickBootstrapActivity(request: request)
+                    if let index = self.projects.firstIndex(of: current) {
+                        self.projects[index] = request.project; self.saveProjects(); self.updateCIContext()
+                    }
+                    return
+                }
                 if let index = self.records.firstIndex(where: { $0.id == recordID && $0.status == .queued }) {
                     self.records[index].status = .failed; self.records[index].finishedAt = Date(); self.records[index].error = text("history.error"); self.persist()
                 }
-                let message = (error as? MimicError) == .changedCheckout ? text("checkout.changed") : text("profile.action.error") + ": " + String(describing: error)
+                let message: String
+                if case MimicError.missingTools(let tools) = error { message = text("tools.missing") + tools.joined(separator: ", ") }
+                else { message = (error as? MimicError) == .changedCheckout ? text("checkout.changed") : text("profile.action.error") + ": " + String(describing: error) }
                 if bootstrap && reveal { self.quickBootstrapActivity?.error = message; self.unreadFailure = true }
                 else { self.message = message }
             }
         }
+    }
+
+    /// Recovery is available in Mini, Full and the floating card without opening a detail view.
+    var mintRecoveryRecord: TaskRecord? {
+        if let pending = self.mintRecoveryRequest { return pending }
+        guard let activity = self.quickBootstrapActivity else { return nil }
+        let record = activity.record(in: self.records)
+        return record.installingMint == true ? record : nil
+    }
+
+    var canInstallMint: Bool {
+        guard let record = self.mintRecoveryRecord else { return false }
+        return !self.requestingBootstrap && !self.admissionsClosed && !self.switchingBranch && self.pendingCount < 100
+            && !self.records.contains { $0.id == record.id && [.queued, .running].contains($0.status) }
+    }
+
+    /// This button is the explicit approval for both Homebrew installation and the pinned Bootstrap.
+    func installMintAndContinue() {
+        guard self.canInstallMint, let record = self.mintRecoveryRecord, let execution = record.profileExecution else { return }
+        self.requestProfile(execution: execution, expected: record.project,
+                            recordID: self.records.contains(where: { $0.id == record.id }) ? UUID() : record.id,
+                            navigate: false, installingMint: true)
     }
 }
 
@@ -2043,5 +2128,5 @@ extension TaskCoordinator {
 }
 
 extension TaskCoordinator {
-    func panelBranches(_ project: ProjectContext) async throws -> [String] { try await branchService.branches(project).map(\.name) }
+    func panelBranches(_ project: ProjectContext) async throws -> [LocalBranch] { try await branchService.branches(project) }
 }

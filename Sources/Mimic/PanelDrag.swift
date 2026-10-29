@@ -282,6 +282,8 @@ struct PanelDragBridge: NSViewRepresentable {
                 guard !gesture.ownsPress, isVisible(point), let item = callbacks.candidate(point) else { return event }
                 let header = window.contentView.map { PanelDragHeaderRegion.MarkerView.contains(event.locationInWindow, in: $0) } == true
                 guard header || !isControl(at: event.locationInWindow) else { return event }
+                // This press is consumed before the application's ordinary click monitor can see it.
+                (window as? MimicPopover)?.releaseTextInputFocus(for: event)
                 selected = item; gesture.press(at: point, time: now, eligible: true)
                 lastTick = now
                 timer = Timer.scheduledTimer(withTimeInterval: 1 / 60, repeats: true) { [weak self] _ in

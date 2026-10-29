@@ -8,9 +8,26 @@ import Foundation
 
 public enum AnalysisState: String, Sendable { case ready, preparing, running, succeeded, failed, cancelled }
 
+/// Immutable input shared by local diagnostics and remote CI analysis, without inventing local tasks.
+public protocol AnalysisSnapshot: Sendable {
+    var taskID: UUID { get }
+    var localTaskID: UUID? { get }
+    var project: ProjectContext { get }
+    var text: String { get }
+    var createdAt: Date { get }
+    var metadataOnly: Bool { get }
+    var outputUnavailable: Bool { get }
+    var truncated: Bool { get }
+    func prompt(fragment: String, comment: String) -> String
+}
+
+extension DiagnosticSnapshot: AnalysisSnapshot {
+    public var localTaskID: UUID? { self.taskID }
+}
+
 /// UI state belongs to the original task and remains ephemeral, even after a provider succeeds.
 public struct AnalysisSession: Sendable {
-    public let snapshot: DiagnosticSnapshot
+    public let snapshot: any AnalysisSnapshot
     public var provider: AIProvider
     public var fragment: String
     public var comment = ""
@@ -22,7 +39,7 @@ public struct AnalysisSession: Sendable {
     public var requestID: UUID?
     /// Session-only presentation: closing the editor never cancels a request.
     public var requestExpanded = true
-    public init(snapshot: DiagnosticSnapshot, provider: AIProvider) {
+    public init(snapshot: any AnalysisSnapshot, provider: AIProvider) {
         self.snapshot = snapshot; self.provider = provider; self.fragment = snapshot.text
     }
 
@@ -87,7 +104,7 @@ public final class AnalysisCoordinator: ObservableObject {
 
     public var isActive: Bool { self.activeTaskID != nil }
 
-    public func prepare(snapshot: DiagnosticSnapshot, provider: AIProvider) {
+    public func prepare(snapshot: any AnalysisSnapshot, provider: AIProvider) {
         guard self.sessions[snapshot.taskID] == nil else { return }
         if self.sessions.count >= 8, let oldest = self.sessions.filter({ $0.key != self.activeTaskID }).min(by: { $0.value.snapshot.createdAt < $1.value.snapshot.createdAt }) {
             self.sessions.removeValue(forKey: oldest.key)
@@ -144,8 +161,8 @@ public final class AnalysisCoordinator: ObservableObject {
     }
 
     public func retain(ids: Set<UUID>) {
-        if let activeTaskID = self.activeTaskID, !ids.contains(activeTaskID) { self.cancel() }
-        self.sessions = self.sessions.filter { ids.contains($0.key) || $0.key == self.activeTaskID }
+        if let activeTaskID = self.activeTaskID, let localID = self.sessions[activeTaskID]?.snapshot.localTaskID, !ids.contains(localID) { self.cancel() }
+        self.sessions = self.sessions.filter { $0.value.snapshot.localTaskID == nil || ids.contains($0.key) || $0.key == self.activeTaskID }
     }
 
     /// Eviction cannot interrupt the already-running request; its result is pruned on the next idle callback.

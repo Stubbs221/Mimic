@@ -34,14 +34,11 @@ struct CISection: View {
     var body: some View {
         if self.state.context?.connection != nil || self.settings.connection != nil {
             VStack(alignment: .leading, spacing: MimicMetrics.medium) {
-                HStack {
-                    if self.showsHeader { Text("CI").mimicFont(.heading).accessibilityAddTraits(.isHeader) }
+                if self.showsHeader { HStack {
+                    Text("CI").mimicFont(.heading).accessibilityAddTraits(.isHeader)
                     if let owner = self.state.user { Text("@" + owner.username).mimicFont(.caption).foregroundStyle(.secondary).lineLimit(1).mimicHelp(owner.name) }
                     Spacer(minLength: 4)
-                    if self.state.loading { ProgressView().controlSize(.small) }
-                    Button { self.state.refresh(manual: true) } label: { Image(systemName: "arrow.clockwise").frame(width: 28, height: 28) }
-                        .buttonStyle(RowButtonStyle(contentInsets: EdgeInsets())).disabled(self.state.loading).accessibilityLabel(text("refresh"))
-                }
+                } }
                 if self.expanded {
                     if let connection = self.state.context?.connection ?? self.settings.connection {
                         CICredentialAccessView(session: self.settings.credentialSession, id: connection.id, service: "GitLab", openSettings: self.openSettings) { await self.settings.requestCredentialAccess(connection: connection) }
@@ -53,17 +50,18 @@ struct CISection: View {
                     if let launch { CILaunchActions(launch: launch, preferences: launch.preferences, presented: self.presented) }
                     if let error = self.state.error, error != .credential, self.settings.connection.flatMap({ self.settings.credentialSession.failures[$0.id] }) == nil {
                         Text(text(error.localizationKey)).mimicFont(.caption).foregroundStyle(.orange)
+                        Button(text("ci.details.retry")) { self.state.refresh(manual: true) }.disabled(self.state.loading)
                     }
                     if self.state.error != nil, let date = self.state.loadedAt {
                         Text(text("ci.stale") + " · " + date.formatted(date: .omitted, time: .shortened)).mimicFont(.caption).foregroundStyle(.secondary)
                     }
                     Text(text("ci.feed.title")).mimicFont(.caption, weight: .semibold).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
                     if self.state.visibleEntries.isEmpty, self.state.error == nil {
-                        Text(text(self.state.loading ? "ci.loading" : "ci.empty")).mimicFont(.caption).foregroundStyle(.secondary)
+                        if self.state.loading { CISkeleton(presented: self.presented) }
+                        else { Text(text("ci.empty")).mimicFont(.caption).foregroundStyle(.secondary) }
                     }
                     ForEach(self.state.visibleEntries) { entry in
-                        CIPipelineCard(state: self.state, entry: entry)
-                        Divider()
+                        CIPipelineCard(state: self.state, entry: entry, presented: self.presented)
                     }
                     if self.state.historyIncomplete { Text(text("ci.history.incomplete")).mimicFont(.caption).foregroundStyle(.secondary) }
                     if self.state.canShowMore {
@@ -97,7 +95,9 @@ struct CISection: View {
             .onChange(of: self.expanded) { _, value in self.state.setFeedPresented(value && self.presented, preserveSelection: value && !self.presented) }
             .onChange(of: self.presented) { _, value in self.state.setFeedPresented(value && self.expanded, preserveSelection: self.expanded && !value) }
             .onChange(of: self.state.context) { _, _ in self.launch?.contextChanged() }
-            .onChange(of: self.state.user?.id) { _, _ in self.userQuery = ""; self.showingSearch = false }
+            .onChange(of: self.state.user?.id) { previous, _ in self.userQuery = ""; self.showingSearch = false; if previous != nil { self.launch?.contextChanged() } }
+        } else if let openSettings {
+            CIConnectionSetupView(full: true, openSettings: openSettings)
         }
     }
 
@@ -130,6 +130,7 @@ struct CISection: View {
 }
 
 struct CIPipelineDetailsView: View {
+    var presented = true
     @ObservedObject
     var state: CIState
     private var stages: [String] {
@@ -139,8 +140,7 @@ struct CIPipelineDetailsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if self.state.loadingDetails { ProgressView().controlSize(.small) }
-            if let error = state.detailError, error != .credential, error != .authentication { Text(text(error.localizationKey)).foregroundStyle(.orange) }
+            if self.state.loadingDetails, self.state.details == nil { CISkeleton(presented: self.presented && self.state.visible) }
             if let details = state.details {
                 ForEach(self.stages, id: \.self) { stage in
                     Text(stage).mimicFont(.caption, weight: .semibold).foregroundStyle(.secondary)

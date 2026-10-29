@@ -72,11 +72,11 @@ actor XcodeRunAutomation {
         """
         do { return try evaluate(source) } catch let error as ScriptError {
             let access = error.number == -1743 || error.number == -10004
-            throw XcodeRunFailure(step: "automation." + step, code: access ? .xcodeAccess : .configuration,
+            throw XcodeRunFailure(step: "automation." + step, code: access ? .xcodeAutomationAccess : .configuration,
                                   detail: "AppleScript " + (error.number.map(String.init) ?? "unknown") + ": " + error.message)
         }
     }
-    private static func evaluateScript(_ source: String) throws -> Response {
+    static func evaluateScript(_ source: String) throws -> Response {
         guard let script = NSAppleScript(source: source) else { throw ScriptError(number: nil, message: "Script source was rejected") }
         var error: NSDictionary?
         let result = script.executeAndReturnError(&error)

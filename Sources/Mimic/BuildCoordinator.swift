@@ -31,6 +31,7 @@ import os
     private let resolveDeveloper: @Sendable (ProjectContext) async throws -> String
     private let makeCommand: @Sendable (BuildActivity, String?) throws -> CommandSpec
     private let makeStageCommand: @Sendable (BuildActivity, BuildStage, CommandSpec) throws -> CommandSpec
+    private let readResult: @Sendable (BuildActivity, Data) -> BuildResult
     private let presentationDiscover: @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue
     private let discover: @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue
     private let validateSelection: @Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue
@@ -49,6 +50,11 @@ import os
     private var workers: [UUID: BuildOutputWorker] = [:]
     private var logTruncation = Set<UUID>()
     private var ledger: [String: Admission] = [:]
+    private var pendingAdmissions: [UUID: (payload: BuildAdmissionPayload, task: Task<BuildActivity, Error>)] = [:]
+    private var responseFileSupport: [String: Bool] = [:]
+    private var workflowCancellations: [String: BridgeValue] = [:]
+    private var resultQueries: [UUID: Task<BuildResult, Never>] = [:]
+    private var finishingIDs: Set<UUID> = []
     private var session: PTYSession?
     private var continuationTask: Task<Void, Never>?
     private var productChoice: CheckedContinuation<BuildProduct, Error>?
@@ -77,6 +83,8 @@ import os
     var acceptsProject: (ProjectContext) -> Bool = { _ in false }
     private func accepts(_ project: ProjectContext) -> Bool { currentProject() == project || acceptsProject(project) }
     var mayAdmit: () -> Bool = { true }
+    var queuePositionForActivity: (UUID) -> Int? = { _ in nil }
+    var otherLocalBlocker: (ProjectContext) -> UUID? = { _ in nil }
     var showResult: (UUID) -> Void = { _ in }
     var showSimulator: (BuildActivity) -> Void = { _ in }
     /// Fresh evidence that the Xcode owning an uncertain activity is idle; unset keeps the manual acknowledgement only.
@@ -97,7 +105,8 @@ import os
         let base = resultPath.map { URL(fileURLWithPath: $0).deletingPathExtension().path }
         return try record.parameters.command(project: project, resultBundlePath: resultPath, derivedDataPath: record.compilationDerivedDataPath ?? record.preparedDerivedDataPath ?? base.map { $0 + "-DerivedData" }, enumerationPath: base.map { $0 + ".tests.json" })
     }, makeStageCommand: @escaping @Sendable (BuildActivity, BuildStage, CommandSpec) throws -> CommandSpec = { _, _, command in command }, discover: (@Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue)? = nil,
-       validateSelection: (@Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue)? = nil, discoveryService: BuildDiscovery = .shared) {
+       validateSelection: (@Sendable (ProjectContext, String, Bool, String?, String?) async throws -> BuildCatalogue)? = nil, discoveryService: BuildDiscovery = .shared,
+       readResult: @escaping @Sendable (BuildActivity, Data) -> BuildResult = { BuildResultReader.read(record: $0, output: $1) }) {
         self.store = BuildHistoryStore(directory: directory); self.helper = helper; self.defaults = defaults; self.inspect = inspect
         self.discoveryService = discoveryService
         self.usesDiscoveryService = discover == nil
@@ -105,6 +114,7 @@ import os
         self.presentationDiscover = discover ?? { project, scheme, tests, id, revision in try await discoveryService.catalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: id, profileRevision: revision, useCache: true) }
         self.validateSelection = validateSelection ?? discover ?? { project, scheme, tests, id, revision in try await discoveryService.selectionCatalogue(project: project, scheme: scheme, includeTestPlans: tests, profileID: id, profileRevision: revision) }
         self.resolveDeveloper = resolveDeveloper; self.makeCommand = makeCommand; self.makeStageCommand = makeStageCommand
+        self.readResult = readResult
         do {
             records = try store.load()
             let path = store.directory.appendingPathComponent("requests.json")
@@ -126,6 +136,11 @@ import os
         let scoped = records.filter { $0.project == project }
         if let pending = scoped.first(where: { $0.status == .running || $0.status == .preparing }) ?? scoped.first(where: { $0.status == .queued }) { return pending }
         if let unknown = scoped.last(where: { $0.status == .unknown && $0.queueReleased != true }) { return unknown }
+        let previousFailure = scoped.last(where: { [.failed, .interrupted, .unknown].contains($0.status) })
+        let acknowledged = previousFailure.map { defaults.string(forKey: failureViewedKey(project)) == $0.id.uuidString } ?? true
+        if acknowledged, let latest = scoped.last, latest.status == .succeeded,
+           (previousFailure == nil || (latest.finishedAt ?? latest.createdAt).timeIntervalSince1970 > defaults.double(forKey: failureViewedKey(project) + ".at")),
+           (latest.finishedAt ?? latest.createdAt).addingTimeInterval(5) > .now { return latest }
         guard let failure = scoped.last(where: { [.failed, .interrupted, .unknown].contains($0.status) }),
               defaults.string(forKey: failureViewedKey(project)) != failure.id.uuidString else { return nil }
         return failure
@@ -137,9 +152,9 @@ import os
     func markResultViewed(_ id: UUID) {
         guard let record = activity(id), [.failed, .interrupted, .unknown].contains(record.status),
               records.last(where: { $0.project == record.project && [.failed, .interrupted, .unknown].contains($0.status) })?.id == id else { return }
-        defaults.set(id.uuidString, forKey: failureViewedKey(record.project)); revision = UUID()
+        defaults.set(id.uuidString, forKey: failureViewedKey(record.project)); defaults.set(Date().timeIntervalSince1970, forKey: failureViewedKey(record.project) + ".at"); revision = UUID()
     }
-    var panelBusy: Bool { manualSubmitting || admittingCount > 0 || records.contains { $0.project == currentProject() && ($0.status.isPending || $0.status == .unknown && $0.queueReleased != true) } }
+    var panelBusy: Bool { manualSubmitting || pendingAdmissions.values.contains { $0.payload.project.path == currentProject()?.path } || records.contains { $0.project == currentProject() && ($0.status.isPending || $0.status == .unknown && $0.queueReleased != true) } }
     var draftCompatible: Bool {
         return catalogueContext == currentProject() && catalogueScheme == draft.scheme && (try? catalogue.validate(draftFor(.build))) != nil
     }
@@ -182,9 +197,9 @@ import os
                 if parameters.backend == .cli, try await resolveDeveloper(project) != catalogueDeveloper {
                     await refreshCatalogue(project: project); throw BuildError.configuration
                 }
-                _ = try await submit(id: UUID(), project: project, parameters: parameters, source: "Mimic", simulatorConfirmed: parameters.backend == .xcodeMCP && (parameters.intent == .run || xcodeSimulatorConfirmed))
+                _ = try await submit(id: UUID(), project: project, parameters: parameters, source: "Mimic", simulatorConfirmed: parameters.backend == .xcodeMCP && (parameters.intent == .run || xcodeSimulatorConfirmed), owner: "desktop")
             }
-            catch { message = text("build.error." + ((error as? BuildError)?.rawValue ?? "unavailable")) }
+            catch { message = text("build.error." + ((error as? WorkflowFieldError)?.code ?? (error as? BuildError)?.rawValue ?? "unavailable")) }
         }
     }
     func chooseProduct(_ productID: String, activityID: UUID) throws {
@@ -324,12 +339,61 @@ import os
         saveDraft(project: project)
         Task {
             do { _ = try await submit(id: UUID(), project: project, parameters: parameters, source: "Mimic", simulatorConfirmed: xcodeSimulatorConfirmed) }
-            catch { message = text("build.error." + ((error as? BuildError)?.rawValue ?? "unavailable")) }
+            catch { message = text("build.error." + ((error as? WorkflowFieldError)?.code ?? (error as? BuildError)?.rawValue ?? "unavailable")) }
         }
     }
+    /// Coalesces an identical in-flight request before any await and reserves its queue budget.
+    func submit(id: UUID, project: ProjectContext, parameters: BuildParameters, source: String, simulatorConfirmed: Bool = false, workflowID: String? = nil, sourceRevision: SourceRevision? = nil, selectionID: UUID? = nil, cleanupArtifacts: [ManagedArtifact]? = nil, cleanupActivityID: UUID? = nil, expectedCases: [String: [String]]? = nil, owner: String? = nil, enqueue: Bool = false) async throws -> BuildActivity {
+        let payload = BuildAdmissionPayload(project: project, parameters: parameters, owner: owner, workflowID: workflowID, selectionID: selectionID, revision: sourceRevision, expectedCases: expectedCases, cleanupArtifacts: cleanupArtifacts, cleanupActivityID: cleanupActivityID, simulatorConfirmed: simulatorConfirmed, enqueue: enqueue)
+        if let pending = pendingAdmissions[id] {
+            guard pending.payload == payload else { throw BuildError.duplicate }
+            return try await pending.task.value
+        }
+        if ledger[id.uuidString] != nil { return try await admit(id: id, project: project, parameters: parameters, source: source, simulatorConfirmed: simulatorConfirmed, workflowID: workflowID, sourceRevision: sourceRevision, selectionID: selectionID, cleanupArtifacts: cleanupArtifacts, cleanupActivityID: cleanupActivityID, expectedCases: expectedCases, owner: owner, enqueue: enqueue) }
+        try parameters.validate()
+        try checkAdmissionPolicy(id: id, project: project, owner: owner, workflowID: workflowID, enqueue: enqueue)
+        let task = Task { try await self.admit(id: id, project: project, parameters: parameters, source: source, simulatorConfirmed: simulatorConfirmed, workflowID: workflowID, sourceRevision: sourceRevision, selectionID: selectionID, cleanupArtifacts: cleanupArtifacts, cleanupActivityID: cleanupActivityID, expectedCases: expectedCases, owner: owner, enqueue: enqueue) }
+        pendingAdmissions[id] = (payload, task)
+        defer { pendingAdmissions[id] = nil }
+        return try await task.value
+    }
+
+    private func checkAdmissionPolicy(id: UUID, project: ProjectContext, owner: String?, workflowID: String?, enqueue: Bool) throws {
+        let pending = pendingAdmissions.filter { $0.key != id && activity($0.key) == nil }
+        guard ledger.count < 10_000, pendingCount + pending.count < 100 else { throw WorkflowFieldError("capacity", field: "queue", limit: 100) }
+        let scoped = records.filter { $0.id != id && $0.project.path == project.path && ($0.status.isPending || $0.status == .unknown && $0.queueReleased != true) }
+        if !enqueue {
+            if let existing = scoped.first?.id ?? pending.first(where: { $0.value.payload.project.path == project.path })?.key ?? otherLocalBlocker(project) {
+                throw WorkflowFieldError("busy", field: "enqueue", existingActivityID: existing)
+            }
+        } else {
+            guard let workflowID, UUID(uuidString: workflowID) != nil else { throw WorkflowFieldError("workflowRequired", field: "workflowID") }
+            let count = records.filter { $0.id != id && $0.owner == owner && $0.workflowID == workflowID && $0.status == .queued }.count + pending.filter { $0.value.payload.owner == owner && $0.value.payload.workflowID == workflowID }.count
+            guard count < WorkflowContract.pendingBudget else { throw WorkflowFieldError("pendingBudget", field: "enqueue", limit: WorkflowContract.pendingBudget) }
+        }
+    }
+
+    /// A batch changes every queued record before rescheduling, so cancellation cannot start the next item.
+    func cancelWorkflowPending(_ workflow: String, owner: String, requestID: UUID) throws -> BridgeValue {
+        let path = store.directory.appendingPathComponent("workflow-cancellations.json")
+        if workflowCancellations.isEmpty, let bytes = try? Data(contentsOf: path) { workflowCancellations = (try? JSONDecoder().decode([String: BridgeValue].self, from: bytes)) ?? [:] }
+        if let previous = workflowCancellations[requestID.uuidString] {
+            guard previous["owner"] == .string(owner), previous["workflowID"] == .string(workflow) else { throw BuildError.duplicate }; return previous
+        }
+        guard activity(requestID) == nil, pendingAdmissions[requestID] == nil, workflowCancellations.count < 10_000 else { throw BuildError.duplicate }
+        let scoped = records.filter { $0.owner == owner && $0.workflowID == workflow }
+        let cancelled = scoped.filter { $0.status == .queued }.map(\.id)
+        for id in cancelled { update(id) { $0.status = .cancelled; $0.finishedAt = Date(); $0.cancellationOutcome = "cancelledBeforeStart" } }
+        let result: BridgeValue = .object(["owner": .string(owner), "workflowID": .string(workflow), "cancelled": try .encode(cancelled), "started": try .encode(scoped.filter { $0.status == .running || $0.status == .preparing || $0.status == .unknown }.map(\.id)), "finished": try .encode(scoped.filter { !$0.status.isPending && $0.status != .unknown }.map(\.id))])
+        workflowCancellations[requestID.uuidString] = result
+        persist()
+        try JSONEncoder().encode(workflowCancellations).write(to: path, options: .atomic)
+        schedule(); return result
+    }
+
     /// Ledger survives history eviction. A known ID can never start a second operation.
-    func submit(id: UUID, project: ProjectContext, parameters: BuildParameters, source: String, simulatorConfirmed: Bool = false, workflowID: String? = nil, sourceRevision: SourceRevision? = nil, selectionID: UUID? = nil, cleanupArtifacts: [ManagedArtifact]? = nil, cleanupActivityID: UUID? = nil, expectedCases: [String: [String]]? = nil) async throws -> BuildActivity {
-        let admittedProfile = currentProfile()
+    private func admit(id: UUID, project: ProjectContext, parameters: BuildParameters, source: String, simulatorConfirmed: Bool = false, workflowID: String? = nil, sourceRevision: SourceRevision? = nil, selectionID: UUID? = nil, cleanupArtifacts: [ManagedArtifact]? = nil, cleanupActivityID: UUID? = nil, expectedCases: [String: [String]]? = nil, owner: String? = nil, enqueue: Bool = false) async throws -> BuildActivity {
+        let admittedProfile = currentProfile(), admissionStarted = Date()
         self.admittingCount += 1
         defer { self.admittingCount -= 1 }
         try parameters.validate()
@@ -338,7 +402,7 @@ import os
         }
         guard parameters.backend != .cli || !simulatorConfirmed else { throw BuildError.arguments }
         if let admission = ledger[id.uuidString] {
-            guard admission.project == project, admission.parameters == parameters, admission.record?.workflowID == workflowID, admission.record?.selectionID == selectionID, admission.record?.cleanupArtifacts == cleanupArtifacts, admission.record?.cleanupActivityID == cleanupActivityID, admission.record?.requestedTestCases == expectedCases, sourceRevision == nil || admission.record?.sourceProvenance?.admitted == sourceRevision else { throw BuildError.duplicate }
+            guard admission.record?.owner == owner, (admission.record?.enqueue ?? false) == enqueue, admission.project == project, admission.parameters == parameters, admission.record?.workflowID == workflowID, admission.record?.selectionID == selectionID, admission.record?.cleanupArtifacts == cleanupArtifacts, admission.record?.cleanupActivityID == cleanupActivityID, admission.record?.requestedTestCases == expectedCases, sourceRevision == nil || admission.record?.sourceProvenance?.admitted == sourceRevision else { throw BuildError.duplicate }
             guard let record = records.first(where: { $0.id == id }) ?? admission.record else { throw BuildError.stopped }; return record
         }
         guard !stopped, mayAdmit(), accepts(project) else { throw BuildError.context }
@@ -346,15 +410,18 @@ import os
         let developer = try await resolveDeveloper(project)
         guard actual == project, accepts(project), mayAdmit(), !stopped else { throw BuildError.context }
         // Re-check after suspension: simultaneous callers may already have admitted this ID.
-        if ledger[id.uuidString] != nil { return try await submit(id: id, project: project, parameters: parameters, source: source, simulatorConfirmed: simulatorConfirmed, workflowID: workflowID, sourceRevision: sourceRevision, selectionID: selectionID, cleanupArtifacts: cleanupArtifacts, cleanupActivityID: cleanupActivityID, expectedCases: expectedCases) }
+        if ledger[id.uuidString] != nil { return try await submit(id: id, project: project, parameters: parameters, source: source, simulatorConfirmed: simulatorConfirmed, workflowID: workflowID, sourceRevision: sourceRevision, selectionID: selectionID, cleanupArtifacts: cleanupArtifacts, cleanupActivityID: cleanupActivityID, expectedCases: expectedCases, owner: owner, enqueue: enqueue) }
         if let blocker = readinessBlocker(project: project, parameters: parameters, simulatorConfirmed: simulatorConfirmed) { throw blocker }
         if parameters.intent != .cleanup { try await checkPreparation(project, parameters) }
         let exclusions = admittedProfile?.profile.sourceExclusions ?? []
         let revision = try? await Task.detached { try SourceRevisionReader.capture(path: project.path, exclusions: exclusions) }.value
         guard sourceRevision == nil || revision == sourceRevision else { throw BuildError.sourceChanged }
         guard accepts(project), mayAdmit(), !stopped, currentProfile() == admittedProfile else { throw BuildError.context }
-        if ledger[id.uuidString] != nil { return try await submit(id: id, project: project, parameters: parameters, source: source, simulatorConfirmed: simulatorConfirmed, workflowID: workflowID, sourceRevision: sourceRevision, selectionID: selectionID, cleanupArtifacts: cleanupArtifacts, cleanupActivityID: cleanupActivityID, expectedCases: expectedCases) }
+        if ledger[id.uuidString] != nil { return try await submit(id: id, project: project, parameters: parameters, source: source, simulatorConfirmed: simulatorConfirmed, workflowID: workflowID, sourceRevision: sourceRevision, selectionID: selectionID, cleanupArtifacts: cleanupArtifacts, cleanupActivityID: cleanupActivityID, expectedCases: expectedCases, owner: owner, enqueue: enqueue) }
+        try checkAdmissionPolicy(id: id, project: project, owner: owner, workflowID: workflowID, enqueue: enqueue)
         var record = BuildActivity(id: id, project: project, parameters: parameters, source: source)
+        record.owner = owner; record.enqueue = enqueue
+        record.stageDurations = ["admission": Date().timeIntervalSince(admissionStarted)]
         record.sourceProvenance = SourceProvenance(admitted: revision); record.sourceExclusions = exclusions; record.selectionID = selectionID; record.strictSource = sourceRevision != nil; record.requestedTestCases = expectedCases
         record.cleanupArtifacts = cleanupArtifacts; record.cleanupActivityID = cleanupActivityID
         if parameters.backend == .cli, parameters.intent != .cleanup {
@@ -364,9 +431,25 @@ import os
             let path = prepared.compilationDerivedDataPath ?? store.directory.appendingPathComponent(prepared.id.uuidString + "-DerivedData").path
             if FileManager.default.fileExists(atPath: path) { record.preparedDerivedDataPath = path }
         }
+        if parameters.intent == .catalogue {
+            record.catalogueCacheReason = "contractNotDeclared"
+            if let policy = admittedProfile?.profile.catalogueReuse, policy.complete {
+                var capturedProject = project; capturedProject.developerDirectory = developer
+                let fingerprint = try? await Task.detached { try BuildInputFingerprint.inspect(project: capturedProject, parameters: parameters, profile: admittedProfile, policy: policy) }.value
+                guard accepts(project), mayAdmit(), !stopped, currentProfile() == admittedProfile else { throw BuildError.context }
+                try checkAdmissionPolicy(id: id, project: project, owner: owner, workflowID: workflowID, enqueue: enqueue)
+                record.buildInputFingerprint = fingerprint
+                record.catalogueCacheReason = fingerprint == nil ? "inputsUnavailable" : "inputsChangedOrNotPrepared"
+                if let fingerprint, let prepared = records.last(where: { $0.buildInputFingerprint == fingerprint && $0.testCatalogue != nil && $0.status == .succeeded && $0.sourceProvenance?.stability == "unchangedObserved" }), let cached = prepared.testCatalogue {
+                    record.testCatalogue = BuildTestCatalogue(project: project, developerDirectory: developer, parameters: parameters, tests: cached.tests)
+                    record.catalogueReusedFrom = prepared.id; record.catalogueCacheReason = "matchingBuildInputs"
+                }
+            }
+        }
         record.destinationName = catalogue.destinations.first { $0.id == parameters.destinationID }?.name
         record.workflowID = workflowID; record.stateRevision = 1
         record.selectedDeveloperDirectory = developer; record.profileID = admittedProfile?.id; record.profileRevision = admittedProfile?.revision
+        record.stageDurations?["admission"] = Date().timeIntervalSince(admissionStarted)
         ledger[id.uuidString] = Admission(project: project, parameters: parameters, source: source, record: record)
         do {
             let path = store.directory.appendingPathComponent("requests.json")
@@ -386,10 +469,11 @@ import os
 
     func start(_ record: BuildActivity) {
         guard !busy, !stopped, record.status == .queued else { return }
-        launchID = record.id; update(record.id) { $0.status = .preparing; $0.phase = "build.phase.preparing" }; persist()
+        launchID = record.id; update(record.id) { $0.status = .preparing; $0.phase = "build.phase.preparing"; $0.stageDurations = ($0.stageDurations ?? [:]).merging(["queueWait": Date().timeIntervalSince($0.createdAt)], uniquingKeysWith: { _, value in value }) }; persist()
         preparation = Task { [weak self] in
             guard let self else { return }
             do {
+                guard currentProfile()?.id == record.profileID, currentProfile()?.revision == record.profileRevision else { throw BuildError.context }
                 if record.parameters.intent != .cleanup { try await checkPreparation(record.project, record.parameters) }
                 let actual = try await inspect(record.project)
                 let developer = try await resolveDeveloper(record.project)
@@ -397,6 +481,11 @@ import os
                 guard actual == record.project, accepts(record.project), developer == record.selectedDeveloperDirectory else { throw BuildError.context }
                 if record.parameters.intent == .cleanup {
                     try await observeStart(record); try await begin(record); try await performManagedCleanup(record)
+                    await finish(record.id, status: .succeeded); return
+                }
+                if record.catalogueReusedFrom != nil, record.testCatalogue != nil {
+                    try await verifyStartContext(record); try await observeStart(record); try await begin(record)
+                    update(record.id) { $0.processOutcome = "notStartedCatalogueReuse" }
                     await finish(record.id, status: .succeeded); return
                 }
                 if record.parameters.backend == .cli {
@@ -428,7 +517,8 @@ import os
     private func verifyStartContext(_ record: BuildActivity) async throws {
         let actual = try await inspect(record.project)
         let developer = try await resolveDeveloper(record.project)
-        guard !Task.isCancelled, launchID == record.id, actual == record.project, accepts(record.project), developer == record.selectedDeveloperDirectory else { throw BuildError.context }
+        guard !Task.isCancelled, launchID == record.id, actual == record.project, accepts(record.project), developer == record.selectedDeveloperDirectory,
+              currentProfile()?.id == record.profileID, currentProfile()?.revision == record.profileRevision else { throw BuildError.context }
     }
     /// Strict checks bind admission to execution; legacy calls still record provenance without inventing it.
     private func observeStart(_ record: BuildActivity) async throws {
@@ -451,6 +541,7 @@ import os
         }
     }
     private func begin(_ record: BuildActivity) async throws {
+        guard currentProfile()?.id == record.profileID, currentProfile()?.revision == record.profileRevision else { throw BuildError.context }
         outputs[record.id] = BuildOutput()
         let worker = BuildOutputWorker()
         try await worker.open(store.logURL(record.id))
@@ -461,6 +552,20 @@ import os
     private func launchCLI(_ record: BuildActivity) async throws {
         let resultPath = store.directory.appendingPathComponent(record.id.uuidString + ".xcresult").path
         var command = try makeCommand(record, resultPath)
+        if record.parameters.operation == .test, command.executable == "/usr/bin/xcrun", command.arguments.first == "xcodebuild", record.parameters.testTarget == nil {
+            let developer = record.selectedDeveloperDirectory ?? ""
+            let version = await Task.detached { ReadOnlyProcessSupport.captureXcodeHelp(developer: developer) }.value
+            let supports = responseFileSupport[version.identity] ?? version.supportsResponseFile
+            responseFileSupport[version.identity] = supports
+            command = try TestSelectionCommand.prepare(command, record: record, root: store.directory, supportsResponseFile: supports)
+            try await verifyStartContext(record)
+        }
+        if command.executable == "/usr/bin/xcrun", command.arguments.first == "xcodebuild" {
+            let environment = await Task.detached { ReadOnlyProcessSupport.environmentSnapshot(developer: record.selectedDeveloperDirectory ?? "", platform: record.parameters.platform ?? .ios) }.value
+            guard launchID == record.id, !Task.isCancelled else { throw CancellationError() }
+            update(record.id) { $0.toolchainEnvironment = environment }
+            try await verifyStartContext(record)
+        }
         try await begin(record)
         if record.strictSource == true {
             let current = try? await Task.detached { try SourceRevisionReader.capture(path: record.project.path, exclusions: record.sourceExclusions ?? []) }.value
@@ -484,6 +589,10 @@ import os
         }
         let runner = PTYSession(); session = runner
         runner.onOutputAsync = { [weak self] in await self?.consume(record.id, bytes: $0) }
+        runner.onEvent = { [weak self] event in
+            guard let self, self.launchID == record.id, event.kind == "exit" else { return }
+            self.update(record.id) { $0.stage = .processFinalizing; $0.phase = "build.phase.processFinalizing"; $0.exitCode = event.code; $0.signal = event.signal }
+        }
         runner.onCompletion = { [weak self] event in
             guard let self, self.launchID == record.id else { return }
             continuationTask = Task {
@@ -684,7 +793,8 @@ import os
         update(id) { $0.executionProgress = progress }
     }
     private func finish(_ id: UUID, status: BuildStatus, error: String? = nil) async {
-        guard launchID == id else { return }
+        guard launchID == id, finishingIDs.insert(id).inserted else { return }
+        defer { finishingIDs.remove(id) }
         await finishBuildEvents(id)
         guard launchID == id else { return }
         let record = active
@@ -702,13 +812,25 @@ import os
         deliverOutput(id)
         let truncated = logTruncation.contains(id) || outputs[id]?.truncated == true || records.first { $0.id == id }?.truncated == true
         var finalStatus = status, finalError = error
-        if status == .succeeded, var completed = active, completed.parameters.testTarget != nil {
-            completed.status = .succeeded; completed.finishedAt = Date()
-            let bytes = output(id)
-            let result = await Task.detached { BuildResultReader.read(record: completed, output: bytes) }.value
+        if var completed = active, status != .unknown {
+            completed.status = status; completed.finishedAt = Date()
+            completed.processOutcome = completed.processOutcome ?? status.rawValue
+            completed.cancellationOutcome = status == .cancelled ? "confirmed" : completed.cancellationOutcome
+            update(id) { $0.stage = .extractingResults; $0.phase = "build.phase.extractingResults"; $0.processOutcome = completed.processOutcome; $0.cancellationOutcome = completed.cancellationOutcome }
+            let bytes = output(id), store = BuildResultStore(root: store.directory)
+            let reader = readResult
+            var result = await Task.detached { [completed] in reader(completed, bytes) }.value
             guard launchID == id else { return }
-            if Task.isCancelled { finalStatus = .cancelled }
-            else if result.verification?.verdict != "passed" { finalStatus = .failed; finalError = "testsUnverified" }
+            update(id) { $0.stage = .verifyingCoverage; $0.phase = "build.phase.verifyingCoverage" }
+            if Task.isCancelled || active?.cancellationOutcome == "requested" {
+                finalStatus = .cancelled; result.cancellationOutcome = "confirmed"
+                update(id) { $0.cancellationOutcome = "confirmed" }
+                if result.verification?.verdict == "passed" { result.verification?.verdict = "incomplete" }
+            } else if status == .succeeded, completed.parameters.operation == .test, result.verification?.verdict != "passed" {
+                finalStatus = .failed; finalError = "testsUnverified"
+            }
+            update(id) { $0.verificationSummary = result.verification.map(BuildVerificationSummary.init) }
+            do { try store.save(result, id: id) } catch { finalError = "resultPersistenceFailed"; if finalStatus == .succeeded { finalStatus = .failed } }
         }
         workers[id] = nil; testProgress[id] = nil; logTruncation.remove(id); session = nil; launchID = nil; preparation = nil; continuationTask = nil
         update(id) {
@@ -725,7 +847,8 @@ import os
 
     func cancel(_ id: UUID) {
         guard let record = records.first(where: { $0.id == id }), record.canCancel else { return }
-        if record.status == .queued { update(id) { $0.status = .cancelled; $0.finishedAt = Date() }; persist(); schedule() }
+        update(id) { $0.cancellationOutcome = "requested" }
+        if record.status == .queued { update(id) { $0.status = .cancelled; $0.finishedAt = Date(); $0.cancellationOutcome = "cancelledBeforeStart" }; persist(); schedule() }
         else if record.status == .preparing {
             preparation?.cancel(); Task { await finish(id, status: .cancelled) }
         } else {
@@ -778,7 +901,15 @@ import os
         if let active, active.canCancel { cancel(active.id) }
     }
     private func update(_ id: UUID, _ mutate: (inout BuildActivity) -> Void) {
-        guard let index = records.firstIndex(where: { $0.id == id }) else { return }; mutate(&records[index])
+        guard let index = records.firstIndex(where: { $0.id == id }) else { return }
+        let previous = records[index].stage, started = records[index].stageStartedAt, wasPending = records[index].status.isPending
+        mutate(&records[index])
+        if records[index].stage != previous || wasPending && !records[index].status.isPending {
+            if let previous, let started { records[index].stageDurations = (records[index].stageDurations ?? [:]).merging([previous.rawValue: Date().timeIntervalSince(started)], uniquingKeysWith: +) }
+        }
+        if records[index].stage != previous {
+            records[index].stageStartedAt = Date()
+        }
         records[index].stateRevision = (records[index].stateRevision ?? 0) + 1
     }
     private func persist() {
@@ -799,7 +930,7 @@ import os
     /// A read-only observer owns its deadline, never the underlying operation.
     /// Cancellation or a disconnected caller therefore cannot cancel a build.
     func waitForActivity(_ id: UUID, afterRevision: Int?, timeoutMs: Int) async throws -> (activity: BuildActivity, timedOut: Bool) {
-        guard (0...25_000).contains(timeoutMs) else { throw BuildError.arguments }
+        guard (0...WorkflowContract.maximumWaitMilliseconds).contains(timeoutMs) else { throw WorkflowFieldError("outOfRange", field: "timeoutMs", limit: WorkflowContract.maximumWaitMilliseconds) }
         let deadline = ContinuousClock.now + .milliseconds(timeoutMs)
         while true {
             try Task.checkCancellation()
@@ -810,6 +941,31 @@ import os
             if ContinuousClock.now >= deadline { return (record, true) }
             try await Task.sleep(for: min(.milliseconds(100), ContinuousClock.now.duration(to: deadline)))
         }
+    }
+
+    /// Coalesces legacy extraction. New activities already persist facts during finalization.
+    func result(_ id: UUID) async throws -> BuildResult {
+        guard let record = activity(id) else { throw BuildError.notFound }
+        guard !record.status.isPending, record.status != .unknown else { throw WorkflowFieldError("resultsPending", field: "activityID", existingActivityID: id) }
+        let storage = BuildResultStore(root: store.directory)
+        if record.hasPrivateInput != true, let saved = try storage.load(id) { return saved }
+        if let query = resultQueries[id] { return await query.value }
+        let bytes = record.hasPrivateInput == true ? Data() : output(id)
+        let reader = readResult
+        let task = Task.detached { reader(record, bytes) }
+        resultQueries[id] = task
+        let value = await task.value
+        resultQueries[id] = nil
+        if !record.status.isPending, record.status != .unknown, record.hasPrivateInput != true { try storage.save(value, id: id) }
+        return value
+    }
+
+    /// Queue positions are current presentation facts, not persisted execution provenance.
+    func presentation(_ record: BuildActivity) -> BuildActivity {
+        var value = record
+        value.queuePosition = record.status == .queued ? queuePositionForActivity(record.id) ?? records.filter { $0.status == .queued }.sorted { $0.createdAt < $1.createdAt }.firstIndex { $0.id == record.id }.map { $0 + 1 } : nil
+        if let workflow = record.workflowID { value.workflowPendingCount = records.filter { $0.id != record.id && $0.owner == record.owner && $0.workflowID == workflow && $0.status == .queued }.count }
+        return value
     }
 
     /// The admission ledger retains metadata after visible-history eviction.
@@ -852,7 +1008,7 @@ import os
     func artifacts(_ id: UUID) throws -> [URL] {
         guard let record = activity(id), !artifactLeases.contains(id), !record.status.isPending, record.status != .unknown else { throw BuildError.context }
         let base = store.directory.appendingPathComponent(id.uuidString)
-        return [base.appendingPathExtension("xcresult"), base.appendingPathExtension("log"), URL(fileURLWithPath: base.path + ".tests.json"), URL(fileURLWithPath: base.path + "-DerivedData")].filter { url in
+        return [base.appendingPathExtension("xcresult"), base.appendingPathExtension("log"), URL(fileURLWithPath: base.path + ".tests.json"), URL(fileURLWithPath: base.path + "-DerivedData"), BuildResultStore(root: store.directory).url(id), URL(fileURLWithPath: base.path + ".selection.txt"), URL(fileURLWithPath: base.path + "-Attachments"), store.directory.appendingPathComponent("ArtifactIndex").appendingPathComponent(id.uuidString)].filter { url in
             FileManager.default.fileExists(atPath: url.path) && !records.contains { ($0.status.isPending || $0.status == .unknown) && $0.preparedDerivedDataPath == url.path }
         }
     }

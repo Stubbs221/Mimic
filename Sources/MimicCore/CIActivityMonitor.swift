@@ -122,6 +122,11 @@ import Foundation
         return nil
     }
 
+    /// Reads only an already registered remote scope, including its initial loading presentation.
+    public func state(for context: CIContext) -> CIState? {
+        self.entries[self.key(context)]?.state
+    }
+
     public func hideCI() {
         if let overlay { self.hidden.insert(overlay.identity) }
         self.overlay = nil; self.deadline = nil

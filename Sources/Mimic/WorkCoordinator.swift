@@ -115,8 +115,7 @@ extension TaskCoordinator {
         for id in selected {
             guard var item = available.first(where: { $0.id == id }) else { throw AtlassianError.invalidReference }
             if id.hasPrefix("build:"), let uuid = UUID(uuidString: String(id.dropFirst(6))), let record = builds.activity(uuid) {
-                let output = record.hasPrivateInput == true ? Data() : builds.output(uuid)
-                let result = await Task.detached { BuildResultReader.read(record: record, output: output) }.value
+                let result = try await builds.result(uuid)
                 if record.parameters.operation == .test { item.result = result.verification?.verdict ?? "unavailable" }
                 if let revision = record.sourceProvenance?.finished {
                     let current = try? await Task.detached { try SourceRevisionReader.capture(path: record.project.path, exclusions: record.sourceExclusions ?? []) }.value

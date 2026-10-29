@@ -9,6 +9,17 @@ extension MimicIntegration {
         guard Set(p.keys) == ["context", "operation", "parameters", "requestID", "activityID", "productID"], let operation = p["operation"]?.string else { throw BuildError.arguments }
         let context = p["context"] ?? .null
         let project = try expected(context, threadID: request.threadID)
+        if operation == "resources" || operation == "restoreResources" {
+            guard let fields = p["parameters"]?.object, Set(fields.keys).isSubset(of: ["platform", "resourceID"]),
+                  let platform = fields["platform"]?.string.flatMap(BootstrapPlatform.init(rawValue:)) else { throw BuildError.arguments }
+            if operation == "restoreResources" {
+                guard let id = p["requestID"]?.string.flatMap(UUID.init(uuidString:)), let resourceID = fields["resourceID"]?.string else { throw BuildError.arguments }
+                _ = try await model.restoreBuildResources(project: project, platform: platform, resourceID: resourceID, requestID: id)
+            }
+            let resources = try await model.refreshBuildResources(project: project, platform: platform)
+            _ = try expected(context, threadID: request.threadID)
+            return model.buildResourceMetadata(project: project, platform: platform, state: resources)
+        }
         let pinned = try await BuildDiscovery.pinned(project)
         _ = try expected(context, threadID: request.threadID)
         let developer = pinned.developerDirectory ?? ""
@@ -39,7 +50,6 @@ extension MimicIntegration {
         if operation == "save" { model.builds.savePanelDraft(parameters, project: project, developer: developer); return .object(["saved": .bool(true)]) }
         guard ["build", "run", "tests", "catalogue"].contains(operation), let id = p["requestID"]?.string.flatMap(UUID.init(uuidString:)) else { throw BuildError.arguments }
         // Retries retain their request ID. Another manual click cannot queue a second run during admission.
-        guard model.builds.records.contains(where: { $0.id == id }) || model.builds.admittingCount == 0 && !model.builds.records.contains(where: { $0.project == project && $0.status.isPending }) else { throw BuildError.capacity }
         parameters.operation = operation == "tests" ? .test : .build
         parameters.intent = operation == "run" ? .run : operation == "catalogue" ? .catalogue : nil
         if operation == "run", parameters.backend == .cli { parameters.backend = .xcodeMCP }
@@ -54,7 +64,7 @@ extension MimicIntegration {
         if parameters.operation == .build { parameters.testTarget = nil; parameters.testIdentifiers = []; if operation != "catalogue" { parameters.testPlan = "" } }
         if parameters.backend == .xcodeMCP, parameters.intent != .run { parameters.scheme = ""; parameters.configuration = ""; parameters.destinationID = ""; parameters.testPlan = ""; parameters.platform = nil }
         try parameters.validate()
-        let record = try await model.builds.submit(id: id, project: project, parameters: parameters, source: "Codex · вручную", simulatorConfirmed: operation == "run" || fields["simulatorConfirmed"] == .bool(true))
+        let record = try await model.builds.submit(id: id, project: project, parameters: parameters, source: "Codex · вручную", simulatorConfirmed: operation == "run" || fields["simulatorConfirmed"] == .bool(true), owner: request.threadID ?? "desktop")
         _ = try expected(context, threadID: request.threadID)
         return BuildBridge.summary(record)
     }

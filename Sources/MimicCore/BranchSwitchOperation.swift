@@ -15,6 +15,11 @@ public struct BranchSwitchOperation: Codable, Identifiable, Sendable {
     public let id: UUID
     public let source: ProjectContext
     public let target: String
+    /// The selected remote ref, kept separate from the destination local branch.
+    public let originRef: String?
+    public var selectionID: String { self.originRef ?? self.target }
+    /// Pinned at preflight. A concurrently created local branch must never be overwritten.
+    public var createsTrackingBranch: Bool?
     public let rebase: Bool
     public let sourceThreadID: String?
     public var phase = BranchSwitchPhase.checking
@@ -39,20 +44,30 @@ public struct BranchSwitchOperation: Codable, Identifiable, Sendable {
     public let createdAt: Date
 
     public init(id: UUID, source: ProjectContext, target: String, rebase: Bool, sourceThreadID: String? = nil) {
-        self.id = id; self.source = source; self.target = target; self.rebase = rebase
+        self.id = id; self.source = source
+        let prefix = "refs/remotes/origin/"
+        self.originRef = target.hasPrefix(prefix) ? target : nil
+        self.target = target.hasPrefix(prefix) ? String(target.dropFirst(prefix.count)) : target
+        self.rebase = rebase
         self.sourceThreadID = sourceThreadID; self.createdAt = Date()
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, source, target, rebase, sourceThreadID, phase, targetSHA, developSHA, resultSHA, worktree
+        case id, source, target, originRef, createsTrackingBranch, rebase, sourceThreadID, phase, targetSHA, developSHA, resultSHA, worktree
         case stashSHA, stashName, conflict, conflictPaths, stoppedCommit, ownerThreadID, delivery, deliveryThreadID
         case error, refUpdated, didSwitch, createdAt, completedAt
     }
 }
 
 public enum BranchSwitchError: Error, Equatable {
-    case blocked, context, missing, occupied, operation, detached, diverged, ownership, conflict, review
+    case blocked, context, missing, occupied, operation, detached, diverged, ownership, conflict, review, identity, xcodeClose, xcodeReopen, xcodeAccess
     case command(String)
+
+    /// Git's fixed English diagnostics are normalized before reaching either presentation surface.
+    public static func isIdentityDiagnostic(_ output: String) -> Bool {
+        ["author identity unknown", "committer identity unknown", "empty ident name", "empty ident email", "unable to auto-detect email address"]
+            .contains { output.lowercased().contains($0) }
+    }
 }
 
 /// Explicit user intent carried to a new chat; repository output is retrieved separately as untrusted data.

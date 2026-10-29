@@ -43,28 +43,32 @@ struct QuickBootstrapView: View {
                     Spacer(minLength: 0)
                     BootstrapIconButton(symbol: "terminal", label: text("terminal.show"), action: { self.model.showHistory(id: record.id, focusTerminal: true) }, inControlBar: true)
                         .disabled(!self.model.records.contains { $0.id == record.id })
-                    if activity.error == nil, record.status == .queued || record.status == .running {
+                    if self.model.mintRecoveryRecord == nil, activity.error == nil, record.status == .queued || record.status == .running {
                         BootstrapIconButton(symbol: "stop.fill", label: text("stop"), action: { self.model.cancelQuickBootstrap(id: record.id) }, inControlBar: true)
                     }
                 } }
-                HStack {
-                    BootstrapStateText(model: self.model, record: record)
-                    Spacer(minLength: 4)
-                    MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in
-                        Text(record.startedAt == nil ? "" : duration(record)).font(MimicMetrics.secondary.monospacedDigit()).foregroundStyle(.secondary)
-                    }.mimicImmediate()
-                }.allowsHitTesting(false)
-                if let error = activity.error {
-                    Text(error).mimicFont(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).mimicStatus(error).allowsHitTesting(false)
-                } else if activity.isPreparing(in: self.model.records) {
-                    BootstrapFillBar(value: 0)
-                } else if record.status == .queued {
-                    BootstrapPreparationView(model: self.model, record: record, showCancel: false, showState: false)
-                    BootstrapFillBar(value: 0)
-                } else if record.status == .running {
-                    BootstrapExecutionProgress(model: self.model, record: record, compact: true, showState: false).allowsHitTesting(false)
-                } else if let error = record.error {
-                    Text(error).mimicFont(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).mimicStatus(error).allowsHitTesting(false)
+                if self.model.mintRecoveryRecord != nil {
+                    BootstrapMintRecoveryView(model: self.model)
+                } else {
+                    HStack {
+                        BootstrapStateText(model: self.model, record: record)
+                        Spacer(minLength: 4)
+                        MimicActivityClock(running: record.status == .running && record.startedAt != nil) { _ in
+                            Text(record.startedAt == nil ? "" : duration(record)).font(MimicMetrics.secondary.monospacedDigit()).foregroundStyle(.secondary)
+                        }.mimicImmediate()
+                    }.allowsHitTesting(false)
+                    if let error = activity.error {
+                        Text(error).mimicFont(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).mimicStatus(error).allowsHitTesting(false)
+                    } else if activity.isPreparing(in: self.model.records) {
+                        BootstrapFillBar(value: 0)
+                    } else if record.status == .queued {
+                        BootstrapPreparationView(model: self.model, record: record, showCancel: false, showState: false)
+                        BootstrapFillBar(value: 0)
+                    } else if record.status == .running {
+                        BootstrapExecutionProgress(model: self.model, record: record, compact: true, showState: false).allowsHitTesting(false)
+                    } else if let error = record.error {
+                        Text(error).mimicFont(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).mimicStatus(error).allowsHitTesting(false)
+                    }
                 }
             }
         }.padding(MimicMetrics.cardInsets).frame(width: MimicMetrics.cardWidth).fixedSize(horizontal: false, vertical: true)

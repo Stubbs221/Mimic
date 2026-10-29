@@ -30,6 +30,9 @@ struct MimicDocumentVisibility: NSViewRepresentable {
     final class Marker: NSView {
         let page: PanelPage
         var visible: Bool
+        /// The retained host wins over delayed SwiftUI updates from an inactive graph.
+        var hostVisibility: (() -> Bool)?
+        private var effectiveVisible: Bool { hostVisibility?() ?? visible }
         var appearanceChoice = PanelAppearance.legacy
         private var retroScroller: NativeRetroScrollbar?
         private var retainedOffset: NSPoint?
@@ -47,7 +50,7 @@ struct MimicDocumentVisibility: NSViewRepresentable {
                 retroScroller?.appearanceChoice = appearanceChoice; retroScroller?.refresh()
             } else { retroScroller?.removeFromSuperview(); retroScroller = nil }
             scroll.identifier = NSUserInterfaceItemIdentifier(self.page == .home ? "page.home" : "page.settings")
-            if !self.visible, !scroll.isHidden {
+            if !self.effectiveVisible, !scroll.isHidden {
                 // Freeze a reveal already in flight before retaining the hidden document.
                 let clip = scroll.contentView
                 let animating = clip.layer?.animationKeys()?.isEmpty == false
@@ -56,13 +59,13 @@ struct MimicDocumentVisibility: NSViewRepresentable {
                 scroll.reflectScrolledClipView(clip)
                 retainedOffset = current
             }
-            let restoring = self.visible && scroll.isHidden
-            if scroll.isHidden == self.visible { scroll.isHidden = !self.visible }
+            let restoring = self.effectiveVisible && scroll.isHidden
+            if scroll.isHidden == self.effectiveVisible { scroll.isHidden = !self.effectiveVisible }
             if restoring, let retainedOffset {
                 // SwiftUI resets a newly unhidden clip view on its next layout pass.
                 // Restore once after that pass; later explicit navigation can seek its own target.
                 DispatchQueue.main.async { [weak self, weak scroll] in
-                    guard let self, self.visible, let scroll, !scroll.isHidden else { return }
+                    guard let self, self.effectiveVisible, let scroll, !scroll.isHidden else { return }
                     scroll.layoutSubtreeIfNeeded()
                     scroll.contentView.scroll(to: retainedOffset); scroll.reflectScrolledClipView(scroll.contentView)
                 }

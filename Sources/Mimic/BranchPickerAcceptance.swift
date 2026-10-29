@@ -31,7 +31,7 @@ import MimicCore
                 let defaults = UserDefaults(suiteName: suite)!
                 let checkout = root.appendingPathComponent("repo")
                 try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
-                for args in [["init", "-b", "source"], ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture"], ["branch", "develop"]] {
+                for args in [["init", "-b", "source"], ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture"], ["branch", "develop"], ["remote", "add", "origin", root.appendingPathComponent("remote.git").path], ["update-ref", "refs/remotes/origin/feature/IOS-21161", "HEAD"]] {
                     guard EnvironmentInspector.capture("/usr/bin/git", args, directory: checkout.path).0 == 0 else { exit(1) }
                 }
                 let project = try EnvironmentInspector.project(path: checkout.path)

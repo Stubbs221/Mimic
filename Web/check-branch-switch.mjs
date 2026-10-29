@@ -78,6 +78,10 @@ try{
  await page.getByRole('button',{name:'Обновить',exact:true}).click();
  await page.waitForTimeout(5100);
  assert.equal(await page.locator('.branch-progress').isVisible(),true);
+ await page.evaluate(()=>{window.fixtureState.branchSwitch={...window.fixtureState.branchSwitch,phase:'failed',holdsCheckout:false,stashName:'planned-only',stashSHA:null,error:'В Git не указаны имя и рабочая почта.'};});
+ await page.getByRole('button',{name:'Обновить',exact:true}).click();
+ assert.equal(await page.locator('.branch-backup').isVisible(),false,'A planned stash is not a saved backup');
+ assert((await page.locator('.branch-progress').innerText()).includes('В Git не указаны имя и рабочая почта.'));
  assert.deepEqual(errors,[]);
  console.log('PASS: saved checkbox, exact checkout/request ID, long branch at 320/360/520, automatic new-chat handoff, lock, no duplicates or uncertain retries.');
 }finally{await browser?.close();server.close();}

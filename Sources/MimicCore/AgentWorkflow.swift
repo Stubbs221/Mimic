@@ -20,9 +20,9 @@ public struct AgentHelperIdentity: Codable, Equatable, Sendable {
 }
 
 public enum AgentWorkflow {
-    public static let schemaRevision = 3
-    public static let tools = ["get_agent_state", "list_activity_history", "start_test_catalogue", "get_test_catalogue", "validate_selected_tests", "run_verified_tests", "get_preparation_state", "get_activity_changes", "preview_artifact_cleanup", "cleanup_activity_artifacts", "get_build_products", "select_build_product", "run_simulator_app", "open_simulator_deeplink", "prepare_simulator_scenario", "start_simulator_check", "get_simulator_check", "finish_simulator_check", "start_simulator_recording", "stop_simulator_recording"]
-    public static let mutations: Set<String> = ["start_test_catalogue", "run_verified_tests", "cleanup_activity_artifacts", "select_build_product", "run_simulator_app", "open_simulator_deeplink", "prepare_simulator_scenario", "start_simulator_check", "finish_simulator_check", "start_simulator_recording", "stop_simulator_recording"]
+    public static let schemaRevision = 4
+    public static let tools = ["get_agent_state", "list_activity_history", "start_test_catalogue", "get_test_catalogue", "validate_selected_tests", "run_verified_tests", "get_preparation_state", "get_activity_changes", "preview_artifact_cleanup", "cleanup_activity_artifacts", "get_build_products", "select_build_product", "run_simulator_app", "open_simulator_deeplink", "prepare_simulator_scenario", "start_simulator_check", "get_simulator_check", "finish_simulator_check", "start_simulator_recording", "stop_simulator_recording"] + WorkflowContract.tools
+    public static let mutations: Set<String> = Set(["start_test_catalogue", "run_verified_tests", "cleanup_activity_artifacts", "select_build_product", "run_simulator_app", "open_simulator_deeplink", "prepare_simulator_scenario", "start_simulator_check", "finish_simulator_check", "start_simulator_recording", "stop_simulator_recording"]).union(WorkflowContract.mutations)
     public static var capabilities: BridgeValue {
         .object(["serviceToolWorkflowVersion": .number(1), "atlassianWorkflowVersion": .number(1), "buildWorkflowVersion": .number(1), "agentWorkflowVersion": .number(2), "toolSchemaRevision": .number(Double(schemaRevision)), "projectBinding": .bool(true), "buildReadiness": .bool(true), "buildWait": .bool(true), "buildResults": .bool(true), "workflowCorrelation": .bool(true), "testCatalogue": .bool(true), "verifiedTestsCLI": .bool(true), "verifiedTestsXcodeMCP": .bool(false), "sourceRevision": .bool(true), "compactState": .bool(true), "preparationReceipts": .bool(true), "simulatorChecks": .bool(true), "artifactCleanup": .bool(true)])
     }
@@ -37,13 +37,20 @@ public struct VerifiedTestSelection: Codable, Sendable {
     public let id: UUID
     public let catalogueID: UUID
     public let project: ProjectContext
-    public let parameters: BuildParameters
+    public var parameters: BuildParameters
     public let developer: String
     public let profileRevision: String?
     public let revision: SourceRevision
     public let owner: String?
-    public let expectedCases: [String: [String]]
+    public var expectedCases: [String: [String]]
+    public var createdAt: Date?
+    public var state: String?
+    public var pageReceipts: [String: String]?
+    public var digest: String?
+    public var expired: Bool { createdAt.map { Date().timeIntervalSince($0) >= 24 * 60 * 60 } ?? true }
     public init(id: UUID = UUID(), catalogueID: UUID, project: ProjectContext, parameters: BuildParameters, developer: String, profileRevision: String?, revision: SourceRevision, owner: String?, expectedCases: [String: [String]] = [:]) {
+        self.createdAt = Date(); self.state = "finalized"
+        self.digest = SourceRevisionReader.hash((try? JSONEncoder().encode(parameters.testIdentifiers.sorted())) ?? Data())
         self.id = id; self.catalogueID = catalogueID; self.project = project; self.parameters = parameters; self.developer = developer; self.profileRevision = profileRevision; self.revision = revision; self.owner = owner; self.expectedCases = expectedCases
     }
     public static func expand(_ ids: [String], scope: String, catalogue: BuildTestCatalogue) throws -> (selected: [String], unknown: [String], suggestions: [String: [String]]) {
@@ -63,7 +70,7 @@ public struct VerifiedTestSelection: Codable, Sendable {
                 }.prefix(10).map(\.id)
             }
         }
-        guard selected.count <= 100 else { throw BuildError.capacity }
+        guard selected.count <= WorkflowContract.maximumMethods else { throw BuildError.capacity }
         return (selected.sorted(), unknown, suggestions)
     }
 }

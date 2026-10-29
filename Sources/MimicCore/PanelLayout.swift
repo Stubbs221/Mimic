@@ -43,7 +43,7 @@ public struct PanelBlockKind: RawRepresentable, Codable, CaseIterable, Hashable,
         let container = try decoder.singleValueContainer()
         let raw = try container.decode(String.self)
         let aliases = (decoder.userInfo[ProfileCompatibility.codingKey] as? ProfileCompatibility)?.roles ?? [:]
-        guard let value = Self(rawValue: aliases[raw] ?? raw) else { throw PanelLayoutError.invalid }
+        guard let value = Self(rawValue: aliases[raw] ?? ProfileCompatibility.legacyRoles[raw] ?? raw) else { throw PanelLayoutError.invalid }
         self = value
     }
     public func encode(to encoder: any Encoder) throws { var container = encoder.singleValueContainer(); try container.encode(rawValue) }

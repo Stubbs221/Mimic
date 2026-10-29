@@ -33,10 +33,6 @@ import MimicCore
 
 /// Reads only the pinned workspace's toolbar, never editors, console output or debug variables.
 enum XcodeCompilationProgress {
-    /// macOS owns the final grant; this only presents its normal Accessibility access request.
-    @MainActor static func requestAccess() -> Bool {
-        AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
-    }
     static var hasAccess: Bool { AXIsProcessTrusted() }
 
     /// Enabled execution controls belong to Xcode's debugger; no console or variables are read.

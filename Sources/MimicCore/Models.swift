@@ -36,7 +36,7 @@ public enum MimicAction: String, Codable, CaseIterable, Sendable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer(), value = try container.decode(String.self)
         let aliases = (decoder.userInfo[ProfileCompatibility.codingKey] as? ProfileCompatibility)?.actions ?? [:]
-        if let action = Self(rawValue: aliases[value] ?? value) { self = action }
+        if let action = Self(rawValue: aliases[value] ?? ProfileCompatibility.legacyActions[value] ?? value) { self = action }
         else { throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown action") }
     }
     public var isSensitive: Bool { self == .bootstrap || self == .fullCleanup }
@@ -113,6 +113,8 @@ public enum MimicError: Error, Equatable { case invalidBootstrap, invalidProject
 /// Exit status is stored independently from an execution error or terminating signal.
 public enum TaskStatus: String, Codable, Sendable { case queued, running, succeeded, failed, cancelled, interrupted }
 public struct TaskRecord: Codable, Equatable, Identifiable, Sendable {
+    /// Explicitly approved prerequisite, retained across queue persistence. Restart never resumes it.
+    public var installingMint: Bool?
     public var completedProfileSteps: Int?
     /// Validated non-secret form state returned by a profile adapter.
     public var panelResult: ProfilePanelResult?
@@ -142,7 +144,7 @@ public struct TaskRecord: Codable, Equatable, Identifiable, Sendable {
     public var executionProject: ProjectContext {
         var value = project; value.developerDirectory = selectedDeveloperDirectory ?? project.developerDirectory; return value
     }
-    public var requiresXcodeQuit: Bool { self.profileExecution?.action?.requiresXcodeQuit ?? self.action.requiresXcodeQuit }
+    public var requiresXcodeQuit: Bool { self.installingMint == true ? false : self.profileExecution?.action?.requiresXcodeQuit ?? self.action.requiresXcodeQuit }
     public var metadataOnly: Bool { self.hasPrivateInput == true || (self.profileExecution.map { $0.action?.logPolicy != .boundedSanitized } ?? self.action.isSensitive) }
     public var displayTitle: String? { self.profileExecution?.binding == nil ? self.profileExecution?.action?.title : nil }
     public init(id: UUID = UUID(), action: MimicAction, project: ProjectContext, options: BootstrapOptions = BootstrapOptions(), generation: GenerationRequest? = nil, simulator: SimulatorDevice? = nil) {

@@ -96,6 +96,12 @@ public final class CIState: ObservableObject {
         self.client = client; self.interval = interval; self.enrichmentInterval = enrichmentInterval; self.trackingStore = trackingStore; self.token = token
     }
 
+    /// Uses the existing silent credential path; evidence never starts authorization or jobs.
+    public func collectEvidence(_ snapshot: CIAnalysisSnapshot) async throws -> CIEvidence {
+        guard let connection = snapshot.connection, context?.connection == connection, let service = client as? any CIEvidenceService else { throw CIError.invalidConfiguration }
+        return try await service.evidence(snapshot: snapshot, connection: connection, token: token(connection))
+    }
+
     // MARK: - Committed presentation and feed cache
 
     public let compactPresentation = CICompactPresentation()
@@ -298,7 +304,7 @@ public final class CIState: ObservableObject {
         let id = entry.pipeline?.id ?? entry.run?.pipelineID
         let updated = id.flatMap { self.summaryDates[$0] } ?? self.loadedAt
         let stale = self.error != nil || id.map { self.checkStates[$0] == .failed || self.metadataStates[$0] == .failed } == true || updated.map { now.timeIntervalSince($0) > 45 } == true
-        return CICompactSummary(entry: entry, context: context, accountID: self.user?.id, checks: id.flatMap { self.summaries[$0] }, updatedAt: updated, stale: stale)
+        return CICompactSummary(entry: entry, context: context, accountID: self.user?.id, checks: id.flatMap { self.summaries[$0] }, updatedAt: updated, stale: stale, accountUsername: self.user?.username)
     }
 
     /// Retains one personal run per live panel without changing native detail selection.

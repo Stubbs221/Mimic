@@ -231,7 +231,7 @@ private struct BranchSnapshotFixture: GitBranchService {
         let name = "BranchApp-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: root) }
         let checkout = root.appendingPathComponent("repo"); try FileManager.default.createDirectory(at: checkout, withIntermediateDirectories: true)
-        for args in [["init", "-b", "source"], ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture"], ["branch", "target"]] {
+        for args in [["init", "-b", "source"], ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "fixture"], ["remote", "add", "origin", root.appendingPathComponent("remote.git").path], ["update-ref", "refs/remotes/origin/target", "HEAD"]] {
             try #require(EnvironmentInspector.capture("/usr/bin/git", args, directory: checkout.path).0 == 0)
         }
         let project = try EnvironmentInspector.project(path: checkout.path)
@@ -245,7 +245,10 @@ private struct BranchSnapshotFixture: GitBranchService {
         _ = try await integration.handle(.init(method: "panel_branch_preferences", parameters: ["context": context, "enabled": .bool(true)], threadID: "panel"))
         #expect(model.branchSwitch.rebaseEnabled(path: project.path)); #expect(!model.branchSwitch.rebaseEnabled(path: desktop.path))
         _ = try await integration.handle(.init(method: "panel_branch_preferences", parameters: ["context": context, "enabled": .bool(false)], threadID: "panel"))
-        let parameters: [String: BridgeValue] = ["branch": .string("target"), "context": context, "requestID": .string(id.uuidString)]
+        let choices = try await integration.handle(.init(method: "panel_branches", threadID: "panel"))
+        #expect(choices["branches"].array?.contains(.string("refs/remotes/origin/target")) == true)
+        #expect(choices["branchChoices"].array?.contains(.object(["id": .string("refs/remotes/origin/target"), "name": .string("target"), "isRemote": .bool(true)])) == true)
+        let parameters: [String: BridgeValue] = ["branch": .string("refs/remotes/origin/target"), "context": context, "requestID": .string(id.uuidString)]
         let started = try await integration.handle(.init(method: "panel_switch_branch", parameters: parameters, threadID: "panel"))
         #expect(started["id"].string == id.uuidString); #expect(model.switchingBranch); #expect(!model.canSelectProject)
         #expect(model.developmentUpdateBlockers.contains("git"))
@@ -264,6 +267,35 @@ private struct BranchSnapshotFixture: GitBranchService {
         let lateRetry = try await integration.handle(.init(method: "panel_switch_branch", parameters: parameters, threadID: "panel"))
         #expect(lateRetry["id"].string == id.uuidString)
         #expect(model.branchSwitch.operations.count == 1)
+    }
+
+    @Test func nativePickerRendersOriginMarkersInBothThemes() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("OriginPicker-" + UUID().uuidString)
+        let suite = "OriginPicker-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let model = TaskCoordinator(directory: root, simulatorServices: self.services(), defaults: defaults)
+        model.aiUsage.stop()
+        let project = ProjectContext(path: root.path, branch: "develop", commit: "fixture")
+        model.projects = [project]; model.selectedProjectPath = project.path
+        model.localBranches = [.init(name: "develop"), .init(name: "feature/vmaslov/IOS-21161-mapi-action-params", isRemote: true)]
+        model.gitSummary = GitSummary(porcelain: "")
+        for dark in [false, true] {
+            for width in [360.0, 520.0] {
+                let host = NSHostingView(rootView: BranchPicker(model: model).padding(16).frame(width: width, height: 420)
+                    .background(Color(nsColor: MimicTheme.native("surface", dark: dark)))
+                    .foregroundStyle(Color(nsColor: MimicTheme.native("ink", dark: dark)))
+                    .environment(\.mimicPanelAppearance, .tileGrid).environment(\.colorScheme, dark ? .dark : .light))
+                let window = NSWindow(contentRect: NSRect(x: -2000, y: -2000, width: width, height: 420), styleMask: .borderless, backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false; window.contentView = host
+                window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua); window.orderBack(nil)
+                try await Task.sleep(for: .milliseconds(150)); host.layoutSubtreeIfNeeded(); host.display()
+                #expect(host.fittingSize.width <= width)
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds)); host.cacheDisplay(in: host.bounds, to: bitmap)
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: URL(fileURLWithPath: "/private/tmp/mimic-origin-picker-\(Int(width))-\(dark ? "dark" : "light").png"))
+                window.close()
+            }
+        }
     }
 
     @Test func nativeHeaderRendersLongBranchWithCheckboxAndSettings() async throws {

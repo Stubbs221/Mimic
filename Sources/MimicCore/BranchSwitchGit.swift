@@ -13,10 +13,23 @@ actor BranchSwitchGit {
         var op = initial
         try self.verifySource(op)
         guard op.source.branch != "(detached)", try self.optionalGit(op.source.path, ["symbolic-ref", "-q", "HEAD"]) != nil else { throw BranchSwitchError.detached }
+        guard self.capture(op.source.path, ["check-ref-format", "--branch", op.target]).0 == 0 else { throw BranchSwitchError.missing }
+        let localSHA = try self.optionalGit(op.source.path, ["show-ref", "--verify", "--hash", "refs/heads/" + op.target])
+        if let remote = op.originRef {
+            guard op.target != "HEAD",
+                  try self.optionalGit(op.source.path, ["symbolic-ref", "-q", remote]) == nil,
+                  let remoteSHA = try self.optionalGit(op.source.path, ["show-ref", "--verify", "--hash", remote]) else { throw BranchSwitchError.missing }
+            op.createsTrackingBranch = localSHA == nil
+            op.targetSHA = localSHA ?? remoteSHA
+        } else {
+            guard let localSHA else { throw BranchSwitchError.missing }
+            op.targetSHA = localSHA
+        }
         guard op.target != op.source.branch else { op.phase = .succeeded; try await update(op); return op }
-        guard try self.optionalGit(op.source.path, ["show-ref", "--verify", "--hash", "refs/heads/" + op.target]) != nil else { throw BranchSwitchError.missing }
         try self.verifyUnoccupied(op)
-        op.targetSHA = try self.git(op.source.path, ["rev-parse", "--verify", "refs/heads/" + op.target])
+        if try op.rebase || !self.git(op.source.path, ["status", "--porcelain=v1", "-z"]).isEmpty {
+            try self.verifyIdentity(op.source.path)
+        }
         try await update(op)
         if op.rebase {
             op.phase = .fetching; try await update(op)
@@ -32,7 +45,7 @@ actor BranchSwitchGit {
                 let result = self.capture(op.worktree!, ["-c", "rebase.updateRefs=false", "-c", "rebase.autoStash=false", "rebase", "--no-update-refs", "--no-autostash", op.developSHA!], timeout: 120)
                 if result.0 != 0 {
                     let paths = try self.conflicts(op.worktree!)
-                    guard !paths.isEmpty, try self.hasOperation(op.worktree!) else { throw BranchSwitchError.command(self.diagnostic(result.1)) }
+                    guard !paths.isEmpty, try self.hasOperation(op.worktree!) else { throw self.commandError(result.1) }
                     op.conflict = .rebase; op.conflictPaths = paths
                     op.stoppedCommit = try self.optionalGit(op.worktree!, ["rev-parse", "--verify", "REBASE_HEAD"])
                     op.diagnostic = self.diagnostic(result.1)
@@ -57,7 +70,9 @@ actor BranchSwitchGit {
             try self.removeWorktree(op); return op
         }
         try self.verifySource(op); try self.verifyUnoccupied(op)
-        guard let old = op.targetSHA, try self.git(op.source.path, ["rev-parse", "refs/heads/" + op.target]) == old else { throw BranchSwitchError.context }
+        guard let old = op.targetSHA else { throw BranchSwitchError.context }
+        let currentTarget = try self.optionalGit(op.source.path, ["show-ref", "--verify", "--hash", "refs/heads/" + op.target])
+        guard op.createsTrackingBranch == true ? currentTarget == nil : currentTarget == old else { throw BranchSwitchError.context }
         if let worktree = op.worktree {
             guard try !self.hasOperation(worktree), try self.conflicts(worktree).isEmpty,
                   try self.git(worktree, ["status", "--porcelain=v1", "-z"]).isEmpty else { throw BranchSwitchError.review }
@@ -66,7 +81,10 @@ actor BranchSwitchGit {
         }
         guard let result = op.resultSHA else { throw BranchSwitchError.review }
         op.phase = .stashing; try await update(op)
+        // Xcode may have asked the user to save before closing; revalidate before stashing any files.
+        try self.verifySource(op)
         if try !self.git(op.source.path, ["status", "--porcelain=v1", "-z"]).isEmpty {
+            try self.verifyIdentity(op.source.path)
             op.stashName = "Mimic switch " + op.id.uuidString + " " + op.source.branch + " → " + op.target
             try await update(op)
             try self.git(op.source.path, ["stash", "push", "--include-untracked", "--message", op.stashName!], timeout: 60)
@@ -75,8 +93,12 @@ actor BranchSwitchGit {
         guard try self.git(op.source.path, ["status", "--porcelain=v1", "-z"]).isEmpty else { throw BranchSwitchError.review }
         try self.verifySource(op); try self.verifyUnoccupied(op)
         op.phase = .switching; try await update(op)
-        try self.git(op.source.path, ["update-ref", "-m", "Mimic branch switch " + op.id.uuidString, "refs/heads/" + op.target, result, old])
+        // An empty old value means create-only. Git rejects a branch created since preflight.
+        try self.git(op.source.path, ["update-ref", "-m", "Mimic branch switch " + op.id.uuidString, "refs/heads/" + op.target, result, op.createsTrackingBranch == true ? "" : old])
         op.refUpdated = true; try await update(op)
+        if op.createsTrackingBranch == true, let remote = op.originRef {
+            try self.git(op.source.path, ["branch", "--set-upstream-to=" + remote, "--", op.target])
+        }
         try self.git(op.source.path, ["switch", "--no-guess", "--no-overwrite-ignore", "--", op.target], timeout: 60)
         op.didSwitch = true; op.phase = .restoring; try await update(op)
         if let stash = op.stashSHA {
@@ -118,7 +140,8 @@ actor BranchSwitchGit {
                 guard try self.git(op.source.path, ["status", "--porcelain=v1", "-z"], cancellable: false).isEmpty else { throw BranchSwitchError.review }
                 try self.git(op.source.path, ["stash", "apply", "--index", stash], timeout: 60, cancellable: false)
             }
-            if op.refUpdated, let old = op.targetSHA, let new = op.resultSHA, old != new,
+            // Keep a newly created branch reachable on failure; never delete its pinned/rebased result.
+            if op.createsTrackingBranch != true, op.refUpdated, let old = op.targetSHA, let new = op.resultSHA, old != new,
                try self.git(op.source.path, ["rev-parse", "refs/heads/" + op.target], cancellable: false) == new {
                 try self.verifyUnoccupied(op)
                 try self.git(op.source.path, ["update-ref", "refs/heads/" + op.target, old, new], cancellable: false)
@@ -146,6 +169,17 @@ actor BranchSwitchGit {
 
     // MARK: - Git identities and bounded diagnostics
 
+    private func verifyIdentity(_ path: String) throws {
+        for variable in ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"] {
+            let value = try self.git(path, ["var", variable])
+            guard let start = value.lastIndex(of: "<"), let end = value[start...].firstIndex(of: ">"),
+                  !value[..<start].trimmingCharacters(in: .whitespaces).isEmpty,
+                  !value[value.index(after: start)..<end].trimmingCharacters(in: .whitespaces).isEmpty else { throw BranchSwitchError.identity }
+        }
+    }
+    private func commandError(_ output: String) -> BranchSwitchError {
+        BranchSwitchError.isIdentityDiagnostic(output) ? .identity : .command(self.diagnostic(output))
+    }
     private func verifySource(_ op: BranchSwitchOperation) throws {
         guard try self.git(op.source.path, ["symbolic-ref", "--short", "HEAD"]) == op.source.branch,
               try self.git(op.source.path, ["rev-parse", "HEAD"]) == op.source.commit else { throw BranchSwitchError.context }
@@ -171,7 +205,7 @@ actor BranchSwitchGit {
     }
     private func isAncestor(_ ancestor: String, _ descendant: String, path: String) throws -> Bool {
         let result = self.capture(path, ["merge-base", "--is-ancestor", ancestor, descendant])
-        guard result.0 == 0 || result.0 == 1 else { throw BranchSwitchError.command(self.diagnostic(result.1)) }
+        guard result.0 == 0 || result.0 == 1 else { throw self.commandError(result.1) }
         return result.0 == 0
     }
     private func removeWorktree(_ op: BranchSwitchOperation) throws {
@@ -186,14 +220,14 @@ actor BranchSwitchGit {
     private func optionalGit(_ path: String, _ arguments: [String]) throws -> String? {
         let result = self.capture(path, arguments)
         if result.0 == 1 || result.0 == 128 { return nil }
-        guard result.0 == 0 else { throw BranchSwitchError.command(self.diagnostic(result.1)) }
+        guard result.0 == 0 else { throw self.commandError(result.1) }
         return result.1.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     @discardableResult private func git(_ path: String, _ arguments: [String], timeout: TimeInterval = 15, cancellable: Bool = true) throws -> String {
         let result = self.capture(path, arguments, timeout: timeout, cancellable: cancellable)
         guard result.0 == 0 else {
             if Task.isCancelled && cancellable { throw CancellationError() }
-            throw BranchSwitchError.command(self.diagnostic(result.1))
+            throw self.commandError(result.1)
         }
         return result.1.trimmingCharacters(in: .whitespacesAndNewlines)
     }

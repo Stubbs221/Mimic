@@ -20,6 +20,11 @@ import MimicCore
         try await Task.sleep(for: .milliseconds(20))
         let input = notices.poll(checkout: project.path)
         #expect(input.count == 1); #expect(input.first?["taskID"].string == task.id.uuidString)
+        model.awaitingInput.remove(task.id)
+        try await Task.sleep(for: .milliseconds(20))
+        model.awaitingInput.insert(task.id)
+        try await Task.sleep(for: .milliseconds(20))
+        #expect(notices.poll(checkout: project.path).count == 1)
         model.awaitingInput.remove(task.id); model.records[1].status = .failed
         try await Task.sleep(for: .milliseconds(20))
         #expect(notices.poll(checkout: "/other-checkout").isEmpty)

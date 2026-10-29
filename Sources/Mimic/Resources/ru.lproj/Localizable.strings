@@ -204,8 +204,8 @@
 
 "back" = "Назад";
 "checkout.choose" = "Выбрать checkout…";
-"branch.choose" = "Выбрать локальную ветку";
-"branch.search" = "Найти локальную ветку…";
+"branch.choose" = "Выбрать ветку";
+"branch.search" = "Найти ветку…";
 "branch.switching" = "Переключаем ветку…";
 "branch.dirty" = "Сначала обработайте изменения и новые файлы в Git.";
 "branch.operation" = "Сначала завершите текущую операцию Git.";
@@ -218,7 +218,7 @@
 "branch.blocker.git" = "Завершите текущее переключение ветки или операцию Git.";
 "branch.blocker.checking" = "Проверяем checkout. Переключение станет доступно после проверки.";
 "branch.blocker.unavailable" = "Не удалось проверить checkout. Откройте список веток повторно для новой проверки.";
-"branch.missing" = "Локальная ветка больше не существует.";
+"branch.missing" = "Ветка больше не существует.";
 "branch.timeout" = "Git не завершил проверку вовремя. Проверьте состояние репозитория и откройте список веток повторно.";
 "branch.error" = "Не удалось проверить или переключить ветку.";
 "tool.name.generation" = "Генератор";
@@ -875,6 +875,17 @@
 "profile.configuration.project" = "Выберите проект, определяющий конфигурации workspace";
 "profile.import.error" = "Не удалось импортировать профиль";
 "profile.action.error" = "Не удалось поставить действие в очередь";
+
+/* Mint recovery keeps the original Bootstrap parameters. */
+"bootstrap.mint.missing" = "Mint не установлен";
+"bootstrap.mint.explanation" = "Mint нужен для подготовки проекта. Установим его через Homebrew, затем автоматически повторим Bootstrap.";
+"bootstrap.mint.install" = "Установить Mint и продолжить";
+"bootstrap.mint.install.short" = "Установить и продолжить";
+"bootstrap.mint.installing" = "Устанавливаем Mint…";
+"bootstrap.mint.continuing" = "После установки Bootstrap запустится автоматически с выбранными параметрами.";
+"bootstrap.mint.failed.title" = "Не удалось установить Mint";
+"bootstrap.mint.failed" = "Установка Mint не завершена. Bootstrap не запущен. Подробности доступны в терминале установки.";
+"bootstrap.mint.retry" = "Повторить установку";
 "profile.action.required" = "Для этого действия нужен импортированный профиль";
 "profile.preview.invalid" = "Генератор вернул недопустимый план файлов";
 
@@ -968,6 +979,10 @@
 "bootstrap.error.agent" = "Передать ошибку агенту";
 
 "ci.compact.empty" = "Нет прогонов";
+"ci.setup.title" = "Подключите GitLab или Jenkins";
+"ci.setup.compactTitle" = "Подключите CI";
+"ci.setup.detail" = "Добавьте токен, чтобы видеть статусы и запускать проверки.";
+"ci.setup.addToken" = "Добавить токен";
 "ci.compact.completed" = "Завершено %@/%@";
 "ci.compact.hide" = "Скрыть CI";
 "ci.compact.open" = "Открыть прогон в CI";
@@ -1110,7 +1125,7 @@
 "branch.stash.backup" = "Stash изменений из";
 "branch.error.blocked" = "Дождитесь завершения локальных задач.";
 "branch.error.context" = "Ветка или SHA изменились. Переключение остановлено.";
-"branch.error.missing" = "Целевая локальная ветка не найдена.";
+"branch.error.missing" = "Целевая ветка не найдена.";
 "branch.error.occupied" = "Целевая ветка открыта в другом worktree.";
 "branch.error.operation" = "Сначала завершите текущую Git-операцию.";
 "branch.error.detached" = "Сначала выберите исходную локальную ветку.";
@@ -1373,17 +1388,77 @@
 
 /* Xcode Run integration. */
 "build.progress.compilation" = "Прогресс Xcode: %.0f%%";
-"build.progress.xcodeUnavailable" = "Нет данных прогресса Xcode. Разрешите Mimic доступ в настройках Универсального доступа.";
+"build.progress.xcodeUnavailable" = "Сборка продолжается без процента Xcode. Доступ для чтения прогресса необязателен.";
 "build.progress.xcodeWaiting" = "Ожидание данных прогресса от Xcode.";
-"build.error.xcodeAccess" = "Разрешите Mimic доступ к выбранному Xcode: окно «Allow “Mimic” to access Xcode?», управление Xcode и Универсальный доступ, затем повторите запуск.";
+"build.error.xcodeAccess" = "Xcode не разрешил доступ агенту Mimic. Подтвердите запрос «Allow “Mimic” to access Xcode?» в выбранном Xcode.";
+"build.error.xcodeAutomationAccess" = "macOS запретила Mimic управление Xcode. Разрешите его в Системных настройках → Конфиденциальность и безопасность → Автоматизация → Mimic → Xcode.";
+"build.error.xcodeDebuggerAccess" = "Для подтверждения отладчика в Xcode 26 нужен системный доступ Mimic к интерфейсу Xcode. Разрешите его в настройках Универсального доступа. В Xcode 27 этот доступ для запуска не требуется.";
+"build.error.xcodeConnection" = "Не удалось подключиться к выбранному Xcode. Проверьте, что workspace открыт и запрос доступа агента Mimic подтверждён в Xcode. Подробности — в выводе.";
 "build.error.xcodeBusy" = "В Xcode уже выполняется другое действие. Завершите его перед запуском из Mimic.";
 "build.error.debuggerUnavailable" = "Xcode не подтвердил запуск с подключённым отладчиком. Проверьте состояние в Xcode.";
 "build.stop.request" = "Запросить остановку";
 "build.error.xcodeCancellationUnconfirmed" = "Запрос остановки передан Xcode. Проверьте фактическую остановку в Xcode перед следующим запуском.";
 
+// Profile-controlled build resource readiness and recovery.
+"build.error.resourcesRequired" = "Для сборки нужно восстановить ресурсы проекта.";
+"build.resources.restore" = "Восстановить ресурсы";
+"build.resources.retry" = "Повторить";
+"build.resources.log" = "Лог";
+"build.resources.missing" = "Нет ресурсов %@";
+"build.resources.stale" = "Нужно обновить ресурсы %@";
+"build.resources.modified" = "В ресурсах %@ есть локальные изменения";
+"build.resources.unknown" = "Не удалось проверить ресурсы %@";
+"build.resources.ready" = "Ресурсы %@ готовы";
+"build.resources.restoring" = "Восстанавливаем ресурсы…";
+"build.resources.queued" = "Восстановление в очереди";
+"build.resources.verifying" = "Проверяем файлы и версию";
+"build.resources.verificationFailed" = "Восстановление завершилось, но необходимые ресурсы или версия всё ещё недоступны.";
+"build.resources.recoveryFailed" = "Не удалось восстановить ресурсы";
+"build.resources.checkFailed" = "Не удалось проверить ресурсы. Повторяем проверку.";
+
+"branch.error.identity" = "В Git не указаны имя и рабочая почта. Они нужны для сохранения ваших изменений и rebase. Укажите их в настройках Git и повторите переключение. Ветка не изменена.";
+"branch.error.xcodeClose" = "Не удалось подготовить проект в Xcode. Дождитесь завершения сборки, сохраните изменения и закройте этот workspace, затем повторите переключение. Ветка не изменена.";
+"branch.error.xcodeReopen" = "Не удалось снова открыть проект в Xcode. Откройте workspace вручную.";
+
+"branch.error.xcodeAccess" = "Разрешите Mimic управление Xcode в Системных настройках macOS → Конфиденциальность и безопасность → Автоматизация. Либо закройте Xcode и повторите переключение. Ветка не изменена.";
 "build.environment" = "Окружение";
 "build.tests.target" = "Набор тестов";
 "build.tests.runTarget" = "Запустить набор";
 "build.tests.noTargets" = "В выбранной схеме нет доступных тестовых таргетов.";
 "build.error.testsUnverified" = "Не удалось подтвердить выполнение выбранного набора. Откройте результат прогона.";
 "build.action.runShort" = "Запустить";
+
+"ci.open.gitlab" = "Открыть прогон в GitLab";
+"ci.run.information" = "Сведения о прогоне";
+"ci.launch.search" = "Поиск удалённой ветки";
+"ci.launch.noBranches" = "Ветки не найдены";
+"ci.launch.submitting" = "Запускаем…";
+
+"ci.analysis.action" = "Разобрать";
+"ci.analysis.help" = "Разобрать ошибки прогона с AI";
+"ci.analysis.title" = "Разбор CI-прогона";
+"ci.analysis.unavailable" = "Не удалось начать разбор. Проверьте доступность AI и актуальность прогона.";
+"ci.analysis.sending" = "Передаём прогон агенту…";
+"ci.analysis.sent" = "Прогон передан агенту в этот чат";
+
+"ci.analysis.codex.help" = "Открыть разбор прогона в новом чате Codex";
+"ci.analysis.codex.open" = "Открыть Codex";
+"ci.analysis.codex.unavailable" = "Не удалось открыть Codex. Скопируйте запрос и вставьте его в новый чат.";
+
+// CI workflow stages and admission.
+"build.phase.testing" = "Выполняются тесты";
+"build.phase.processFinalizing" = "Завершается процесс";
+"build.phase.extractingResults" = "Извлекаются результаты";
+"build.phase.verifyingCoverage" = "Проверяется охват";
+"build.error.busy" = "Для этого проекта уже есть операция. Дождитесь её завершения.";
+"build.error.pendingBudget" = "В очереди сценария уже три операции.";
+"build.error.workflowRequired" = "Для постановки в очередь нужен workflowID.";
+"build.error.selectionTooLargeForToolchain" = "Выбранный Xcode не поддерживает такой размер точного выбора.";
+"build.error.resultPersistenceFailed" = "Не удалось сохранить результат проверки.";
+
+"build.workflow.methods" = "Методы: %d";
+"build.workflow.queuePosition" = "Очередь: %d";
+"build.workflow.pending" = "Ожидает: %d";
+"build.workflow.casesUnknown" = "Полнота cases неизвестна";
+"build.workflow.casesIncomplete" = "Cases проверены не полностью";
+"build.workflow.casesComplete" = "Полнота cases подтверждена";

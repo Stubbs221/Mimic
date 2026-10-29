@@ -102,7 +102,7 @@ struct XcodeRunAutomationTests {
         }
         let denied = XcodeRunAutomation { _ in throw XcodeRunAutomation.ScriptError(number: -1743, message: "Not authorized") }
         do { _ = try await denied.select(target); Issue.record("Denied automation was ignored") }
-        catch let failure as XcodeRunFailure { #expect(failure.code == .xcodeAccess && failure.step == "automation.select") }
+        catch let failure as XcodeRunFailure { #expect(failure.code == .xcodeAutomationAccess && failure.step == "automation.select") }
         let unnamed = XcodeRunAutomation { _ in .empty }
         await #expect(throws: XcodeRunFailure.self) { _ = try await unnamed.select(target) }
     }

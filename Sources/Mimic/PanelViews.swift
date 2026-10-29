@@ -115,9 +115,17 @@ private struct MimicDocumentHost<Content: View>: NSViewRepresentable {
         return view
     }
     func updateNSView(_ view: DocumentView, context: Context) {
-        if visible, view.hosting.isHidden { view.hosting.isHidden = false }
+        let visibilityChanged = view.desiredVisible != visible
         view.desiredVisible = visible
-        if visible { view.hosting.rootView = MimicDocumentRoot(content: content, inherited: context.environment) }
+        if visibilityChanged, !visible, view.hasLaidOut { view.updateDocumentVisibility() }
+        if visible, view.hosting.isHidden { view.hosting.isHidden = false }
+        // Commit the inner scroll's visibility once before freezing the inactive graph.
+        // Otherwise it never captures the offset that must be restored when returning.
+        if visible || visibilityChanged { view.hosting.rootView = MimicDocumentRoot(content: content, inherited: context.environment) }
+        if visibilityChanged, visible, view.hasLaidOut {
+            view.hosting.layoutSubtreeIfNeeded()
+            view.updateDocumentVisibility()
+        }
         // Commit inner scroll visibility and its retained offset before excluding the complete graph.
         if view.hasLaidOut, !visible, !view.hosting.isHidden {
             view.hosting.layoutSubtreeIfNeeded(); view.hosting.isHidden = true
@@ -132,6 +140,7 @@ private struct MimicDocumentHost<Content: View>: NSViewRepresentable {
     /// Mount once to establish scroll identities, then hide the whole inactive document.
     final class DocumentView: NSView {
         let hosting: NSHostingView<MimicDocumentRoot<Content>>
+        private weak var documentVisibility: MimicDocumentVisibility.Marker?
         var desiredVisible = true
         private(set) var hasLaidOut = false
         override var isFlipped: Bool { true }
@@ -147,8 +156,27 @@ private struct MimicDocumentHost<Content: View>: NSViewRepresentable {
             super.layout()
             hosting.frame = bounds
             if !hasLaidOut, !desiredVisible { hosting.layoutSubtreeIfNeeded() }
+            if !hasLaidOut { updateDocumentVisibility() }
             hasLaidOut = true
             if hosting.isHidden == desiredVisible { hosting.isHidden = !desiredVisible }
+        }
+
+        /// Native visibility cannot wait for a SwiftUI update after its hosting graph is hidden.
+        func updateDocumentVisibility() {
+            // A hidden hosting view may defer rebuilding its native descendants.
+            // The retained marker still owns the scroll view and its saved offset.
+            if let marker = documentVisibility {
+                marker.visible = desiredVisible; marker.updateVisibility()
+            }
+            func visit(_ view: NSView) {
+                if let marker = view as? MimicDocumentVisibility.Marker {
+                    documentVisibility = marker
+                    marker.hostVisibility = { [weak self] in self?.desiredVisible ?? false }
+                    marker.visible = desiredVisible; marker.updateVisibility()
+                }
+                view.subviews.forEach(visit)
+            }
+            visit(hosting)
         }
     }
 }
@@ -289,7 +317,7 @@ struct BranchSwitchStatus: View {
                         Text(text("branch.delivery." + operation.delivery.rawValue)).foregroundStyle(.secondary)
                     }
                     if let error = operation.error { Text(text(error)).foregroundStyle(.orange).lineLimit(3).mimicHelp(text(error)) }
-                    if let stash = operation.stashName { Text(text("branch.stash.backup") + " " + operation.source.branch).lineLimit(1).truncationMode(.middle).mimicHelp(stash) }
+                    if operation.stashSHA != nil, let stash = operation.stashName { Text(text("branch.stash.backup") + " " + operation.source.branch).lineLimit(1).truncationMode(.middle).mimicHelp(stash) }
                 }.mimicFont(.caption).accessibilityIdentifier("branch.progress")
             }
         }
@@ -298,12 +326,13 @@ struct BranchSwitchStatus: View {
 
 struct BranchPicker: View {
     private var theme = MimicTheme()
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.mimicTextScale) private var textScale
     @ObservedObject
     var model: TaskCoordinator
     private var branches: [LocalBranch] {
-        let matching = self.model.localBranches.filter { self.model.branchSearch.isEmpty || $0.name.localizedCaseInsensitiveContains(self.model.branchSearch) }
-        return matching.filter { $0.name == self.model.project?.branch } + matching.filter { $0.name != self.model.project?.branch }
+        let matching = self.model.localBranches.filter { self.model.branchSearch.isEmpty || $0.displayName.localizedCaseInsensitiveContains(self.model.branchSearch) }
+        return matching.filter { !$0.isRemote && $0.name == self.model.project?.branch } + matching.filter { $0.isRemote || $0.name != self.model.project?.branch }
     }
 
     var body: some View {
@@ -341,18 +370,21 @@ struct BranchPicker: View {
     private var branchList: some View {
         LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(self.branches) { branch in
-                Button { self.model.switchBranch(branch.name) } label: {
+                Button { self.model.switchBranch(branch.id) } label: {
                     HStack {
+                        Circle().fill(Color(nsColor: MimicTheme.native(branch.isRemote ? "branchOrigin" : "branchLocal", dark: self.colorScheme == .dark)))
+                            .frame(width: 6, height: 6).accessibilityHidden(true)
                         Text(branch.name).font(theme.tiled ? .system(size: MimicTheme.metric("body") * textScale, design: .monospaced) : MimicMetrics.body.monospaced()).lineLimit(1).truncationMode(.middle)
-                        Spacer()
+                        Text(branch.isRemote ? "origin" : "local").mimicFont(.caption).foregroundStyle(.secondary).fixedSize()
+                        Spacer(minLength: 0)
                         Image(systemName: "checkmark").frame(width: 14)
-                            .opacity(branch.name == self.model.project?.branch ? 1 : 0).accessibilityHidden(true)
+                            .opacity(!branch.isRemote && branch.name == self.model.project?.branch ? 1 : 0).accessibilityHidden(true)
                     }.padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-                }.buttonStyle(BranchSelectionButtonStyle(current: branch.name == self.model.project?.branch))
-                    .disabled(!self.model.canSwitchBranch && branch.name != self.model.project?.branch)
-                    .mimicHelp(self.model.canSwitchBranch ? branch.name : self.model.branchSwitchBlocker?.message ?? branch.name)
-                    .accessibilityIdentifier("branch.select." + branch.name)
-                    .accessibilityAddTraits(branch.name == self.model.project?.branch ? .isSelected : [])
+                }.buttonStyle(BranchSelectionButtonStyle(current: !branch.isRemote && branch.name == self.model.project?.branch))
+                    .disabled(!self.model.canSwitchBranch && (branch.isRemote || branch.name != self.model.project?.branch))
+                    .mimicHelp(self.model.canSwitchBranch ? branch.displayName : self.model.branchSwitchBlocker?.message ?? branch.displayName)
+                    .accessibilityIdentifier("branch.select." + branch.id)
+                    .accessibilityAddTraits(!branch.isRemote && branch.name == self.model.project?.branch ? .isSelected : [])
             }
         }
     }
@@ -360,7 +392,7 @@ struct BranchPicker: View {
 
 /// Approved B variant: full-row lavender feedback with a reserved trailing
 /// action arrow. Disabled rows retain their geometry and never imply activation.
-private struct BranchSelectionButtonStyle: ButtonStyle {
+struct BranchSelectionButtonStyle: ButtonStyle {
     let current: Bool
     private var theme = MimicTheme()
     @Environment(\.isEnabled) private var enabled

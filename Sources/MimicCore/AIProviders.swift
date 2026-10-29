@@ -150,11 +150,40 @@ public enum AIProviderAdapters {
         switch provider { case .codex: CodexAIAdapter(); case .claude: ClaudeAIAdapter() }
     }
 
-    public static func resolve(provider: AIProvider, configuredPath: String, home: String = NSHomeDirectory()) -> String? {
-        if !configuredPath.isEmpty {
-            return FileManager.default.isExecutableFile(atPath: configuredPath) ? configuredPath : nil
+    /// Empty preferences discover installed CLIs on every use, so application updates do not persist stale paths.
+    /// An explicit preference remains authoritative, including when its executable is missing.
+    public static func resolve(
+        provider: AIProvider,
+        configuredPath: String,
+        home: String = NSHomeDirectory(),
+        searchPath: String = ProcessInfo.processInfo.environment["PATH"] ?? "",
+        applicationDirectories: [String]? = nil,
+        commandDirectories: [String]? = nil
+    ) -> String? {
+        if !configuredPath.isEmpty { return executable(configuredPath) ? configuredPath : nil }
+        let directories = (commandDirectories ?? ["/opt/homebrew/bin", "/usr/local/bin", home + "/.local/bin", home + "/.npm-global/bin", home + "/.volta/bin"])
+            + searchPath.split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }
+        let commands = directories.map { $0 + "/" + provider.rawValue }
+        let legacy = provider == .claude ? [home + "/.claude/local/claude"] : []
+        let applications = applicationDirectories ?? ["/Applications", home + "/Applications"]
+        let bundled: [String]
+        switch provider {
+        case .codex:
+            bundled = applications.flatMap { directory in
+                ["ChatGPT.app", "Codex.app"].flatMap { app in
+                    ["Contents/Resources/codex-cli/bin/codex", "Contents/Resources/codex", "Contents/Resources/codex-cli"].map { directory + "/" + app + "/" + $0 }
+                }
+            }
+        case .claude:
+            // Claude Desktop's GUI executable does not implement the Claude Code CLI protocol.
+            bundled = []
         }
-        return ["/opt/homebrew/bin", "/usr/local/bin", home + "/.local/bin"].map { $0 + "/" + provider.rawValue }.first { FileManager.default.isExecutableFile(atPath: $0) }
+        return (commands + legacy + bundled).first { executable($0) }
+    }
+
+    private static func executable(_ path: String) -> Bool {
+        FileManager.default.isExecutableFile(atPath: path)
+            && (try? URL(fileURLWithPath: path).resolvingSymlinksInPath().resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
     }
 
     /// An allowlist avoids leaking CI/GitLab credentials through inherited process environments.

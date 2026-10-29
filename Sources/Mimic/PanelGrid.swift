@@ -292,7 +292,7 @@ struct PanelGrid: View {
                         else { emptySlot(cell) }
                     }.opacity(hidden ? 0 : 1).allowsHitTesting(!hidden).disabled(hidden).accessibilityHidden(hidden)
                         .modifier(PanelCardFeedback(enabled: cell.block != nil && !hidden, lifted: layout.dragging == cell.block && cell.block != nil,
-                                                    morphScale: dragMorphScale, grabAnchor: grabAnchor, radius: theme.cardRadius, policy: policy))
+                                                    morphScale: dragMorphScale, grabAnchor: grabAnchor, policy: policy))
                         .transaction { if layout.dragging == cell.block && cell.block != nil { $0.animation = nil } }
                 }
             }
@@ -388,7 +388,7 @@ struct PanelGrid: View {
         let compactSimulators = block == .simulators && !expanded && theme.tiled
         return VStack(alignment: .leading, spacing: 0) {
             // The retained zero-height catalog must not reserve a trailing gap below favorites.
-            VStack(alignment: .leading, spacing: compactTools ? 0 : compactSimulators ? 8 : 6) {
+            VStack(alignment: .leading, spacing: compactTools ? 0 : compactSimulators ? 8 : block == .ci ? 4 : 6) {
                 if let tool = layout.servicePanels[block], let project = model.project, let snapshot = model.activeProfile, !layout.editing {
                     if !theme.retro { blockHeader(block, expanded: expanded) }
                     ServiceToolView(model: model, tool: tool, project: project, snapshot: snapshot)
@@ -410,7 +410,8 @@ struct PanelGrid: View {
                         if !expanded, block == .builds {
                             BuildCardView(model: model, builds: model.builds, full: layout.layout.size(of: block) == .full)
                         } else if !expanded, block == .ci {
-                            CICompactSummaryView(state: model.ci, full: layout.layout.size(of: block) == .full, open: { model.showCI($0) })
+                            CICompactSummaryView(state: model.ci, model: model, settings: model.ciSettings, full: layout.layout.size(of: block) == .full,
+                                                 openSettings: { model.openSettings(group: .ci) }, open: { model.showCI($0) })
                         } else if !expanded, block == .ai {
                             AICompactProviders(usage: model.aiUsage, full: layout.layout.size(of: block) == .full, open: { open(.ai) })
                         } else if !expanded, block == .utils {
@@ -435,7 +436,7 @@ struct PanelGrid: View {
                 // Bootstrap marks only its controls and terminal so its text and free surface can disclose.
                 // Other hosted forms retain their whole-surface control exclusion.
                 .background { if block != .bootstrap || layout.editing { PanelControlRegion() } }
-        }.padding(block == .bootstrap ? EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12) : block == .workItem && !expanded ? EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16) : compactSimulators ? SimulatorCompactLayout.tileInsets : MimicMetrics.cardInsets)
+        }.padding(block == .bootstrap || block == .ci ? EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12) : block == .workItem && !expanded ? EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16) : compactSimulators ? SimulatorCompactLayout.tileInsets : MimicMetrics.cardInsets)
             .padding(.top, theme.retro ? NativeRetro.titleHeight(theme.appearance) * textScale + (theme.appearance == .windows95 ? 3 : 0) : 0).frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
             // Content changes never give one collapsed tile a different height from its neighbours.
             .frame(height: expanded ? nil : MimicMetrics.collapsedCardHeight * (theme.tiled ? max(1, textScale) : 1), alignment: .topLeading)
@@ -462,7 +463,7 @@ struct PanelGrid: View {
                 }
             }
             .environment(\.mimicInsideSurface, true)
-            .modifier(PanelCardTooltip(message: text(layout.removing ? "panel.layout.remove" : "panel.layout.drag.hint"), preservesChildHelp: (block == .bootstrap || block == .builds || block == .workItem) && !layout.removing))
+            .modifier(PanelCardTooltip(message: text(layout.removing ? "panel.layout.remove" : "panel.layout.drag.hint"), preservesChildHelp: (block == .bootstrap || block == .builds || block == .workItem || block == .ci) && !layout.removing))
             .id(block.scrollID).accessibilityIdentifier("panel.block." + block.rawValue)
     }
     private func blockHeader(_ block: PanelBlockKind, expanded: Bool) -> some View {
@@ -472,7 +473,10 @@ struct PanelGrid: View {
                 Text(layout.title(block))
                     .font(.system(size: (block == .simulators && !expanded && theme.tiled ? 14 : MimicTheme.metric("heading")) * (theme.tiled ? textScale : 1), weight: .semibold))
                     .lineLimit(2).mimicHelp(layout.title(block))
-                if block == .ci, let checkout = expanded ? model.ciPresentedState.context?.checkout : model.project?.path { CIProjectName(checkout: checkout) }
+                if block == .ci, let username = (expanded ? model.ciPresentedState : model.ci).user?.username {
+                    Text("@" + username).mimicFont(.caption).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.tail).frame(maxWidth: 110, alignment: .leading).mimicHelp("@" + username)
+                }
                 Spacer(minLength: 0)
 
             }.frame(maxWidth: .infinity, minHeight: 20, alignment: .leading).contentShape(Rectangle())
@@ -678,17 +682,14 @@ private struct PanelCardFeedback: ViewModifier {
     let lifted: Bool
     let morphScale: CGSize
     let grabAnchor: UnitPoint
-    let radius: CGFloat
     let policy: MimicMotionPolicy
     @State private var hovered = false
     func body(content: Content) -> some View {
         let hovering = enabled && hovered && !policy.retro
-        content.background {
-            ZStack {
-                RoundedRectangle(cornerRadius: radius).fill(.black).shadow(color: .black.opacity(0.10), radius: 5, y: 3).opacity(hovering && !lifted ? 1 : 0)
-                RoundedRectangle(cornerRadius: radius).fill(.black).shadow(color: .black.opacity(0.18), radius: 12, y: 10).opacity(lifted && !policy.retro ? 1 : 0)
-            }
-        }
+        // Shadow the clipped card itself; a solid backing leaks through its antialiased edge.
+        content
+        .shadow(color: .black.opacity(hovering && !lifted ? 0.10 : 0), radius: 5, y: 3)
+        .shadow(color: .black.opacity(lifted && !policy.retro ? 0.18 : 0), radius: 12, y: 10)
         .scaleEffect(x: lifted && !policy.retro ? morphScale.width : 1, y: lifted && !policy.retro ? morphScale.height : 1, anchor: grabAnchor)
         .scaleEffect(policy.moves ? lifted ? 1.04 : hovering ? 1.02 : 1 : 1, anchor: lifted ? grabAnchor : .center)
         .animation(policy.animation(.feedback), value: hovering)

@@ -44,6 +44,158 @@ private actor SwitchJournal {
 }
 
 struct BranchSwitchTests {
+    @MainActor @Test func historicalIdentityErrorsAreLocalizedAndPresentationRecoveryHoldsOwnership() async throws {
+        let suite = "BranchIdentityRecovery-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var record = BranchSwitchOperation(id: UUID(), source: .init(path: "/fixture", branch: "source", commit: "original"), target: "target", rebase: false)
+        record.phase = .failed; record.error = "Author identity unknown\n*** Please tell me who you are."
+        defaults.set(try JSONEncoder().encode([record]), forKey: "branchSwitchOperations")
+        let coordinator = BranchSwitchCoordinator(defaults: defaults)
+        #expect(try coordinator.operation(record.id).error == "branch.error.identity")
+        var restored = false
+        coordinator.restoreCheckout = { _ in
+            restored = true
+            #expect(coordinator.isExecuting)
+            #expect(throws: BranchSwitchError.blocked) {
+                try coordinator.start(id: UUID(), project: record.source, target: "other")
+            }
+        }
+        await coordinator.restoreCompletedPresentation()
+        #expect(restored && !coordinator.isExecuting)
+    }
+
+    @Test(arguments: ["user.name", "user.email"])
+    func missingIdentityFailsBeforeAnyStashOrRebaseWrite(key: String) async throws {
+        let f = try SwitchFixture(); defer { f.remove() }
+        try f.git(["config", key, ""])
+        try f.write("unstaged.txt", "keep edits\n")
+        let original = try f.git(["status", "--porcelain=v1", "-z"])
+        for rebase in [false, true] {
+            await #expect(throws: BranchSwitchError.identity) {
+                try await BranchSwitchGit(temporaryRoot: f.root).prepare(f.operation(rebase: rebase)) { _ in }
+            }
+        }
+        #expect(try f.git(["branch", "--show-current"]) == "source")
+        #expect(try f.git(["status", "--porcelain=v1", "-z"]) == original)
+        #expect(try f.git(["stash", "list"]).isEmpty)
+        #expect(try f.git(["worktree", "list", "--porcelain"]).components(separatedBy: "worktree ").count == 2)
+    }
+
+    @MainActor @Test func checkoutPreparationRunsBeforeStashAndRestoresAfterTerminalState() async throws {
+        let f = try SwitchFixture(); defer { f.remove() }
+        let suite = "WorkspaceHooks-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        try f.write("unstaged.txt", "keep edits\n")
+        let coordinator = BranchSwitchCoordinator(defaults: defaults, temporaryRoot: f.root)
+        var prepared = 0, restored = 0
+        coordinator.prepareCheckout = { op async throws in
+            prepared += 1
+            #expect(op.stashSHA == nil && !op.didSwitch && coordinator.isExecuting)
+            #expect(try f.git(["stash", "list"]).isEmpty)
+            #expect(try f.git(["branch", "--show-current"]) == "source")
+        }
+        coordinator.restoreCheckout = { op async throws in
+            restored += 1
+            #expect(op.phase == .succeeded && coordinator.isExecuting)
+            #expect(try f.git(["branch", "--show-current"]) == op.target)
+            #expect(try String(contentsOf: f.repo.appendingPathComponent("unstaged.txt"), encoding: .utf8) == "keep edits\n")
+        }
+        _ = try coordinator.start(id: UUID(), project: f.project, target: "feature/quoted-$value")
+        let deadline = ContinuousClock.now + .seconds(15)
+        while coordinator.isExecuting && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try #require(!coordinator.isExecuting)
+        #expect(prepared == 1 && restored == 1)
+    }
+
+    @MainActor @Test func rejectedWorkspacePreparationKeepsChangesAndReleasesOwnership() async throws {
+        let f = try SwitchFixture(); defer { f.remove() }
+        let suite = "WorkspaceReject-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let coordinator = BranchSwitchCoordinator(defaults: defaults, temporaryRoot: f.root)
+        try f.write("unstaged.txt", "keep edits\n")
+        coordinator.prepareCheckout = { _ in throw BranchSwitchError.xcodeClose }
+        var restored = false
+        coordinator.restoreCheckout = { op async throws in restored = true; #expect(op.phase == .failed) }
+        let id = UUID()
+        _ = try coordinator.start(id: id, project: f.project, target: "feature/quoted-$value")
+        let deadline = ContinuousClock.now + .seconds(15)
+        while coordinator.isExecuting && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try #require(!coordinator.isExecuting)
+        #expect(restored && !coordinator.hasPending)
+        #expect(try coordinator.operation(id).error == "branch.error.xcodeClose")
+        #expect(try f.git(["stash", "list"]).isEmpty)
+        #expect(try f.git(["branch", "--show-current"]) == "source")
+        #expect(try String(contentsOf: f.repo.appendingPathComponent("unstaged.txt"), encoding: .utf8) == "keep edits\n")
+    }
+
+    /// Only fixture remotes are contacted; the original tree stays on source until finalization.
+    @Test(arguments: [false, true]) func originSelectionCreatesTrackingBranchAfterPreparation(rebase: Bool) async throws {
+        let f = try SwitchFixture(); defer { f.remove() }
+        try f.git(["push", "origin", "feature/quoted-$value:feature/remote-$value"])
+        try f.write("unstaged.txt", "keep edits\n")
+        let engine = BranchSwitchGit(temporaryRoot: f.root)
+        let op = try await engine.prepare(f.operation(rebase: rebase, target: "refs/remotes/origin/feature/remote-$value")) { step in
+            if [.checking, .fetching, .rebasing, .stashing].contains(step.phase) {
+                let refs = try f.git(["for-each-ref", "--format=%(refname)", "refs/heads/feature/remote-$value"])
+                #expect(refs.isEmpty)
+            }
+        }
+        #expect(op.phase == .succeeded && op.createsTrackingBranch == true)
+        #expect(op.target == "feature/remote-$value")
+        #expect(op.selectionID == "refs/remotes/origin/feature/remote-$value")
+        #expect(try f.git(["branch", "--show-current"]) == op.target)
+        #expect(try f.git(["rev-parse", "--symbolic-full-name", "@{upstream}"]) == op.selectionID)
+        #expect(try String(contentsOf: f.repo.appendingPathComponent("unstaged.txt"), encoding: .utf8) == "keep edits\n")
+        #expect(try f.git(["worktree", "list", "--porcelain"]).components(separatedBy: "worktree ").count == 2)
+        let restored = try JSONDecoder().decode(BranchSwitchOperation.self, from: JSONEncoder().encode(op))
+        #expect(restored.selectionID == op.selectionID && restored.createsTrackingBranch == true)
+    }
+
+    @Test func originSelectionReusesExistingLocalWithoutResettingOrChangingTracking() async throws {
+        let f = try SwitchFixture(); defer { f.remove() }
+        try f.git(["push", "origin", "source:feature/quoted-$value"])
+        let localSHA = try f.git(["rev-parse", "refs/heads/feature/quoted-$value"])
+        try f.git(["branch", "--set-upstream-to=origin/develop", "feature/quoted-$value"])
+        let op = try await BranchSwitchGit(temporaryRoot: f.root).prepare(f.operation(rebase: false, target: "refs/remotes/origin/feature/quoted-$value")) { _ in }
+        #expect(op.phase == .succeeded && op.createsTrackingBranch == false)
+        #expect(try f.git(["rev-parse", "HEAD"]) == localSHA)
+        #expect(try f.git(["rev-parse", "--symbolic-full-name", "@{upstream}"]) == "refs/remotes/origin/develop")
+    }
+
+    @Test func concurrentlyCreatedLocalBranchIsNeverOverwritten() async throws {
+        let f = try SwitchFixture(); defer { f.remove() }
+        try f.git(["push", "origin", "feature/quoted-$value:feature/remote"])
+        let engine = BranchSwitchGit(temporaryRoot: f.root), journal = SwitchJournal()
+        do {
+            _ = try await engine.prepare(f.operation(rebase: false, target: "refs/remotes/origin/feature/remote")) { op in
+                await journal.add(op)
+                if op.phase == .switching { try f.git(["branch", "feature/remote", "source"]) }
+            }
+            Issue.record("A concurrent local branch was overwritten")
+        } catch BranchSwitchError.command { }
+        let stopped = try #require(await journal.latest)
+        let recovered = await engine.recover(stopped, cancelled: false) { _ in }
+        #expect(recovered.phase == .failed)
+        #expect(try f.git(["rev-parse", "refs/heads/feature/remote"]) == f.project.commit)
+        #expect(try f.git(["branch", "--show-current"]) == "source")
+    }
+
+    @Test func missingOriginAndCancelledPreparationCreateNoLocalBranch() async throws {
+        let f = try SwitchFixture(); defer { f.remove() }
+        let engine = BranchSwitchGit(temporaryRoot: f.root)
+        await #expect(throws: BranchSwitchError.missing) {
+            try await engine.prepare(f.operation(rebase: false, target: "refs/remotes/origin/missing")) { _ in }
+        }
+        try f.git(["push", "origin", "feature/quoted-$value:feature/remote"])
+        await #expect(throws: CancellationError.self) {
+            try await engine.prepare(f.operation(rebase: false, target: "refs/remotes/origin/feature/remote")) { op in
+                if op.phase == .stashing { throw CancellationError() }
+            }
+        }
+        #expect(try f.git(["for-each-ref", "--format=%(refname)", "refs/heads/feature/remote"]).isEmpty)
+        #expect(try f.git(["branch", "--show-current"]) == "source")
+    }
+
     @MainActor @Test(arguments: [BranchSwitchPhase.checking, .fetching, .rebasing, .stashing, .switching, .restoring, .awaitingAgent, .resolving, .needsReview, .succeeded, .failed, .cancelled])
     func restartOnlyReleasesReadOnlyPreflight(phase: BranchSwitchPhase) throws {
         let suite = "BranchRecovery-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
@@ -135,11 +287,13 @@ struct BranchSwitchTests {
         #expect(try String(contentsOf: f.repo.appendingPathComponent("ignored.txt"), encoding: .utf8) == "ignored\n")
     }
 
-    @Test func rebaseConflictIsAbortedAndAgentCompletesPinnedOperation() async throws {
+    @Test(arguments: [false, true]) func rebaseConflictIsAbortedAndAgentCompletesPinnedOperation(remote: Bool) async throws {
         let f = try SwitchFixture(conflict: true); defer { f.remove() }
         try f.write("unstaged.txt", "keep local\n")
         let engine = BranchSwitchGit(temporaryRoot: f.root)
-        let op = try await engine.prepare(f.operation()) { _ in }
+        if remote { try f.git(["push", "origin", "feature/quoted-$value:feature/remote"]) }
+        let op = try await engine.prepare(f.operation(target: remote ? "refs/remotes/origin/feature/remote" : "feature/quoted-$value")) { _ in }
+        if remote { #expect(try f.git(["for-each-ref", "--format=%(refname)", "refs/heads/feature/remote"]).isEmpty) }
         let path = try #require(op.worktree)
         #expect(op.phase == .awaitingAgent); #expect(op.conflict == .rebase); #expect(op.stashSHA == nil)
         #expect(op.conflictPaths == ["conflict.txt"]); #expect(op.stoppedCommit != nil)

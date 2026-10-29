@@ -5,8 +5,25 @@
 //  Created by Василий Маслов on 09.10.2026.
 import Foundation
 
+/// Small durable presentation data; full identifiers and executions remain in the result store.
+public struct BuildVerificationSummary: Codable, Sendable {
+    public let verdict: String
+    public let methodCoverage: String?
+    public let caseCoverage: String?
+    public let methodCount: Int
+    public let caseCount: Int
+    public let iterationCount: Int
+    public init(_ verification: TestVerification) {
+        verdict = verification.verdict; methodCoverage = verification.methodCoverage; caseCoverage = verification.caseCoverage
+        methodCount = verification.methodCount; caseCount = verification.caseCount; iterationCount = verification.iterationCount
+    }
+}
+
 /// Process success and request coverage are independent. Arrays are bounded after computing the verdict.
 public struct TestVerification: Codable, Sendable {
+    public var methodCoverage: String?
+    public var caseCoverage: String?
+    public var identityErrors: [String]?
     public var verdict = "unavailable"
     public var selection = "unverified"
     public var requested: [String] = []
@@ -20,38 +37,36 @@ public struct TestVerification: Codable, Sendable {
     public var iterationCount = 0
     public var responseTruncated = false
     public var extractionComplete = false
+    /// The full selection/facts remain native-owned; transport responses contain bounded summaries.
+    public var compactMetadata: BridgeValue {
+        var fields = (try? BridgeValue.encode(self).object) ?? [:]
+        fields["requestedCount"] = .number(Double(requested.count)); fields["requested"] = nil
+        fields["unmatchedCount"] = .number(Double(unmatched.count))
+        for key in ["executed", "unmatched", "skipped", "unexpected"] { fields[key] = .array(Array((fields[key]?.array ?? []).prefix(100))) }
+        fields["responseTruncated"] = .bool(responseTruncated || executed.count > 100 || unmatched.count > 100 || skipped.count > 100 || unexpected.count > 100)
+        return .object(fields)
+    }
     public init() { }
 }
 
 public enum TestVerificationReader {
-    private struct Fact { let method: String; let caseID: String; let status: String }
-    /// Only structural parentage establishes case→method identity. There is no fuzzy ID matching.
+    /// Structural identity is shared with catalogue enumeration and public test facts.
     public static func verify(record: BuildActivity, nodes: [[String: Any]]?, summary: BuildResult.TestSummary?, detailsComplete: Bool) -> TestVerification {
+        let parsed = nodes.map { TestIdentityParser.parse($0) }
+        return verify(record: record, parsed: parsed, summary: summary, detailsComplete: detailsComplete)
+    }
+    public static func verify(record: BuildActivity, parsed: ParsedTestIdentities?, summary: BuildResult.TestSummary?, detailsComplete: Bool) -> TestVerification {
         var result = TestVerification(); result.requested = record.parameters.testTarget.map { [$0] } ?? record.parameters.testIdentifiers
         result.selection = record.parameters.testTarget != nil ? "target" : record.selectionID == nil ? "unverified" : "catalogueVerified"
-        var facts: [Fact] = [], complete = detailsComplete, observedFailure = false
-        func walk(_ nodes: [[String: Any]], parent: String?, depth: Int) {
-            guard depth < 24 else { complete = false; return }
-            for node in nodes {
-                let type = node["nodeType"] as? String ?? ""
-                let rawIdentifier = node["nodeIdentifier"] as? String ?? ""
-                let identifier = rawIdentifier.hasPrefix("test://") ? String(rawIdentifier.dropFirst(7)) : rawIdentifier
-                let method = type == "Test Case" && identifier.split(separator: "/").count == 3 ? identifier : parent
-                let children = node["children"] as? [[String: Any]] ?? []
-                if let method, let status = node["result"] as? String {
-                    if status == "Failed" { observedFailure = true }
-                    if children.isEmpty { facts.append(.init(method: method, caseID: identifier.isEmpty ? method : identifier, status: status)) }
-                } else if method != nil && children.isEmpty {
-                    complete = false
-                }
-                walk(children, parent: method, depth: depth + 1)
-            }
-        }
-        if let nodes { walk(nodes, parent: nil, depth: 0) } else { complete = false }
+        let facts = parsed?.facts ?? []
+        var complete = detailsComplete && parsed?.complete == true
+        let observedFailure = parsed?.observedFailure == true
+        result.identityErrors = parsed?.errors
         if let summary {
             let methods = Set(facts.map(\.method)).count
             let cases = Set(facts.map { $0.method + "\0" + $0.caseID }).count
-            if summary.total != methods && summary.total != cases { complete = false }
+            let contextualCases = Set(facts.map { [$0.method, $0.caseID, $0.configurationID ?? "", $0.deviceID ?? ""].joined(separator: "\0") }).count
+            if summary.total != methods && summary.total != cases && summary.total != contextualCases { complete = false }
         }
         let requested = Set(result.requested)
         func selected(_ id: String) -> Bool { record.parameters.testTarget.map { id.hasPrefix($0 + "/") } == true || requested.contains(id) || requested.contains(where: { $0.split(separator: "/").count == 2 && id.hasPrefix($0 + "/") }) }
@@ -63,16 +78,25 @@ public enum TestVerificationReader {
         result.caseCount = Set(facts.filter { $0.status != "Skipped" }.map { $0.method + "\0" + $0.caseID }).count
         result.iterationCount = facts.filter { $0.status != "Skipped" }.count
         for (method, expected) in record.requestedTestCases ?? [:] {
-            let executedCases = Set(facts.filter { $0.method == method && $0.status != "Skipped" }.map(\.caseID))
-            let missing = expected.filter { !executedCases.contains($0.hasPrefix("test://") ? String($0.dropFirst(7)) : $0) }
-            if !missing.isEmpty { result.unmatchedCases[method] = missing }
+            let contextual = Dictionary(grouping: facts.filter { $0.method == method }, by: { ($0.configurationID ?? "") + "\0" + ($0.deviceID ?? "") })
+            var missing = Set<String>()
+            if contextual.isEmpty { missing.formUnion(expected) }
+            for executions in contextual.values {
+                let executedCases = Set(executions.filter { $0.status != "Skipped" }.map(\.caseID))
+                missing.formUnion(expected.filter { !executedCases.contains($0) && !executedCases.contains($0.hasPrefix("test://") ? String($0.dropFirst(7)) : $0) })
+            }
+            if !missing.isEmpty { result.unmatchedCases[method] = missing.sorted() }
         }
         let unmatched = requested.filter { id in id.split(separator: "/").count <= 2 ? !executed.contains(where: { $0.hasPrefix(id + "/") }) : !executed.contains(id) }
         let unexpected = executed.filter { !selected($0) }
         let anyFailed = record.status == .failed || observedFailure || facts.contains { $0.status == "Failed" } || (summary?.failed ?? 0) > 0
+        result.methodCoverage = complete && !executed.isEmpty && unmatched.isEmpty && skipped.isEmpty && unexpected.isEmpty ? "complete" : "incomplete"
+        let expected = record.requestedTestCases ?? [:]
+        let hasUnknownCases = facts.contains { $0.caseID != $0.method && expected[$0.method] == nil }
+        result.caseCoverage = !result.unmatchedCases.isEmpty ? "incomplete" : hasUnknownCases ? "unknown" : complete ? "complete" : "unknown"
         result.extractionComplete = complete
         if anyFailed || !unexpected.isEmpty { result.verdict = "failed" }
-        else if nodes == nil || summary == nil { result.verdict = "unavailable" }
+        else if parsed == nil || summary == nil { result.verdict = "unavailable" }
         else if record.status != .succeeded || record.exitCode != 0 || !complete || executed.isEmpty || !unmatched.isEmpty || !result.unmatchedCases.isEmpty || !skipped.isEmpty || record.sourceProvenance?.stability != "unchangedObserved" { result.verdict = "incomplete" }
         else { result.verdict = "passed" }
         result.executed = Array(executed.sorted().prefix(200)); result.unmatched = unmatched.sorted(); result.skipped = Array(skipped.sorted().prefix(200)); result.unexpected = Array(unexpected.sorted().prefix(200))

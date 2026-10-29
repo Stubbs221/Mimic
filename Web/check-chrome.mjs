@@ -35,13 +35,24 @@ try{
  await page.setViewportSize({width:520,height:900});await page.emulateMedia({colorScheme:'light'});
  assert((await chrome.boundingBox()).height<=56,'idle C1 preserves the approved 52px header');
  await branch.click();const checkbox=popup.getByRole('checkbox',{name:'Rebase на develop'});
+ const remote=popup.locator('[data-branch="refs/remotes/origin/feature/IOS-21161"]');
+ assert.equal(await remote.locator('.chrome-branch-source').innerText(),'origin');
+ assert.equal(await popup.locator('[data-branch="develop"] .chrome-branch-source').innerText(),'local');
+ const remoteColor=await remote.locator('.chrome-branch-marker').evaluate(n=>getComputedStyle(n).backgroundColor);
+ const localColor=await popup.locator('[data-branch="develop"] .chrome-branch-marker').evaluate(n=>getComputedStyle(n).backgroundColor);
+ assert.notEqual(remoteColor,localColor);assert.notEqual(remoteColor,'rgba(0, 0, 0, 0)');
+ await popup.getByRole('searchbox').fill('origin/');assert.equal(await popup.getByRole('option').count(),1);
+ await remote.click();assert.equal(await remote.getAttribute('aria-selected'),'true');
+ await page.screenshot({path:output+'/origin-picker-light.png'});
+ await page.emulateMedia({colorScheme:'dark'});await page.screenshot({path:output+'/origin-picker-dark.png'});await page.emulateMedia({colorScheme:'light'});
+ await popup.getByRole('searchbox').fill('');
  await checkbox.check();await page.waitForFunction(()=>document.querySelector('.chrome-rebase').hidden===false);
  assert(await checkbox.isChecked());
- const select=popup.getByRole('combobox',{name:'Локальная ветка',exact:true});await select.selectOption('feature/mcp');
+ const select=popup.locator('select');await popup.locator('[data-branch="feature/mcp"]').click();
  await popup.getByRole('searchbox').fill('feature');assert.equal(await select.inputValue(),'feature/mcp');
  await panelCommand(page,'Обновить');assert(await popup.isHidden());
  await branch.click();assert(await checkbox.isChecked());
- await popup.getByRole('searchbox').fill('');await select.selectOption('develop');await popup.locator('[data-action=branch-switch]').click();
+ await popup.getByRole('searchbox').fill('');await popup.locator('[data-branch="develop"]').click();await popup.locator('[data-action=branch-switch]').click();
  await page.waitForFunction(()=>document.querySelector('.chrome-branch-name').textContent==='develop');assert(await popup.isHidden());
  await branch.click();await page.keyboard.press('Escape');assert(await popup.isHidden());assert(await branch.evaluate(n=>document.activeElement===n));
  await menu.click();await menu.click();assert(await popup.isHidden(),'same trigger closes the popup');
@@ -72,7 +83,8 @@ try{
  await update({tasks:[{id:'header-test',title:'Подготовка проекта',status:'failed',createdAt:'2099-01-01T00:00:00Z',context:savedContext,diagnosticAvailable:false,canCancel:false}]});assert.equal(await chrome.locator('.chrome-status').getAttribute('data-status'),'failed');
  await branch.click();await page.evaluate(()=>window.mimicToolsFixture.appearance('legacy'));assert(await page.locator('.context-bar .branch-rebase').isVisible());assert(await popup.isVisible());await page.keyboard.press('Escape');assert(await chrome.isHidden());
  await page.evaluate(()=>window.mimicToolsFixture.appearance('tileGrid'));await branch.click();assert(await checkbox.isChecked());await page.keyboard.press('Escape');
- await page.locator('[data-block=builds] .block-title').click();await page.locator('[data-block=builds] [role=tab]').last().click();const draft=page.locator('[data-block=builds] textarea');await draft.locator('..').evaluate(n=>n.open=true);await draft.fill('FixtureTests/Smoke/testExample');await draft.evaluate(n=>window.chromeDraft=n);
- await panelCommand(page,'Обновить');assert.equal(await draft.inputValue(),'FixtureTests/Smoke/testExample');assert(await draft.evaluate(n=>n===window.chromeDraft));
+ await page.reload();await page.waitForFunction(()=>window.mimicBuildFixture?.draft().testTarget==='FixtureTests');
+ await page.evaluate(()=>window.mimicBuildFixture.mode('full'));const draft=page.locator('[data-block=builds] select[data-build-field=testTarget]');await draft.selectOption('OtherTests');await draft.evaluate(n=>window.chromeDraft=n);
+ await panelCommand(page,'Обновить');assert.equal(await draft.inputValue(),'OtherTests');assert(await draft.evaluate(n=>n===window.chromeDraft));
  assert.deepEqual(errors,[]);console.log('PASS: C1 sizes/themes/assets, Rebase/branch, menu/context/settings, catalog/history, edit cancel/save, 200% text, locks/missing context, task attention, legacy and draft identity.');
 }finally{await browser?.close();server.close();}

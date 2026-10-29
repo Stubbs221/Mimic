@@ -45,7 +45,7 @@ export class BranchSwitchPanel {
   this.openButton.hidden=!op.ownerThreadID;
   this.cancelButton.hidden=!op.holdsCheckout||!!op.ownerThreadID&&op.phase!=='needsReview';
   this.cancelButton.disabled=busy;this.cancelButton.textContent=this.dependencies.t(op.phase==='needsReview'?'branch.review.acknowledge':'cancel');
-  this.backup.hidden=!op.stashName;this.backup.textContent=op.stashName?this.dependencies.t('branch.stash.backup')+' '+op.sourceBranch:'';this.backup.title=op.stashName??'';
+  this.backup.hidden=!op.stashSHA;this.backup.textContent=op.stashName?this.dependencies.t('branch.stash.backup')+' '+op.sourceBranch:'';this.backup.title=op.stashName??'';
  }
  private async savePreference(){
   if(this.saving)return;

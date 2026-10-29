@@ -20,8 +20,10 @@ public struct MimicProfile: Codable, Equatable, Sendable {
     public let services: ProfileServices?
     public let actions: [ActionDefinition]
     public let interface: ProfileInterface?
+    public var catalogueReuse: CatalogueReusePolicy? = nil
     public var sourceExclusions: [String]? = nil
     public var preparation: PreparationRequirement? = nil
+    public var buildResources: [BuildResourceRequirement]? = nil
     public var simulatorScenarios: [SimulatorScenario]? = nil
     public var panels: [ProfilePanel]? = nil
     public var serviceTools: [ServiceTool]? = nil
@@ -123,24 +125,25 @@ public struct ProfileExecution: Codable, Equatable, Sendable {
         self.snapshot = snapshot; self.actionID = actionID; self.parameters = parameters; self.preview = preview
     }
     public var action: ActionDefinition? { self.snapshot.profile.actions.first { $0.id == self.actionID } }
-    public func missingTools(project: ProjectContext, values: [String: String]? = nil) -> [String] {
+    public func missingTools(project: ProjectContext, values: [String: String]? = nil, environment: [String: String]? = nil) -> [String] {
         guard let action else { return [] }
         let values = values ?? (try? ProfileValidation.parameters(parameters, action: action)) ?? [:]
         let tools = action.requiredTools + (action.toolRequirements ?? []).filter { $0.applies(values) }.map(\.tool)
-        return tools.filter { EnvironmentInspector.executable($0, environment: EnvironmentInspector.environment(project: project)) == nil }
+        let environment = environment ?? EnvironmentInspector.environment(project: project)
+        return tools.filter { EnvironmentInspector.executable($0, environment: environment) == nil }
     }
-    public func commands(project: ProjectContext) throws -> [CommandSpec] {
+    public func commands(project: ProjectContext, environment: [String: String]? = nil) throws -> [CommandSpec] {
         guard let action, action.remote == nil else { throw ProfileError.action }
         let values = try ProfileValidation.parameters(self.parameters, action: action)
         if let panel = snapshot.profile.panel(forAction: actionID) {
             guard panel.matches(checkout: project.path) else { throw ProfileError.requirements }
             try panel.validateRequest(values)
         }
-        let environment = EnvironmentInspector.environment(project: project)
+        let environment = environment ?? EnvironmentInspector.environment(project: project)
         for path in snapshot.profile.requiredFiles + action.requiredFiles {
             guard FileManager.default.fileExists(atPath: try ProfileValidation.checkoutPath(path, root: project.path)) else { throw ProfileError.requirements }
         }
-        let missing = self.missingTools(project: project, values: values)
+        let missing = self.missingTools(project: project, values: values, environment: environment)
         guard missing.isEmpty else { throw MimicError.missingTools(missing) }
         var substitutions = values
         substitutions["checkout"] = project.path; substitutions["profile"] = snapshot.directory
@@ -206,7 +209,11 @@ public enum ProfileValidation {
         if let artifact = profile.services?.reportArtifactPath { guard relativePath(artifact) else { throw ProfileError.path } }
         if let pattern = profile.services?.branchOwnerPattern { _ = try NSRegularExpression(pattern: pattern.replacingOccurrences(of: "{username}", with: "username")) }
         guard profile.requiredFiles.allSatisfy(relativePath) else { throw ProfileError.path }
+        try profile.catalogueReuse?.validate()
         try SourceRevisionReader.validate(exclusions: profile.sourceExclusions ?? [])
+        let buildResources = profile.buildResources ?? []
+        guard buildResources.count <= 16, Set(buildResources.map(\.id)).count == buildResources.count else { throw ProfileError.parameter }
+        for requirement in buildResources { try requirement.validate(profile: profile) }
         if let requirement = profile.preparation {
             guard !requirement.platforms.isEmpty, !requirement.inputs.isEmpty, requirement.inputs.allSatisfy(relativePath),
                   let action = profile.actions.first(where: { $0.id == requirement.actionID && $0.remote == nil && $0.presentation == .preparation }) else { throw ProfileError.action }

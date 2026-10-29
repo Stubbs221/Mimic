@@ -9,6 +9,37 @@ import Testing
 
 struct AIDiagnosticsTests {
     @Test
+    func detectsBundledCodexWithoutPersistingAPath() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cli = root.appendingPathComponent("ChatGPT.app/Contents/Resources/codex-cli/bin/codex")
+        try FileManager.default.createDirectory(at: cli.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: cli)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cli.path)
+        #expect(AIProviderAdapters.resolve(provider: .codex, configuredPath: cli.path) == cli.path)
+        // Use an explicit empty search inventory to isolate application discovery from this Mac's CLIs.
+        #expect(AIProviderAdapters.resolve(provider: .codex, configuredPath: "", home: root.path, searchPath: "", applicationDirectories: [root.path], commandDirectories: []) == cli.path)
+        #expect(AIProviderAdapters.resolve(provider: .codex, configuredPath: root.appendingPathComponent("missing").path, applicationDirectories: [root.path]) == nil)
+        try FileManager.default.removeItem(at: cli)
+        #expect(AIProviderAdapters.resolve(provider: .codex, configuredPath: cli.path) == nil)
+    }
+
+    @Test
+    func discoversClaudeFromPathAndRejectsDirectories() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let cli = root.appendingPathComponent("claude")
+        try Data("fixture".utf8).write(to: cli)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cli.path)
+        #expect(AIProviderAdapters.resolve(provider: .claude, configuredPath: "", home: root.path, searchPath: root.path, commandDirectories: []) == cli.path)
+        #expect(AIProviderAdapters.resolve(provider: .claude, configuredPath: root.path) == nil)
+        let link = root.appendingPathComponent("linked-claude")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: cli)
+        #expect(AIProviderAdapters.resolve(provider: .claude, configuredPath: link.path) == link.path)
+    }
+
+    @Test
     func masksKnownCredentialsAndPreservesUsefulError() {
         let synthetic = "Authorization: Bearer synthetic-value\nPASSWORD='synthetic-value'\nhttps://user:synthetic-value@example.test/path?token=synthetic-value\nError: dependency not found"
         let cleaned = DiagnosticText.clean(synthetic)

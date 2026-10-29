@@ -11,7 +11,7 @@ import Foundation
 enum ReadOnlyProcess {
     /// Existing short queries retain their eight-second budget. Catalogue callers distinguish timeout from exit failure.
     static let timeoutExitCode: Int32 = -2
-    static func capture(_ executable: String, _ arguments: [String], directory: String? = nil, environment: [String: String]? = nil, timeout: TimeInterval = 8, maximumBytes: Int = 2 * 1024 * 1024) -> (Int32, String) {
+    static func capture(_ executable: String, _ arguments: [String], directory: String? = nil, environment: [String: String]? = nil, timeout: TimeInterval = 8, maximumBytes: Int = 2 * 1024 * 1024, includeStandardError: Bool = false) -> (Int32, String) {
         let interval = ResourceTrace.begin("Read-only process", cause: arguments.contains("xcodebuild") ? "Xcode catalogue" : "metadata")
         defer { ResourceTrace.end("Read-only process", interval) }
         let deadline = DispatchTime.now().uptimeNanoseconds + UInt64(max(0, timeout) * 1_000_000_000)
@@ -33,7 +33,7 @@ enum ReadOnlyProcess {
               posix_spawn_file_actions_addclose(&actions, reader) == 0,
               posix_spawn_file_actions_addclose(&actions, writer) == 0,
               posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0,
-              posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0) == 0 else { return (-1, "") }
+              (includeStandardError ? posix_spawn_file_actions_adddup2(&actions, writer, STDERR_FILENO) : posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0)) == 0 else { return (-1, "") }
         if let directory, posix_spawn_file_actions_addchdir_np(&actions, directory) != 0 { return (-1, "") }
         let argv = ([executable] + arguments).map { strdup($0) } + [nil]
         let env = (environment ?? ProcessInfo.processInfo.environment).sorted { $0.key < $1.key }.map { strdup($0.key + "=" + $0.value) } + [nil]

@@ -57,6 +57,9 @@ struct BuildDiscoveryTests {
             let value = try BuildCatalogue.inspect(project: project, scheme: "Fixture", includeTestPlans: tests, timeout: 120) { args, env, remaining in
                 calls.append(args); #expect(remaining > 110 && remaining <= 120)
                 #expect(env["DEVELOPER_DIR"] == project.developerDirectory)
+                #expect(args.contains("-disableAutomaticPackageResolution") && args.contains("-onlyUsePackageVersionsFromResolvedFile"))
+                #expect(args.contains("-skipPackageUpdates"))
+                #expect(args.suffix(2) == ["-scmProvider", "system"])
                 if args.contains("-showdestinations") { return (0, "") }
                 if args.contains("-showTestPlans") { return (0, "Test plans associated with the scheme:\n    Selected\n") }
                 return (0, #"{"project":{"schemes":["Fixture"],"configurations":["Debug"]}}"#)

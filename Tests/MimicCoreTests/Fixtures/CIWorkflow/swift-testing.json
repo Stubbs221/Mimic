@@ -1,0 +1,87 @@
+{
+  "devices": [
+    {
+      "architecture": "arm64",
+      "deviceId": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+      "deviceName": "Fixture Phone",
+      "modelName": "Fixture Phone",
+      "osBuildNumber": "24A434",
+      "osVersion": "27.0",
+      "platform": "iOS Simulator"
+    }
+  ],
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "duration": "0,26s",
+                      "durationInSeconds": 0.2578732967376709,
+                      "name": "synthetic argument",
+                      "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/check(route:isModal:)?args=a4cb717b1e6065312f150217fff19891e1fd91e962282aba8c9c7ddd386f48be",
+                      "nodeType": "Arguments",
+                      "result": "Passed"
+                    },
+                    {
+                      "duration": "0,043s",
+                      "durationInSeconds": 0.04311108589172363,
+                      "name": "synthetic argument",
+                      "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/check(route:isModal:)?args=2ddd5659a78b9b3a6c93dc2a72e87656c8d154332e6acedb40dfae9a91cf201b",
+                      "nodeType": "Arguments",
+                      "result": "Passed"
+                    },
+                    {
+                      "duration": "0,018s",
+                      "durationInSeconds": 0.01817607879638672,
+                      "name": "synthetic argument",
+                      "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/check(route:isModal:)?args=57970b6118d7c269a1bda2b8a73f1eba11cc956ab43d39a420c1b9823089f01e",
+                      "nodeType": "Arguments",
+                      "result": "Passed"
+                    },
+                    {
+                      "duration": "0,012s",
+                      "durationInSeconds": 0.012179136276245117,
+                      "name": "synthetic argument",
+                      "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/check(route:isModal:)?args=13a4318ade4f7407d770190808a61ea4865e1d6fcaa0b83436d3388b1679b866",
+                      "nodeType": "Arguments",
+                      "result": "Passed"
+                    }
+                  ],
+                  "duration": "0,083s",
+                  "durationInSeconds": 0.08283489942550659,
+                  "name": "check(route:isModal:)",
+                  "nodeIdentifier": "ExampleSuite/check(route:isModal:)",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/check(route:isModal:)",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "ExampleSuite",
+              "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "FixtureTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "Fixture Plan",
+      "nodeType": "Test Plan",
+      "result": "Passed"
+    }
+  ],
+  "testPlanConfigurations": [
+    {
+      "configurationId": "1",
+      "configurationName": "Test Scheme Action"
+    }
+  ]
+}

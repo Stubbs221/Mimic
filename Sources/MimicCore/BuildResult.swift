@@ -31,6 +31,11 @@ public struct BuildResult: Codable, Sendable {
         public let kind: String
         public let path: String
     }
+    public var executions: [TestExecutionFact]?
+    public var executionEnvironment: BridgeValue?
+    public var processOutcome: String?
+    public var cancellationOutcome: String?
+    public var extractionRevision: Int?
     public var verification: TestVerification?
     public var sourceProvenance: SourceProvenance?
     public var sourceFreshness: String = "unknown"
@@ -55,10 +60,14 @@ public enum BuildResultReader {
 
     public static func read(record: BuildActivity, output: Data, capture: Capture? = nil) -> BuildResult {
         let capture = capture ?? { arguments, environment in
-            ReadOnlyProcess.capture("/usr/bin/xcrun", arguments, directory: nil, environment: environment, timeout: 8, maximumBytes: 512 * 1024)
+            ReadOnlyProcess.capture("/usr/bin/xcrun", arguments, directory: nil, environment: environment, timeout: arguments.contains("tests") ? 30 : 8, maximumBytes: arguments.contains("tests") ? 32 * 1024 * 1024 : 512 * 1024)
         }
         var result = BuildResult()
         result.sourceProvenance = record.sourceProvenance
+        result.processOutcome = record.processOutcome ?? record.status.rawValue
+        result.cancellationOutcome = record.cancellationOutcome
+        result.extractionRevision = 1
+        result.executionEnvironment = record.toolchainEnvironment
         if record.parameters.operation == .test { result.verification = TestVerificationReader.verify(record: record, nodes: nil, summary: nil, detailsComplete: false) }
         result.truncated = record.truncated
         // Neither artifacts nor echoed output may bypass private terminal input protection.
@@ -97,7 +106,7 @@ public enum BuildResultReader {
         if let developer = record.selectedDeveloperDirectory { environment["DEVELOPER_DIR"] = developer }
         func query(_ arguments: [String], code: String) -> [String: Any]? {
             let (status, output) = capture(["xcresulttool", "get"] + arguments + ["--path", path, "--compact"], environment)
-            guard status == 0, output.utf8.count <= 512 * 1024,
+            guard status == 0, output.utf8.count <= (arguments == ["test-results", "tests"] ? 32 * 1024 * 1024 : 512 * 1024),
                   let object = try? JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any] else {
                 result.extractionErrors.append(code); return nil
             }
@@ -129,9 +138,25 @@ public enum BuildResultReader {
             result.verification = TestVerificationReader.verify(record: record, nodes: nil, summary: result.testSummary, detailsComplete: false)
             if let tests = query(["test-results", "tests"], code: "testDetailsUnavailable") {
                 let nodes = tests["testNodes"] as? [[String: Any]]
-                result.verification = TestVerificationReader.verify(record: record, nodes: nodes, summary: result.testSummary, detailsComplete: nodes != nil)
-                if let nodes = tests["testNodes"] as? [[String: Any]] { appendTests(nodes, depth: 0, to: &result) }
-                else { result.extractionErrors.append("testDetailsMalformed") }
+                let configurations = tests["testPlanConfigurations"] as? [[String: Any]] ?? []
+                let devices = tests["devices"] as? [[String: Any]] ?? []
+                var parsed = nodes.map { TestIdentityParser.parse($0, configurationID: configurations.count == 1 ? configurations[0]["configurationId"] as? String : nil, deviceID: devices.count == 1 ? devices[0]["deviceId"] as? String : nil) }
+                if configurations.count > 1 && parsed?.facts.contains(where: { $0.configurationID == nil }) == true || devices.count > 1 && parsed?.facts.contains(where: { $0.deviceID == nil }) == true { parsed?.errors.append("executionContextAmbiguous") }
+                result.verification = TestVerificationReader.verify(record: record, parsed: parsed, summary: result.testSummary, detailsComplete: nodes != nil)
+                result.executions = parsed?.facts
+                result.executionEnvironment = .object([
+                    "toolchain": record.toolchainEnvironment ?? .null,
+                    "devices": tests["devices"].flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { try? JSONDecoder().decode(BridgeValue.self, from: $0) } ?? .null,
+                    "testPlanConfigurations": tests["testPlanConfigurations"].flatMap { try? JSONSerialization.data(withJSONObject: $0) }.flatMap { try? JSONDecoder().decode(BridgeValue.self, from: $0) } ?? .null
+                ])
+                result.extractionErrors += parsed?.errors ?? []
+                if let parsed {
+                    result.tests = parsed.methods.prefix(200).map { method in
+                        let facts = parsed.facts.filter { $0.method == method.id }
+                        return .init(identifier: method.id, status: facts.contains { $0.status == "Failed" } ? "Failed" : facts.first?.status ?? "Unknown", duration: nil)
+                    }
+                    result.truncated = result.truncated || parsed.methods.count > 200
+                } else { result.extractionErrors.append("testDetailsMalformed") }
             }
         }
         return result
@@ -179,18 +204,5 @@ public enum BuildResultReader {
             append(.init(severity: severity, message: clean(message), file: file, line: line, source: "xcresultBuild"), to: &result)
         }
         result.truncated = result.truncated || issues.count > 128
-    }
-    private static func appendTests(_ nodes: [[String: Any]], depth: Int, to result: inout BuildResult) {
-        guard depth < 24 else { result.truncated = true; return }
-        for node in nodes {
-            guard result.tests.count < 200 else { result.truncated = true; return }
-            if node["nodeType"] as? String == "Test Case", let identifier = node["nodeIdentifier"] as? String, let status = node["result"] as? String {
-                let duration = (node["durationInSeconds"] as? NSNumber)?.doubleValue
-                let boundedIdentifier = DiagnosticText.bounded(identifier, limit: 1024), boundedStatus = DiagnosticText.bounded(status, limit: 64)
-                result.truncated = result.truncated || boundedIdentifier.truncated || boundedStatus.truncated
-                result.tests.append(.init(identifier: boundedIdentifier.text, status: boundedStatus.text, duration: duration.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }))
-            }
-            if let children = node["children"] as? [[String: Any]] { appendTests(children, depth: depth + 1, to: &result) }
-        }
     }
 }

@@ -153,6 +153,14 @@ private actor CIAppClient: GitLabService {
         #expect(launch.reviewedContract == reviewed && launch.checking.isEmpty)
         launch.setVisible(true); try await self.wait { launch.checking.isEmpty }
         #expect(launch.selected == .uiTests && launch.plan == .functional)
+        launch.close(); launch.open(.uiTests)
+        #expect(launch.branch == "develop" && launch.plan == .functional && launch.canSubmit)
+        launch.searchBranches("no-such-branch")
+        try await self.wait { !launch.searchingBranches }
+        #expect(launch.branch == "develop")
+        launch.branch = "unverified-branch"
+        #expect(!launch.canSubmit)
+        launch.branch = "develop"
         launch.submit(); launch.submit()
         try await self.wait { !launch.submitting && owner.runs.count == 1 }
         #expect(await http.posts == 1)

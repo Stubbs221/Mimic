@@ -9,6 +9,10 @@ import Foundation
     public var onChange: (() -> Void)?
     public var openManualChat: ((URL) -> Bool)?
     public var mayStart: (() -> Bool)?
+    /// App-owned workspace suspension runs with checkout ownership held, immediately before filesystem changes.
+    public var prepareCheckout: ((BranchSwitchOperation) async throws -> Void)?
+    /// Reopens suspended workspaces only once Git has reached a terminal, verified state.
+    public var restoreCheckout: ((BranchSwitchOperation) async throws -> Void)?
     public var active: BranchSwitchOperation? { self.operations.last(where: { $0.phase.holdsCheckout }) }
     public var hasPending: Bool { self.active != nil }
     public var isExecuting: Bool { self.execution != nil }
@@ -24,6 +28,7 @@ import Foundation
         if let data = defaults.data(forKey: "branchSwitchOperations"), let saved = try? JSONDecoder().decode([BranchSwitchOperation].self, from: data) {
             self.operations = saved.map { record in
                 var recovered = record
+                if let error = recovered.error, BranchSwitchError.isIdentityDiagnostic(error) { recovered.error = "branch.error.identity" }
                 if recovered.phase.holdsCheckout {
                     // Checking performs only Git reads. Its journal precedes all
                     // worktree/stash/ref mutations, so a stopped preflight has no
@@ -52,7 +57,7 @@ import Foundation
     /// Reusing a request ID returns the original operation; different intent is rejected.
     @discardableResult public func start(id: UUID, project: ProjectContext, target: String, threadID: String? = nil) throws -> BranchSwitchOperation {
         if let old = self.operations.first(where: { $0.id == id }) {
-            guard old.source == project, old.target == target, old.sourceThreadID == threadID else { throw BranchSwitchError.context }
+            guard old.source == project, old.selectionID == target, old.sourceThreadID == threadID else { throw BranchSwitchError.context }
             return old
         }
         guard !self.hasPending, self.execution == nil, self.mayStart?() != false else { throw BranchSwitchError.blocked }
@@ -63,9 +68,18 @@ import Foundation
             guard let self else { return }
             do { _ = try await self.git.prepare(record, update: self.updater) }
             catch { await self.failed(id: id, error: error) }
+            await self.restorePresentation(id)
             self.execution = nil; self.onChange?(); self.scheduleHandoff()
         }
         return record
+    }
+
+    /// Restore terminal presentation leases after restart without admitting another checkout mutation.
+    public func restoreCompletedPresentation() async {
+        guard !self.hasPending, self.execution == nil else { return }
+        self.execution = Task { }; self.onChange?()
+        defer { self.execution = nil; self.onChange?() }
+        for operation in self.operations where !operation.phase.holdsCheckout { await self.restorePresentation(operation.id) }
     }
 
     public func operation(_ id: UUID) throws -> BranchSwitchOperation {
@@ -86,7 +100,11 @@ import Foundation
         // Reserve synchronously before awaiting Git, including duplicate calls from the same owner.
         self.execution = Task { }
         defer { self.execution = nil; self.onChange?() }
-        do { return try await self.git.finish(op, update: self.updater) }
+        do {
+            _ = try await self.git.finish(op, update: self.updater)
+            await self.restorePresentation(id)
+            return try self.operation(id)
+        }
         catch {
             var record = try self.operation(id); record.error = self.errorText(error); record.phase = (error as? BranchSwitchError) == .review ? .resolving : .needsReview
             try self.save(record); throw error
@@ -103,7 +121,9 @@ import Foundation
         }
         self.execution = Task { }
         defer { self.execution = nil; self.onChange?() }
-        return try await self.git.cancel(op, update: self.updater)
+        _ = try await self.git.cancel(op, update: self.updater)
+        await self.restorePresentation(id)
+        return try self.operation(id)
     }
 
     // MARK: - One-shot panel delivery
@@ -153,7 +173,16 @@ import Foundation
 
     // MARK: - Journal and recovery
 
-    private var updater: BranchSwitchGit.Update { { [weak self] op in try await self?.save(op) } }
+    private var updater: BranchSwitchGit.Update { { [weak self] op in try await self?.update(op) } }
+    private func update(_ op: BranchSwitchOperation) async throws {
+        try self.save(op)
+        if op.phase == .stashing && op.stashName == nil { try await self.prepareCheckout?(op) }
+    }
+    private func restorePresentation(_ id: UUID) async {
+        guard var op = try? self.operation(id), !op.phase.holdsCheckout else { return }
+        do { try await self.restoreCheckout?(op) }
+        catch { op.error = self.errorText(error); try? self.save(op) }
+    }
     private func save(_ initial: BranchSwitchOperation) throws {
         var op = initial
         if op.phase == .succeeded {
@@ -172,7 +201,9 @@ import Foundation
         _ = await self.git.recover(op, cancelled: error is CancellationError || Task.isCancelled, update: self.updater)
     }
     private func errorText(_ error: any Error) -> String {
-        if case let BranchSwitchError.command(output) = error { return DiagnosticText.bounded(DiagnosticText.clean(output), limit: 2000).text }
+        if case let BranchSwitchError.command(output) = error {
+            if BranchSwitchError.isIdentityDiagnostic(output) { return "branch.error.identity" }
+            return DiagnosticText.bounded(DiagnosticText.clean(output), limit: 2000).text }
         if let error = error as? BranchSwitchError { return "branch.error." + String(describing: error) }
         return error is CancellationError ? "branch.cancelled" : "branch.error"
     }

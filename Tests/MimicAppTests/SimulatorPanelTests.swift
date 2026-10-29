@@ -446,6 +446,23 @@ struct SimulatorPanelTests {
     }
 
 
+    @Test(arguments: [MimicAction.simulatorBoot, .simulatorShutdown])
+    func freshDeviceStateClearsRecoveredOperationFailure(action: MimicAction) throws {
+        let fixture = try SimulatorPanelFixture(); defer { fixture.cleanUp() }
+        let device = self.device(booted: action == .simulatorShutdown); fixture.install([device])
+        var record = TaskRecord(action: action, project: fixture.project, simulator: device)
+        record.selectedDeveloperDirectory = fixture.project.developerDirectory
+        record.status = .failed; record.exitCode = 53
+        fixture.model.records = [record]
+        #expect(fixture.model.simulatorFailure(device)?.taskID == record.id)
+        let recovered = SimulatorDevice(id: device.id, name: device.name, runtime: device.runtime, state: action == .simulatorBoot ? "Booted" : "Shutdown")
+        fixture.install([recovered])
+        #expect(fixture.model.simulatorFailure(recovered) == nil)
+        // History keeps the failed outcome; external recovery never reruns it or opens a window.
+        #expect(fixture.model.records[0].status == .failed && fixture.opener.opened.isEmpty)
+        #expect(fixture.model.simulatorFailure(device)?.taskID == record.id)
+    }
+
     @Test func shutdownUsesTheSameReservationAndFailureLinksToItsTask() async throws {
         let fixture = try SimulatorPanelFixture(); defer { fixture.cleanUp() }; let device = self.device(booted: true)
         fixture.install([device]); fixture.holdQueue()
@@ -635,6 +652,7 @@ struct SimulatorPanelTests {
 
     @Test func productionCardFitsMiniSlotWithRetainedCatalogueAndOpeningFailures() async throws {
         let fixture = try SimulatorPanelFixture(); defer { fixture.cleanUp() }
+        fixture.model.appearance.select(.tileGrid)
         let devices = [self.device("Mimic Apple Probe", booted: true), self.device("Mimic Apple Probe", booted: true),
                        self.device("iPad Pro 13-inch Mobile Platform Infrastructure Development", booted: true)]
         fixture.install(devices)
@@ -649,7 +667,7 @@ struct SimulatorPanelTests {
                 let width = full ? panelWidth - 32 : (panelWidth - 44) / 2
                 let root = SimulatorCardProposal {
                     PanelGrid(model: fixture.model, layout: fixture.model.panelLayout).card(.simulators, row: UUID())
-                }.frame(width: width)
+                }.frame(width: width).modifier(MimicAppearanceRoot(store: fixture.model.appearance))
                 let host = NSHostingView(rootView: root)
                 let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: width, height: 160), styleMask: .borderless, backing: .buffered, defer: false)
                 window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
@@ -659,7 +677,9 @@ struct SimulatorPanelTests {
                     if view is PanelControlRegion.MarkerView, !view.visibleRect.isEmpty {
                         let bounds = host.convert(view.bounds, from: view)
                         #expect(bounds.minX >= -0.5 && bounds.maxX <= width + 0.5)
-                        if bounds.width > 40 {
+                        // The card also marks its whole surface to exclude dragging over hosted controls.
+                        // Only compact activation rows participate in the non-overlap check.
+                        if bounds.width > 40, bounds.height < 100 {
                             activationFrames.append(bounds)
                             #expect(bounds.minY >= -0.5 && bounds.maxY <= 160.5)
                         }

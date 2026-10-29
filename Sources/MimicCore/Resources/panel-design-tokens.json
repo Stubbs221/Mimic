@@ -22,7 +22,9 @@
       "usageRose": "#b68aa4",
       "usageOlive": "#8a9b66",
       "usageBlue": "#7d9bb5",
-      "softSurface": "#f6f8f4"
+      "softSurface": "#f6f8f4",
+      "branchLocal": "#6647a6",
+      "branchOrigin": "#146e61"
     },
     "dark": {
       "paper": "#1f202a",
@@ -43,7 +45,9 @@
       "usageRose": "#d0a0ba",
       "usageOlive": "#b5c28e",
       "usageBlue": "#a0bdd3",
-      "softSurface": "#303731"
+      "softSurface": "#303731",
+      "branchLocal": "#c4adf2",
+      "branchOrigin": "#66d4c2"
     }
   },
   "metrics": {

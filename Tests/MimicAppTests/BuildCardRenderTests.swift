@@ -7,6 +7,57 @@ import MimicCore
 @testable import Mimic
 
 @Suite(.serialized) @MainActor struct BuildCardRenderTests {
+    /// Exercise the mounted view's timer, including a later remount of the same saved result.
+    @Test(arguments: [false, true], [BuildStatus.succeeded, .failed])
+    func compactSuccessExpiresButFailuresRemain(full: Bool, status: BuildStatus) async throws {
+        let suite = "BuildCardExpiry-" + UUID().uuidString
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let project = ProjectContext(path: root.path, branch: "fixture", commit: "fixture")
+        var record = BuildActivity(project: project, parameters: .init(scheme: "Fixture"), source: "fixture")
+        record.status = status; record.phase = "build.phase." + status.rawValue
+        record.startedAt = Date().addingTimeInterval(-12); record.finishedAt = Date().addingTimeInterval(-3)
+        try BuildHistoryStore(directory: root).save([record])
+        let builds = BuildCoordinator(directory: root, helper: root.appendingPathComponent("unused"), defaults: defaults)
+        let model = TaskCoordinator(directory: root, buildCoordinator: builds, defaults: defaults)
+        model.projects = [project]; model.selectedProjectPath = project.path; model.aiUsage.stop()
+        var host = NSHostingView(rootView: BuildCardView(model: model, builds: builds, full: full)
+            .environment(\.colorScheme, .light).frame(width: 520, height: 200))
+        let window = NSWindow(contentRect: .init(x: -10000, y: -10000, width: 520, height: 200), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer {
+            window.contentView = nil; window.close(); model.stopAndExit()
+            defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root)
+        }
+        func statusPixels() throws -> Int {
+            host.layoutSubtreeIfNeeded()
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            var count = 0
+            for y in 0..<bitmap.pixelsHigh { for x in 0..<bitmap.pixelsWide {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if status == .succeeded {
+                    if color.greenComponent > 0.4, color.greenComponent > color.redComponent * 1.4, color.greenComponent > color.blueComponent * 1.2 { count += 1 }
+                } else if color.redComponent > 0.7, color.greenComponent > 0.2, color.greenComponent < color.redComponent * 0.85, color.blueComponent < color.greenComponent * 0.7 { count += 1 }
+            } }
+            return count
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(try statusPixels() > 10)
+        try await Task.sleep(for: .milliseconds(2100))
+        if status == .succeeded { #expect(try statusPixels() == 0) }
+        else { #expect(try statusPixels() > 10) }
+        #expect(builds.records.count == 1 && builds.records.first?.status == status)
+        // A fresh view must not restart the success timeout from its appearance time.
+        window.contentView = nil
+        host = NSHostingView(rootView: BuildCardView(model: model, builds: builds, full: full)
+            .environment(\.colorScheme, .light).frame(width: 520, height: 200))
+        window.contentView = host
+        try await Task.sleep(for: .milliseconds(50))
+        if status == .succeeded { #expect(try statusPixels() == 0) }
+        else { #expect(try statusPixels() > 10) }
+    }
+
     @Test(arguments: [false, true]) func catalogueOnlyLoadsOnIntentDespiteRepeatedViewUpdates(extended: Bool) async throws {
         let suite = "BuildCardDiscovery-" + UUID().uuidString
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
@@ -50,7 +101,7 @@ import MimicCore
     }
 
     /// Measure the production grid beside another tile; isolated content can hide a broken height contract.
-    @Test(arguments: ["empty", "running", "succeeded", "failed", "loading", "refreshing"])
+    @Test(arguments: ["empty", "running", "succeeded", "failed", "loading", "refreshing", "resources", "verified"])
     func compactCardsKeepNeighbourHeightAndVisibleControls(state: String) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("BuildCardRender-" + UUID().uuidString)
         let suite = "BuildCardRender-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
@@ -58,10 +109,20 @@ import MimicCore
         let destination = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"
         let project = ProjectContext(path: root.path, branch: "feature/very-long-branch-layout", commit: "fixture", developerDirectory: "/fixture/Developer")
         var parameters = BuildParameters(scheme: scheme, destinationID: destination); parameters.intent = .run
-        if state == "succeeded" || state == "failed" || state == "refreshing" {
-            var record = BuildActivity(project: project, parameters: parameters, source: "Codex")
+        if state == "succeeded" || state == "failed" || state == "refreshing" || state == "verified" {
+            var recordParameters = parameters
+            if state == "verified" {
+                recordParameters.operation = .test; recordParameters.intent = nil
+                recordParameters.testIdentifiers = (0..<10_000).map { "Tests/Suite/test\($0)()" }
+            }
+            var record = BuildActivity(project: project, parameters: recordParameters, source: "Codex")
             record.status = state == "succeeded" ? .succeeded : .failed; record.phase = "build.phase." + state
             record.startedAt = Date().addingTimeInterval(-268); record.finishedAt = Date(); record.completedStages = state == "succeeded" ? 3 : 1
+            if state == "verified" {
+                record.status = .succeeded; record.phase = "build.phase.succeeded"
+                var verification = TestVerification(); verification.verdict = "passed"; verification.methodCount = 10_000; verification.caseCoverage = "unknown"
+                record.verificationSummary = BuildVerificationSummary(verification)
+            }
             if state == "failed" { record.errorCode = "stage.installation" }
             try BuildHistoryStore(directory: root).save([record])
         }
@@ -75,6 +136,12 @@ import MimicCore
         let model = TaskCoordinator(directory: root, buildCoordinator: builds, defaults: defaults)
         model.projects = [project]; model.selectedProjectPath = project.path; model.aiUsage.stop()
         defer { model.stopAndExit(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        if state == "resources" {
+            var profile = try Profile11Fixture.snapshot(directory: root).profile
+            profile.buildResources = [.init(id: "assets", title: "Nebula", platform: .ios, paths: ["Generated/asset"], recoveryActionID: "restore")]
+            model.activeProfile = ProfileSnapshot(profile: profile, revision: "render-resource-fixture", directory: root.path)
+            model.buildResourceStates[model.buildResourceKey(project: project, platform: .ios)] = .init(checks: [.init(id: "assets", title: "Nebula", platform: .ios, status: .missing, expectedVersion: "26.10.03")])
+        }
         builds.savePanelDraft(parameters, project: project, developer: "/fixture/Developer")
         await builds.restoreDraft(project: project)
         let refresh: Task<Void, Never>?

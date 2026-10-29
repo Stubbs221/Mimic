@@ -13,7 +13,8 @@ import Testing
 
 private actor CompactAppClient: GitLabService {
     let twoRuns: Bool
-    init(twoRuns: Bool = false) { self.twoRuns = twoRuns }
+    let failedJob: Bool
+    init(twoRuns: Bool = false, failedJob: Bool = false) { self.twoRuns = twoRuns; self.failedJob = failedJob }
     func project(baseURL _: URL, path _: String, token _: String) async throws -> CIProject { throw CIError.notFound }
     func currentUser(connection _: GitLabConnection, token _: String) async throws -> CIUser { CIUser(id: 1, username: "me", name: "Fixture") }
     func users(connection _: GitLabConnection, search _: String, token _: String) async throws -> [CIUser] { [] }
@@ -30,7 +31,7 @@ private actor CompactAppClient: GitLabService {
     }
     func details(connection: GitLabConnection, pipelineID _: Int, token _: String) async throws -> CIPipelineDetails {
         CIPipelineDetails(jobs: [CIJob(id: 1, name: "ui-tests-" + String(repeating: "оченьдлиннаяджоба", count: 20), stage: "test", status: "running", webURL: connection.baseURL, allowFailure: false),
-            CIJob(id: 2, name: "complete", stage: "test", status: "success", webURL: connection.baseURL, allowFailure: false)], bridges: [])
+            CIJob(id: 2, name: "complete", stage: "test", status: self.failedJob ? "failed" : "success", webURL: connection.baseURL, allowFailure: false)], bridges: [])
     }
     func commit(connection _: GitLabConnection, sha: String, token _: String) async throws -> CICommit { CICommit(id: sha, title: "Fixture") }
 }
@@ -44,7 +45,7 @@ private actor CompactAppClient: GitLabService {
     let b: ProjectContext
     let first: GitLabConnection
     let second: GitLabConnection
-    init(twoRuns: Bool = false) throws {
+    init(twoRuns: Bool = false, failedJob: Bool = false) throws {
         self.defaults = try #require(UserDefaults(suiteName: self.suite))
         self.a = ProjectContext(path: self.directory.appendingPathComponent("a").path, branch: "local-a")
         self.b = ProjectContext(path: self.directory.appendingPathComponent("b").path, branch: "local-b")
@@ -53,7 +54,7 @@ private actor CompactAppClient: GitLabService {
         let store = DefaultsCIConfigurationStore(defaults: self.defaults)
         var configuration = CIConfiguration(); configuration.connections = [self.first, self.second]
         configuration.checkouts = [self.a.path: self.first.id, self.b.path: self.second.id]; store.save(configuration)
-        let client = CompactAppClient(twoRuns: twoRuns), settings = CISettingsModel(credentials: CompactAppCredentials(), store: store, client: client)
+        let client = CompactAppClient(twoRuns: twoRuns, failedJob: failedJob), settings = CISettingsModel(credentials: CompactAppCredentials(), store: store, client: client)
         self.model = TaskCoordinator(directory: self.directory, defaults: self.defaults, ciClient: client, ciSettings: settings)
         self.model.projects = [self.a, self.b]; self.model.selectedProjectPath = self.a.path
         settings.selectCheckout(self.a.path)
@@ -73,6 +74,37 @@ private actor CompactAppClient: GitLabService {
         try #require(condition(), "Timed out: \(label)")
     }
 
+    @Test func nativeAnalysisFreezesExactRunAndBridgePromptIsScoped() async throws {
+        let fixture = try CompactAppFixture(twoRuns: true, failedJob: true); defer { fixture.stop() }
+        let model = fixture.model
+        try await self.wait { model.ci.compactSummaries.count == 2 && model.ci.compactSummaries.allSatisfy { $0.canAnalyze } }
+        let selected = try #require(model.ci.compactSummaries.last)
+        let snapshot = try model.ciAnalysisSnapshot(selected)
+        #expect(snapshot.summary.pipelineID == selected.pipelineID && snapshot.summary.checkout == fixture.a.path)
+        #expect(model.ciInspection == nil && model.ci.selectedPipelineID == nil && model.project == fixture.a)
+        let bridge = MimicIntegration.compactCI(selected)
+        let bridgePrompt = try #require(bridge["analysisPrompt"].string)
+        #expect(bridgePrompt.contains("pipelines/\(selected.pipelineID!)") && bridgePrompt.contains("fixture"))
+        #expect(bridge["failedChecks"].array?.count == 1)
+        let prompt = snapshot.prompt(fragment: snapshot.text, comment: "")
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        var opened: [URL] = []
+        let result = CIAnalysisHandoff.open(snapshot, pasteboard: pasteboard) { opened.append($0); return true }
+        #expect(result.copied && result.opened && opened.count == 1)
+        #expect(pasteboard.string(forType: .string) == prompt)
+        let query = URLComponents(url: opened[0], resolvingAgainstBaseURL: false)?.queryItems
+        #expect(query?.first { $0.name == "path" }?.value == fixture.a.path)
+        #expect(query?.first { $0.name == "prompt" }?.value == prompt)
+        #expect(model.analysis.sessions.isEmpty && !model.analysis.isActive)
+        // A failed application open still leaves the exact request ready for manual paste.
+        model.selectedProjectPath = fixture.b.path
+        let unavailable = CIAnalysisHandoff.open(snapshot, pasteboard: pasteboard) { _ in false }
+        #expect(!unavailable.opened && unavailable.copied)
+        #expect(pasteboard.string(forType: .string) == prompt)
+        model.clearDiagnosticsForExit()
+    }
+
     @Test func twoSummaryBridgeAndPrivateDetailsKeepChatAndNativeSelectionIndependent() async throws {
         let fixture = try CompactAppFixture(twoRuns: true); defer { fixture.stop() }
         let model = fixture.model, integration = MimicIntegration(model: fixture.model, defaults: fixture.defaults)
@@ -83,6 +115,9 @@ private actor CompactAppClient: GitLabService {
         try await self.wait { model.ci.compactSummaries.count == 2 && model.ci.compactSummaries.allSatisfy { $0.completed == 1 } }
         let reply = try await integration.handle(.init(method: "get_state", threadID: "a"))
         #expect(reply["ciSummaries"].array?.count == 2 && reply["ciSummary"] == reply["ciSummaries"].array?.first)
+        #expect(reply["ciSummary"]["accountUsername"].string == "me")
+        let pipelineID = try #require(reply["ciSummary"]["pipelineID"].integer)
+        #expect(reply["ciSummary"]["gitlabURL"].string?.hasSuffix("/pipelines/\(pipelineID)") == true)
         let selected = try #require(model.ci.compactSummaries.last)
         let request = MimicBridgeRequest(method: "panel_get_ci_details", parameters: ["identity": .string(selected.identity), "refresh": .bool(false)], threadID: "a")
         let detail = try await integration.handle(request)
@@ -228,6 +263,35 @@ private actor CompactAppClient: GitLabService {
         } }
         let section = NSHostingView(rootView: CIActivitySection(summary: summary, open: {}, hide: {}))
         #expect(section.fittingSize.width == 320 && section.fittingSize.height < 260)
+    }
+
+    @Test func analysisTilesKeepFixedHeightAndRenderBothThemes() async throws {
+        let fixture = try CompactAppFixture(twoRuns: true, failedJob: true); defer { fixture.stop() }
+        let model = fixture.model
+        try await self.wait { model.ci.compactSummaries.count == 2 && model.ci.compactSummaries.allSatisfy { $0.canAnalyze } }
+        let output = URL(fileURLWithPath: "/private/tmp/Mimic-ci-analysis-previews")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for large in [false, true] { for dark in [false, true] { for full in [false, true] {
+            let scale = large ? 1.25 : 1.0
+            let width: CGFloat = full ? 528 : 258
+            let view = VStack(alignment: .leading, spacing: 4 * scale) {
+                Text("CI").frame(height: 20 * scale)
+                CICompactRuns(summaries: Array(model.ci.compactSummaries.prefix(full ? 2 : 1)), open: { _ in }, model: model)
+            }.padding(12 * scale).frame(width: width, height: 160 * scale)
+                .background(Color(nsColor: MimicTheme.native("surface", dark: dark)))
+                .environment(\.mimicPanelAppearance, .tileGrid).environment(\.mimicTextScale, scale)
+                .environment(\.colorScheme, dark ? .dark : .light)
+            let host = NSHostingView(rootView: view)
+            let size = NSSize(width: width, height: 160 * scale)
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            window.contentView = host; host.frame = NSRect(origin: .zero, size: size); host.layoutSubtreeIfNeeded()
+            #expect(abs(host.fittingSize.height - size.height) < 1)
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: output.appendingPathComponent("\(full ? "full" : "mini")-\(dark ? "dark" : "light")-\(large ? "large" : "normal").png"))
+            window.contentView = nil; window.close()
+        } } }
     }
 
     @Test func expandedRowUsesContentHeightWithoutHiddenPeersOrEmptySlots() {

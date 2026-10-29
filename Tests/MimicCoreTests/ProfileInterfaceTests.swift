@@ -131,4 +131,59 @@ import ZIPFoundation
         #expect(throws: (any Error).self) { try ProfileCompatibility(actions: ["format": "generation"]).validate() }
         #expect(throws: (any Error).self) { try ProfileCompatibility(roles: ["old-role": "unknown"]).validate() }
     }
+    @Test func shippedLegacyProfileImportsAndSurvivesReloadWithoutAliases() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var value = try manifest(), interface = try #require(value["interface"] as? [String: Any])
+        var bindings = try #require(interface["bindings"] as? [[String: Any]])
+        for index in bindings.indices {
+            if bindings[index]["role"] as? String == "generateModule" { bindings[index]["role"] = "generateSicilia" }
+            if bindings[index]["role"] as? String == "generateFeature" { bindings[index]["role"] = "generateGalera" }
+        }
+        interface["bindings"] = bindings; value["interface"] = interface; value.removeValue(forKey: "compatibility")
+        let store = ProfileStore(directory: root.appendingPathComponent("Profiles"))
+        let snapshot = try store.importArchive(archive(value, root: root), requireInterface: true)
+        #expect(snapshot.profile.interface?.binding(.generateModule) != nil)
+        #expect(snapshot.profile.interface?.binding(.generateFeature) != nil)
+        #expect(snapshot.profile.compatibility == nil)
+        #expect(try store.active() == snapshot)
+        try store.verify(snapshot)
+        let stored = try Data(contentsOf: URL(fileURLWithPath: snapshot.directory).appendingPathComponent("profile.json"))
+        #expect(try JSONSerialization.jsonObject(with: stored) as? NSDictionary == value as NSDictionary)
+    }
+    @Test func shippedLegacyIdentifiersRestoreLayoutsAndHistory() throws {
+        let decoder = JSONDecoder()
+        for (old, expected) in [("generateSicilia", ProfileToolRole.generateModule), ("generateGalera", .generateFeature)] {
+            let data = try JSONEncoder().encode(old)
+            #expect(try decoder.decode(ProfileToolRole.self, from: data) == expected)
+            #expect(try decoder.decode(PanelBlockKind.self, from: data).rawValue == expected.rawValue)
+        }
+        #expect(try decoder.decode(GeneratorKind.self, from: Data(#""sicilia""#.utf8)) == .module)
+        #expect(try decoder.decode(GeneratorKind.self, from: Data(#""galera""#.utf8)) == .feature)
+        #expect(try decoder.decode(MimicAction.self, from: Data(#""celestial""#.utf8)) == .generation)
+        #expect(try decoder.decode(MimicAction.self, from: Data(#""babylon""#.utf8)) == .localization)
+        let override = ProfileCompatibility(roles: ["generateSicilia": "generateFeature"])
+        try override.validate()
+        #expect(try ProfileCompatibility.decoder(override).decode(ProfileToolRole.self, from: Data(#""generateSicilia""#.utf8)) == .generateFeature)
+        #expect(throws: (any Error).self) { try decoder.decode(ProfileToolRole.self, from: Data(#""unknown-role""#.utf8)) }
+    }
+    @Test func shippedLegacyHistorySurvivesSaveWithoutProfileAliases() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var record = TaskRecord(action: .generation, project: ProjectContext(path: root.path), generation: GenerationRequest(kind: .module, name: "Header", digest: "fixture"))
+        record.status = .succeeded; record.finishedAt = Date()
+        var original = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any])
+        original["action"] = "celestial"
+        var generation = try #require(original["generation"] as? [String: Any]); generation["kind"] = "sicilia"; original["generation"] = generation
+        let path = root.appendingPathComponent("history.json")
+        try JSONSerialization.data(withJSONObject: [original]).write(to: path)
+        let store = HistoryStore(directory: root), restored = try store.load()
+        #expect(restored.first?.action == .generation); #expect(restored.first?.generation?.kind == .module)
+        try store.save(restored)
+        let saved = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [[String: Any]])
+        #expect(saved.first?["action"] as? String == "celestial")
+        #expect((saved.first?["generation"] as? [String: Any])?["kind"] as? String == "sicilia")
+    }
 }

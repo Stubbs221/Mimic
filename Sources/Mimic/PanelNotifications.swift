@@ -29,6 +29,8 @@ import MimicCore
     private func update(_ model: TaskCoordinator) {
         for item in snapshot(model) {
             let previous = statuses.updateValue(item.status, forKey: item.id)
+            // One task can request a passphrase, then 2FA or another confirmation later.
+            if previous == "input", item.status != "input" { delivered.remove(item.id + ":input") }
             guard previous != nil, previous != item.status, ["succeeded", "success", "SUCCESS", "failed", "FAILURE", "interrupted", "unknown", "input"].contains(item.status) else { continue }
             let key = item.id + ":" + item.status
             guard delivered.insert(key).inserted else { continue }

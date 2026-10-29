@@ -1,0 +1,98 @@
+{
+  "devices": [
+    {
+      "architecture": "arm64",
+      "deviceId": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+      "deviceName": "Fixture Phone",
+      "modelName": "Fixture Phone",
+      "osBuildNumber": "24A434",
+      "osVersion": "27.0",
+      "platform": "iOS Simulator"
+    }
+  ],
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "duration": "0,82s",
+                  "durationInSeconds": 0.817357063293457,
+                  "name": "testExample1()",
+                  "nodeIdentifier": "ExampleSuite/testExample1()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/testExample1",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,89s",
+                  "durationInSeconds": 0.8925180435180664,
+                  "name": "testExample3()",
+                  "nodeIdentifier": "ExampleSuite/testExample3()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/testExample3",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,92s",
+                  "durationInSeconds": 0.9234209060668945,
+                  "name": "testExample5()",
+                  "nodeIdentifier": "ExampleSuite/testExample5()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/testExample5",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,2s",
+                  "durationInSeconds": 0.2017040252685547,
+                  "name": "testExample7()",
+                  "nodeIdentifier": "ExampleSuite/testExample7()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/testExample7",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,47s",
+                  "durationInSeconds": 0.4675779342651367,
+                  "name": "testExample9()",
+                  "nodeIdentifier": "ExampleSuite/testExample9()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/testExample9",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "duration": "0,23s",
+                  "durationInSeconds": 0.23298394680023193,
+                  "name": "testExample11()",
+                  "nodeIdentifier": "ExampleSuite/testExample11()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite/testExample11",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                }
+              ],
+              "name": "ExampleSuite",
+              "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests/ExampleSuite",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "FixtureTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/Fixture/FixtureTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "Fixture Plan",
+      "nodeType": "Test Plan",
+      "result": "Passed"
+    }
+  ],
+  "testPlanConfigurations": [
+    {
+      "configurationId": "1",
+      "configurationName": "Configuration 1"
+    }
+  ]
+}

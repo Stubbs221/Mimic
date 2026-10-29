@@ -2,7 +2,7 @@
 import Foundation
 
 public enum BuildIntent: String, Codable, Sendable { case run, catalogue, cleanup }
-public enum BuildStage: String, Codable, Sendable { case compilation, products, installation, launch, catalogue, cleanup }
+public enum BuildStage: String, Codable, Sendable { case compilation, products, installation, launch, catalogue, cleanup, testing, processFinalizing, extractingResults, verifyingCoverage }
 
 /// Product identity comes from the pinned invocation's build settings, never a global latest .app.
 public struct BuildProduct: Codable, Equatable, Sendable, Identifiable {
@@ -71,7 +71,8 @@ public struct BuildTest: Codable, Equatable, Sendable, Identifiable {
     public let name: String
     public var caseIdentifiersTruncated: Bool?
     public let caseIdentifiers: [String]?
-    public init(id: String, target: String, className: String, name: String, caseIdentifiers: [String]? = nil) { self.id = id; self.target = target; self.className = className; self.name = name; self.caseIdentifiers = caseIdentifiers }
+    public var identifierURL: String?
+    public init(id: String, target: String, className: String, name: String, caseIdentifiers: [String]? = nil, identifierURL: String? = nil) { self.identifierURL = identifierURL; self.id = id; self.target = target; self.className = className; self.name = name; self.caseIdentifiers = caseIdentifiers }
 }
 
 /// Full identity also governs saved selection: changing revision, toolchain or destination invalidates it.
@@ -95,6 +96,11 @@ public struct BuildTestCatalogue: Codable, Equatable, Sendable {
         let json = try JSONSerialization.jsonObject(with: data)
         guard let root = json as? [String: Any], root["values"] is [Any] || root["testNodes"] is [Any] || root["tests"] is [Any] else { throw BuildError.catalogueResponse }
         if let errors = root["errors"] as? [Any], !errors.isEmpty { throw BuildError.catalogueResponse }
+        if let nodes = root["testNodes"] as? [[String: Any]] {
+            let parsed = TestIdentityParser.parse(nodes, requireResults: false)
+            guard parsed.complete else { throw BuildError.catalogueResponse }
+            return parsed.methods
+        }
         var tests: [BuildTest] = [], seen = Set<String>(), incomplete = false
         func append(_ id: String, cases: [String] = []) {
             let components = id.split(separator: "/", omittingEmptySubsequences: false).map(String.init)

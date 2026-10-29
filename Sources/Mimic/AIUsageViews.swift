@@ -10,8 +10,8 @@ import MimicCore
 /// The existing status button remains the only click target and panel anchor.
 @MainActor
 enum AIUsageStatusPresentation {
-    static func apply(button: NSStatusBarButton, usage: AIUsageCoordinator, marker: StatusIcon.Marker, health: String) {
-        button.image = StatusIcon.image(marker: marker)
+    static func apply(button: NSStatusBarButton, usage: AIUsageCoordinator, marker: StatusIcon.Marker, health: String, icon: NSImage? = nil) {
+        button.image = icon ?? StatusIcon.image(marker: marker)
         button.imagePosition = .imageLeading
         button.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .bold)
         button.title = " " + usage.percentage

@@ -18,15 +18,17 @@ extension MimicIntegration {
 
     func agentRequest(_ request: MimicBridgeRequest) async throws -> BridgeValue {
         let p = request.parameters, method = request.method, thread = request.threadID
+        let owner = request.threadID ?? (request.clientName == "Terminal" ? "terminal" : "desktop")
         if let helper = request.helperIdentity, helper.toolSchemaRevision != AgentWorkflow.schemaRevision, AgentWorkflow.mutations.contains(method) {
             return .object(["status": .string("blocked"), "code": .string("incompatibleToolSchema"), "delivery": AgentWorkflow.delivery(helper)])
         }
+        if WorkflowContract.tools.contains(method) { return try await selectionRequest(request) }
         let keys: [String: Set<String>] = [
             "get_agent_state": ["includeActions"], "list_activity_history": ["kind", "cursor", "limit", "status", "workflowID"],
-            "start_test_catalogue": ["context", "parameters", "requestID", "workflowID"],
+            "start_test_catalogue": ["context", "parameters", "requestID", "workflowID", "enqueue"],
             "get_test_catalogue": ["catalogueID", "filter", "cursor", "limit"],
             "validate_selected_tests": ["catalogueID", "context", "testIdentifiers", "scope"],
-            "run_verified_tests": ["selectionID", "context", "requestID", "workflowID"],
+            "run_verified_tests": ["selectionID", "context", "requestID", "workflowID", "enqueue"],
             "get_preparation_state": ["platform"], "get_activity_changes": ["activityID", "kind"],
             "preview_artifact_cleanup": ["activityID"], "cleanup_activity_artifacts": ["previewID", "requestID"],
             "get_build_products": ["activityID"], "select_build_product": ["activityID", "productID"],
@@ -36,7 +38,7 @@ extension MimicIntegration {
             "start_simulator_check": ["sessionID", "workflowID", "requestID"], "get_simulator_check": ["checkID"],
             "finish_simulator_check": ["checkID"], "start_simulator_recording": ["checkID", "requestID"], "stop_simulator_recording": ["checkID"]
         ]
-        let optional: Set<String> = ["includeActions", "filter", "cursor", "limit", "status"]
+        let optional: Set<String> = ["includeActions", "filter", "cursor", "limit", "status", "enqueue"]
         let optionalWorkflow = ["list_activity_history", "start_test_catalogue", "run_verified_tests"].contains(method)
         guard let allowed = keys[method], Set(p.keys).isSubset(of: allowed), allowed.subtracting(optional).subtracting(optionalWorkflow ? ["workflowID"] : []).isSubset(of: Set(p.keys)),
               p.values.allSatisfy({ value in value.string.map { $0.utf8.count <= 4096 && !$0.contains("\0") } ?? true }) else { throw failure("arguments") }
@@ -50,21 +52,22 @@ extension MimicIntegration {
             return await model.preparationState(project: project, platform: platform)
         case "list_activity_history": return try activityHistory(p, thread: thread)
         case "start_test_catalogue":
+            guard p["enqueue"] == nil || p["enqueue"] == .bool(true) || p["enqueue"] == .bool(false) else { throw WorkflowFieldError("invalidBoolean", field: "enqueue") }
             let project = try expected(p["context"] ?? .null, threadID: thread)
             guard let id = p["requestID"]?.string.flatMap(UUID.init(uuidString:)) else { throw BuildError.arguments }
             let parameters = try BuildBridge.parameters(p["parameters"] ?? .null, operation: .build, intent: .catalogue)
             guard parameters.backend == .cli else { throw BuildError.unsupported }
             if let existing = model.builds.activity(id) {
-                guard canAccess(existing.project, threadID: thread), existing.project == project, existing.parameters == parameters, existing.workflowID == (try workflowID(p["workflowID"])) else { throw BuildError.duplicate }
-                return BuildBridge.metadata(existing)
+                guard canAccess(existing.project, threadID: thread), existing.project == project, existing.parameters == parameters, existing.owner == owner, (existing.enqueue ?? false) == (p["enqueue"] == .bool(true)), existing.workflowID == (try workflowID(p["workflowID"])) else { throw BuildError.duplicate }
+                return BuildBridge.summary(model.builds.presentation(existing))
             }
             let revision = try await sourceRevision(project)
-            let record = try await model.builds.submit(id: id, project: project, parameters: parameters, source: request.clientName ?? "Codex", workflowID: try workflowID(p["workflowID"]), sourceRevision: revision)
-            return BuildBridge.metadata(record)
+            let record = try await model.builds.submit(id: id, project: project, parameters: parameters, source: request.clientName ?? "Codex", workflowID: try workflowID(p["workflowID"]), sourceRevision: revision, owner: owner, enqueue: p["enqueue"] == .bool(true))
+            return BuildBridge.summary(model.builds.presentation(record))
         case "get_test_catalogue":
             let record = try accessibleBuild(p["catalogueID"], thread: thread)
             guard record.parameters.intent == .catalogue else { throw BuildError.arguments }
-            var result: [String: BridgeValue] = ["catalogueID": .string(record.id.uuidString), "activity": BuildBridge.summary(record), "complete": .bool(false)]
+            var result: [String: BridgeValue] = ["catalogueID": .string(record.id.uuidString), "activity": BuildBridge.summary(model.builds.presentation(record)), "complete": .bool(false)]
             guard let catalogue = record.testCatalogue else { return .object(result) }
             let revision = try await sourceRevision(record.project)
             let fresh = revision == record.sourceProvenance?.finished && record.sourceProvenance?.stability == "unchangedObserved"
@@ -94,21 +97,23 @@ extension MimicIntegration {
             if !expanded.unknown.isEmpty { return .object(["valid": .bool(false), "code": .string("unknownIdentifier"), "unknown": try .encode(expanded.unknown), "suggestions": try .encode(expanded.suggestions)]) }
             guard agentSelections.count < 1024 else { throw BuildError.capacity }
             var parameters = record.parameters; parameters.intent = nil; parameters.operation = .test; parameters.testIdentifiers = expanded.selected
-            let selection = VerifiedTestSelection(catalogueID: record.id, project: project, parameters: parameters, developer: catalogue.developerDirectory, profileRevision: record.profileRevision, revision: revision, owner: thread, expectedCases: Dictionary(uniqueKeysWithValues: catalogue.tests.filter { expanded.selected.contains($0.id) && $0.caseIdentifiers != nil }.map { ($0.id, $0.caseIdentifiers!) }))
+            let selection = VerifiedTestSelection(catalogueID: record.id, project: project, parameters: parameters, developer: catalogue.developerDirectory, profileRevision: record.profileRevision, revision: revision, owner: owner, expectedCases: Dictionary(uniqueKeysWithValues: catalogue.tests.filter { expanded.selected.contains($0.id) && $0.caseIdentifiers != nil }.map { ($0.id, $0.caseIdentifiers!) }))
+            try selectionStore.save(selection)
             agentSelections[selection.id] = selection
-            return .object(["valid": .bool(true), "selectionID": .string(selection.id.uuidString), "testIdentifiers": try .encode(expanded.selected), "sourceRevision": try .encode(revision)])
+            return .object(["valid": .bool(true), "selectionID": .string(selection.id.uuidString), "testIdentifiers": try .encode(Array(expanded.selected.prefix(100))), "count": .number(Double(expanded.selected.count)), "responseTruncated": .bool(expanded.selected.count > 100), "sourceRevision": try .encode(revision)])
         case "run_verified_tests":
+            guard p["enqueue"] == nil || p["enqueue"] == .bool(true) || p["enqueue"] == .bool(false) else { throw WorkflowFieldError("invalidBoolean", field: "enqueue") }
             let project = try expected(p["context"] ?? .null, threadID: thread)
             guard let id = p["requestID"]?.string.flatMap(UUID.init(uuidString:)), let selectionID = p["selectionID"]?.string.flatMap(UUID.init(uuidString:)) else { throw BuildError.arguments }
             let workflow = try workflowID(p["workflowID"])
             if let existing = model.builds.activity(id) {
-                guard canAccess(existing.project, threadID: thread), existing.project == project, existing.selectionID == selectionID, existing.workflowID == workflow else { throw BuildError.duplicate }
-                return BuildBridge.metadata(existing)
+                guard canAccess(existing.project, threadID: thread), existing.project == project, existing.selectionID == selectionID, existing.workflowID == workflow, existing.owner == owner, (existing.enqueue ?? false) == (p["enqueue"] == .bool(true)) else { throw BuildError.duplicate }
+                return BuildBridge.summary(model.builds.presentation(existing))
             }
-            guard let selection = agentSelections[selectionID], selection.owner == thread, selection.project == project, selection.profileRevision == model.activeProfile?.revision else { throw BuildError.selectionExpired }
+            guard let selection = try selectionStore.load(selectionID) ?? agentSelections[selectionID], !selection.expired, selection.state == "finalized", selection.owner == owner, selection.project == project, selection.profileRevision == model.activeProfile?.revision else { throw BuildError.selectionExpired }
             guard try await BuildDiscovery.pinned(project).developerDirectory == selection.developer else { throw BuildError.context }
-            let record = try await model.builds.submit(id: id, project: project, parameters: selection.parameters, source: request.clientName ?? "Codex", workflowID: workflow, sourceRevision: selection.revision, selectionID: selectionID, expectedCases: selection.expectedCases)
-            return BuildBridge.metadata(record)
+            let record = try await model.builds.submit(id: id, project: project, parameters: selection.parameters, source: request.clientName ?? "Codex", workflowID: workflow, sourceRevision: selection.revision, selectionID: selectionID, expectedCases: selection.expectedCases, owner: owner, enqueue: p["enqueue"] == .bool(true))
+            return BuildBridge.summary(model.builds.presentation(record))
         case "get_activity_changes":
             let kind = p["kind"]?.string
             let changes: ActivityChanges?
@@ -148,7 +153,7 @@ extension MimicIntegration {
     }
     func agentState(thread: String?, includeActions: Bool, helper: AgentHelperIdentity?) async -> BridgeValue {
         let current = project(thread)
-        let builds = model.builds.records.filter { $0.project.path == current?.path && ($0.status.isPending || $0.status == .unknown && $0.queueReleased != true) }.map(BuildBridge.summary)
+        let builds = model.builds.records.filter { $0.project.path == current?.path && ($0.status.isPending || $0.status == .unknown && $0.queueReleased != true) }.map { BuildBridge.summary(model.builds.presentation($0)) }
         let tasks = model.records.filter { $0.project.path == current?.path && [.queued, .running].contains($0.status) }.map(task)
         let simulators = model.simulatorScreen.records.filter { $0.project.path == current?.path && ($0.status.isPending || $0.holdsQueue) }.map(\.metadata)
         var blockers: [BridgeValue] = []
@@ -175,7 +180,7 @@ extension MimicIntegration {
         guard let current = project(thread), let kind = p["kind"]?.string, ["build", "task", "simulator", "remote"].contains(kind), p["status"] == nil || p["status"]?.string != nil else { throw BuildError.arguments }
         var values: [BridgeValue]
         switch kind {
-        case "build": values = model.builds.records.filter { $0.project.path == current.path }.reversed().map(BuildBridge.summary)
+        case "build": values = model.builds.records.filter { $0.project.path == current.path }.reversed().map { BuildBridge.summary(model.builds.presentation($0)) }
         case "task": values = model.records.filter { $0.project.path == current.path }.reversed().map(task)
         case "simulator": values = model.simulatorScreen.records.filter { $0.project.path == current.path }.reversed().map(\.metadata)
         default: values = model.profileRemote.runs.filter { $0.checkout.path == current.path }.map(profileRemoteSummary)
@@ -200,7 +205,7 @@ extension MimicIntegration {
         }
         if let existing = model.builds.activity(id) {
             guard canAccess(existing.project, threadID: thread), let preview = cleanupPreviews[previewID], preview.activityID == existing.cleanupActivityID, preview.artifacts == existing.cleanupArtifacts else { throw BuildError.duplicate }
-            return BuildBridge.metadata(existing)
+            return BuildBridge.summary(model.builds.presentation(existing))
         }
         guard let preview = cleanupPreviews[previewID], preview.owner == thread, canAccess(preview.project, threadID: thread) else { throw BuildError.context }
         let paths = try model.builds.artifacts(preview.activityID), root = model.builds.artifactRoot

@@ -19,6 +19,7 @@ struct BootstrapCard: View {
     @State private var analysisVisible = false
     @State private var controlsWidth: CGFloat = 200
     private var record: TaskRecord? {
+        if let recovery = self.model.mintRecoveryRecord { return recovery }
         if let activity = self.model.quickBootstrapActivity {
             if let error = activity.error {
                 var failed = activity.record(in: self.model.records); failed.status = .failed; failed.error = error
@@ -39,7 +40,7 @@ struct BootstrapCard: View {
                     .clipped().opacity(self.mode == .mini ? 0 : 1).allowsHitTesting(self.mode != .mini)
                     .accessibilityHidden(self.mode == .mini)
             }
-            if self.mode == .expanded {
+            if self.mode == .expanded, self.model.mintRecoveryRecord == nil {
                 if let record {
                     BootstrapDetailsFooter(model: self.model, record: record) {
                         ViewThatFits(in: .horizontal) {
@@ -66,11 +67,12 @@ struct BootstrapCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 if let header { header }
                 else if !hidesDefaultHeader { Text("Bootstrap").mimicFont(.heading).accessibilityAddTraits(.isHeader) }
-                if !self.live, self.mode != .expanded { self.launchers }
+                if self.model.mintRecoveryRecord != nil { BootstrapMintRecoveryView(model: self.model, compact: self.mode != .expanded) }
+                else if !self.live, self.mode != .expanded { self.launchers }
                 else if self.mode != .expanded, let record { self.liveControls(record) }
             }
             if self.mode != .expanded { Spacer(minLength: 4) }
-            if let record {
+            if let record, self.model.mintRecoveryRecord == nil {
                 VStack(alignment: .leading, spacing: 4) {
                     if self.mode == .expanded, record.status == .running {
                         Label(text("status.running"), systemImage: ActionPresentation.statusSymbol(record.status))
@@ -92,7 +94,7 @@ struct BootstrapCard: View {
                     }
                 }
             }
-            if !self.live, self.mode != .expanded {
+            if !self.live, self.mode != .expanded, self.model.mintRecoveryRecord == nil {
                 // Preserve the terminal's insets when Full leaves a narrow controls column.
                 Label(text(self.mode == .full && self.controlsWidth < 160 ? "bootstrap.xcode.launch.narrow" : "bootstrap.xcode.launch.notice"), systemImage: "exclamationmark.circle")
                     .mimicFont(.caption).foregroundStyle(.secondary)
@@ -100,7 +102,7 @@ struct BootstrapCard: View {
                     .accessibilityElement(children: .ignore).accessibilityLabel(text("bootstrap.xcode.launch.notice"))
                     .accessibilityIdentifier("bootstrap.notice")
             }
-            if self.mode == .expanded, let record {
+            if self.mode == .expanded, let record, self.model.mintRecoveryRecord == nil {
                 if record.status == .running { BootstrapExecutionProgress(model: self.model, record: record, showClock: false) }
                 else if record.status == .queued { BootstrapPreparationView(model: self.model, record: record, showCancel: false, showState: false, showRetryActions: false) }
                 if let error = record.error {

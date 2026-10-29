@@ -17,6 +17,8 @@ import XcodeMCPTransport
     /// Unlocalized cause of the last failed connection, bounded for activity diagnostics.
     private(set) var connectionFailure = ""
     private(set) var developerDirectory: String?
+    private let makeBridge: @MainActor () -> Process
+    private let runningXcode: @MainActor (URL) -> pid_t?
     private var client: Client?
     private var requestSequence = 0
     private var process: Process?
@@ -28,6 +30,19 @@ import XcodeMCPTransport
     private var progressHandlers: [String: (String) async -> Void] = [:]
     private var executionHandlers: [String: (BuildExecutionProgress) async -> Void] = [:]
     private var cancellableRequests: [String: (Client, MCP.ID)] = [:]
+    /// Injection keeps connection lifecycle tests independent of real Xcode and its permission dialogs.
+    init(makeBridge: @escaping @MainActor () -> Process = XcodeBuildConnection.makeBridgeProcess,
+         runningXcode: @escaping @MainActor (URL) -> pid_t? = XcodeBuildConnection.runningXcodeProcess) {
+        self.makeBridge = makeBridge; self.runningXcode = runningXcode
+    }
+    private static func makeBridgeProcess() -> Process {
+        let child = Process(); child.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun"); child.arguments = ["mcpbridge"]
+        return child
+    }
+    private static func runningXcodeProcess(_ application: URL) -> pid_t? {
+        let instances = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.resolvingSymlinksInPath() == application }
+        return instances.count == 1 ? instances.first?.processIdentifier : nil
+    }
     struct Result { let status: BuildStatus; let text: String; let errors: Int?; let warnings: Int?; let summaryPath: String?; let truncated: Bool }
     func supports(_ operation: BuildOperation) -> Bool { client != nil && supported.contains(operation == .build ? "BuildProject" : "RunSomeTests") }
     func hasWorkspace(_ tab: String, path: String) -> Bool {
@@ -37,17 +52,26 @@ import XcodeMCPTransport
     func connect(project: ProjectContext) async {
         guard !connecting else { return }; connecting = true; message = ""; connectionFailure = ""
         defer { connecting = false }
-        await disconnect()
         do {
-            let child = Process(); child.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun"); child.arguments = ["mcpbridge"]
             var environment = EnvironmentInspector.environment(project: project)
             let developer: String
             if let selected = project.developerDirectory { developer = selected } else { developer = await Task.detached { EnvironmentInspector.capture("/usr/bin/xcode-select", ["-p"]).1 }.value }
             let app = URL(fileURLWithPath: developer).deletingLastPathComponent().deletingLastPathComponent().resolvingSymlinksInPath()
-            let instances = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.resolvingSymlinksInPath() == app }
-            guard instances.count == 1, let instance = instances.first else { throw BuildError.configuration }
-            environment["MCP_XCODE_PID"] = String(instance.processIdentifier)
-            xcodeProcessID = instance.processIdentifier
+            guard let pid = runningXcode(app) else { throw BuildError.configuration }
+            // Git context is revalidated per operation. It is not the identity of an authorized Xcode connection.
+            if client != nil, process?.isRunning == true, xcodeProcessID == pid,
+               developerDirectory == developer, self.project?.workspace == project.workspace {
+                try await refreshWindows()
+                guard windows.values.contains(where: { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path == URL(fileURLWithPath: project.workspace).resolvingSymlinksInPath().path }) else { throw BuildError.configuration }
+                self.project = project
+                return
+            }
+            await disconnect()
+            let child = makeBridge()
+            environment["MCP_XCODE_PID"] = String(pid)
+            // A session inherited from the host belongs to its agent, never to Mimic's new connection.
+            environment.removeValue(forKey: "MCP_XCODE_SESSION_ID")
+            xcodeProcessID = pid
             environment["DEVELOPER_DIR"] = developer; developerDirectory = developer
             child.environment = environment
             let input = Pipe(), output = Pipe(); pipes = [input, output]
@@ -58,8 +82,8 @@ import XcodeMCPTransport
                 Task { @MainActor in
                     await connection.disconnect()
                     guard let self, self.process === child else { return }
-                    self.client = nil; self.project = nil; self.supported = []; self.windows = [:]; self.developerDirectory = nil
-                    self.message = text("build.tracking.lost")
+                    await self.disconnect()
+                    if self.client == nil { self.message = text("build.tracking.lost") }
                 }
             }
             try child.run()
@@ -95,11 +119,14 @@ import XcodeMCPTransport
         }
     }
     func disconnect() async {
-        let old = client; client = nil; project = nil; supported = []; windows = [:]
-        developerDirectory = nil; executionHandlers = [:]; cancellableRequests = [:]
+        // Detach the old resources before awaiting: its delayed exit must not terminate a newer connection.
+        let old = client, oldProcess = process, oldPipes = pipes
+        client = nil; process = nil; pipes = []; project = nil; supported = []; windows = [:]
+        developerDirectory = nil; progressHandlers = [:]; executionHandlers = [:]; cancellableRequests = [:]
         xcodeProcessID = nil
         await old?.disconnect()
-        if let process, process.isRunning { process.terminate() }; process = nil; pipes = []
+        for pipe in oldPipes { try? pipe.fileHandleForWriting.close(); try? pipe.fileHandleForReading.close() }
+        if let oldProcess, oldProcess.isRunning { oldProcess.terminate() }
     }
     func refreshWindows() async throws {
         let result = try await call(name: "XcodeListWindows", arguments: [:]); windows = XcodeBuildProfile.windows(result.value["message"].string ?? "")
@@ -127,19 +154,17 @@ import XcodeMCPTransport
             try await Task.sleep(for: .milliseconds(500))
         }
         try Task.checkCancellation()
-        if project != record.project || developerDirectory != developer {
-            // Unnotarized agents get Xcode's "Allow Mimic" prompt per binary; a slow handshake brings that prompt forward.
-            let prompt = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(3)); guard !Task.isCancelled else { return }
-                phase("build.phase.xcodeApproval")
-                NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dt.Xcode")
-                    .first { $0.bundleURL?.resolvingSymlinksInPath() == application.resolvingSymlinksInPath() }?.activate()
-            }
-            await connect(project: record.project)
-            prompt.cancel(); phase("build.phase.running")
+        // connect reuses a live authorized bridge, including after a branch or commit change.
+        let prompt = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3)); guard !Task.isCancelled else { return }
+            phase("build.phase.xcodeApproval")
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dt.Xcode")
+                .first { $0.bundleURL?.resolvingSymlinksInPath() == application.resolvingSymlinksInPath() }?.activate()
         }
+        await connect(project: record.project)
+        prompt.cancel(); phase("build.phase.running")
         guard project == record.project, developerDirectory == developer, let pid = xcodeProcessID else {
-            throw XcodeRunFailure(step: "mcp.connect", code: .xcodeAccess, detail: connectionFailure.isEmpty ? message : connectionFailure)
+            throw XcodeRunFailure(step: "mcp.connect", code: .xcodeConnection, detail: connectionFailure.isEmpty ? message : connectionFailure)
         }
         try await refreshWindows()
         let candidates = windows.filter { URL(fileURLWithPath: $0.value).resolvingSymlinksInPath().path == URL(fileURLWithPath: record.project.workspace).resolvingSymlinksInPath().path }
@@ -175,14 +200,7 @@ import XcodeMCPTransport
         let destinationTitle = try await automation.select(target)
         if native { try await verifyDestination(tab: tab, scheme: record.parameters.scheme, title: destinationTitle, step: "mcp.selection") }
         else { try await automation.verify(target) }
-        if !XcodeCompilationProgress.requestAccess() {
-            for _ in 0..<240 {
-                try Task.checkCancellation()
-                if XcodeCompilationProgress.hasAccess { break }
-                try await Task.sleep(for: .milliseconds(500))
-            }
-            guard XcodeCompilationProgress.hasAccess else { throw BuildError.xcodeAccess }
-        }
+        try XcodeRunAccess.requireDebuggerAccess(native: native, hasAccess: { XcodeCompilationProgress.hasAccess })
         try Task.checkCancellation()
         guard self.project == record.project, xcodeProcessID == pid else { throw BuildError.context }
         let workspace = record.project.workspace

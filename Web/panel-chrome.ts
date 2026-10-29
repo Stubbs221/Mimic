@@ -5,6 +5,7 @@ type Context={checkoutId:string;branch:string;sha:string;xcode:string;profileID:
 type Activity={type:'task'|'build'|'run';id:string;title:string;status:string;needsInput?:boolean};
 type Presentation={tiled:boolean;retro?:boolean;delivery?:MimicDelivery;context:Context|null;busy:boolean;locked:boolean;stale:boolean;editing:boolean;rebase:boolean;catalogOpen:boolean;historyOpen:boolean;activity:Activity|null;progress?:string;needsBinding?:boolean};
 type Dependencies={t:(key:string)=>string;preference:HTMLElement;branches:()=>void;switchBranch:(branch:string)=>void;refresh:()=>void;newAction:()=>void;history:()=>void;edit:()=>void;setup:(operation:string)=>void;bind:()=>void;select:(activity:Activity)=>void};
+export type BranchChoice={id:string;name:string;isRemote:boolean};
 type Popup='branches'|'context'|'settings'|'menu'|'appearance';
 
 function node<K extends keyof HTMLElementTagNameMap>(tag:K,className='',text=''){const n=document.createElement(tag);n.className=className;n.textContent=text;return n;}
@@ -31,6 +32,7 @@ export class PanelChrome {
  private readonly popupTitle=node('h2');
  private readonly search=node('input','chrome-branch-search');
  private readonly select=node('select');
+ private readonly branchOptions=node('div','chrome-branch-options');
  private readonly switchButton:HTMLButtonElement;
  private readonly branchBody=node('div','chrome-branch-picker');
  private readonly actionButton:HTMLButtonElement;
@@ -42,6 +44,7 @@ export class PanelChrome {
  private opened:Popup|null=null;
  private trigger:HTMLButtonElement|null=null;
  private branchList:string[]=[];
+ private branchChoices:BranchChoice[]=[];
  private contextSignature='';
  private branchContext='';
 
@@ -78,7 +81,8 @@ export class PanelChrome {
   this.select.onchange=()=>this.updateSwitch();
   this.switchButton=this.textButton(t('branch.switch'),()=>dependencies.switchBranch(this.select.value));
   this.switchButton.className='primary';this.switchButton.dataset.action='branch-switch';
-  this.branchBody.append(this.search,this.select,dependencies.preference,this.switchButton);
+  this.select.hidden=true;this.branchOptions.setAttribute('role','listbox');this.branchOptions.setAttribute('aria-label',t('branch.choose'));
+  this.branchBody.append(this.search,this.select,this.branchOptions,dependencies.preference,this.switchButton);
   // Capture Escape before the grid's window handler, preserving an active layout draft.
   window.addEventListener('keydown',event=>{if(event.key==='Escape'&&this.opened){event.preventDefault();event.stopImmediatePropagation();this.close();}},true);
   document.addEventListener('pointerdown',event=>{if(this.opened&&event.target instanceof Node&&!this.host.contains(event.target))this.close(false);});
@@ -103,7 +107,7 @@ export class PanelChrome {
   if(!state.tiled&&!this.opened){this.close(false);return;}
   const branchContext=JSON.stringify([state.context?.checkoutId,state.context?.branch]);
   if(previous&&branchContext!==this.branchContext){
-   this.close(false);this.branchList=[];this.search.value='';this.select.value='';
+   this.close(false);this.branchList=[];this.branchChoices=[];this.search.value='';this.select.value='';
   }
   this.branchContext=branchContext;
   if(state.editing&&!previous?.editing)this.close(false);
@@ -129,10 +133,13 @@ export class PanelChrome {
  /** Moving the existing preference keeps its pending save and shared checkout setting intact. */
  toggleBranches(){
   const opened=this.toggle('branches',this.branch);
-  if(opened){if(!this.state?.retro)this.branchBody.insertBefore(this.dependencies.preference,this.switchButton);this.setBranches(this.branchList);}
+  if(opened){if(!this.state?.retro)this.branchBody.insertBefore(this.dependencies.preference,this.switchButton);this.renderBranches();}
   return opened;
  }
- setBranches(branches:string[]){this.branchList=branches;this.renderBranches();}
+ setBranches(branches:string[],choices?:BranchChoice[]){
+  this.branchList=branches;this.branchChoices=choices??branches.map(id=>({id,name:id.replace(/^refs\/remotes\/origin\//,''),isRemote:id.startsWith('refs/remotes/origin/')}));
+  this.renderBranches();
+ }
  close(restoreFocus=true){
   if(!this.opened)return;
   const trigger=this.trigger;this.opened=null;this.popup.getAnimations().forEach(a=>a.cancel());this.popup.hidden=true;this.host.classList.remove('appearance-only');this.host.hidden=!this.state?.tiled;trigger?.setAttribute('aria-expanded','false');
@@ -148,7 +155,7 @@ export class PanelChrome {
  private toggle(kind:Popup,trigger:HTMLButtonElement){
   if(this.opened===kind){this.close();return false;}
   this.close(false);this.opened=kind;this.trigger=trigger;this.popup.hidden=false;trigger.setAttribute('aria-expanded','true');
-  const title=this.dependencies.t(kind==='branches'?'branch.local':kind==='context'?'context.details':kind==='settings'?'settings':'chrome.menu');
+  const title=this.dependencies.t(kind==='branches'?'branch.choose':kind==='context'?'context.details':kind==='settings'?'settings':'chrome.menu');
   this.popupTitle.textContent=title;this.popup.setAttribute('aria-label',title);this.popupBody.replaceChildren();fadePopup(this.popup);
   if(kind==='branches')this.popupBody.append(this.branchBody);
   if(kind==='context')this.renderContext(true);
@@ -164,12 +171,25 @@ export class PanelChrome {
  }
  private renderBranches(){
   const previous=this.select.value,query=this.search.value.toLocaleLowerCase();
-  const list=this.branchList.filter(branch=>branch.toLocaleLowerCase().includes(query));
-  this.select.replaceChildren(new Option(this.dependencies.t('branch.local'),''),...list.map(branch=>new Option(branch,branch)));
-  if(list.includes(previous))this.select.value=previous;
+  const list=this.branchChoices.filter(branch=>((branch.isRemote?'origin/':'')+branch.name).toLocaleLowerCase().includes(query));
+  this.select.replaceChildren(new Option(this.dependencies.t('branch.choose'),''),...list.map(branch=>new Option(branch.name,branch.id)));
+  if(list.some(branch=>branch.id===previous))this.select.value=previous;
+  this.branchOptions.replaceChildren(...list.map(branch=>{
+   const row=this.textButton('',()=>{this.select.value=branch.id;this.updateSwitch();});
+   row.className='chrome-branch-option';row.dataset.branch=branch.id;row.setAttribute('role','option');
+   const marker=node('span','chrome-branch-marker');marker.dataset.source=branch.isRemote?'origin':'local';marker.setAttribute('aria-hidden','true');
+   row.append(marker,node('span','chrome-branch-option-name',branch.name),node('span','chrome-branch-source',branch.isRemote?'origin':'local'));
+   row.title=(branch.isRemote?'origin/':'')+branch.name;
+   row.setAttribute('aria-current',String(!branch.isRemote&&branch.name===this.state?.context?.branch));
+   return row;
+  }));
   this.updateSwitch();
  }
- private updateSwitch(){const blocked=!this.state?.context||this.state.busy||this.state.locked||this.state.stale||this.state.editing;this.search.disabled=this.select.disabled=blocked;this.switchButton.disabled=blocked||!this.select.value;}
+ private updateSwitch(){
+  const blocked=!this.state?.context||this.state.busy||this.state.locked||this.state.stale||this.state.editing;
+  this.search.disabled=this.select.disabled=blocked;this.switchButton.disabled=blocked||!this.select.value;
+  this.branchOptions.querySelectorAll<HTMLButtonElement>('button').forEach(row=>{row.disabled=blocked;row.setAttribute('aria-selected',String(row.dataset.branch===this.select.value));});
+ }
  private renderContext(force=false){
   const context=this.state?.context,signature=JSON.stringify([context,this.state?.needsBinding]);if(!force&&signature===this.contextSignature)return;
   this.contextSignature=signature;const dl=node('dl','chrome-context');

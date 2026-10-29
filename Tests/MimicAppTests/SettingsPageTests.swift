@@ -91,6 +91,49 @@ private struct SettingsCILifetimeView: View {
 struct SettingsPageTests {
     // MARK: - Navigation
 
+    @Test func unconfiguredCITileSnapshotsFitCompactAndExpandedSizes() async throws {
+        let f = try SettingsFixture(); defer { f.cleanUp() }
+        let m = f.model
+        let output = URL(fileURLWithPath: "/private/tmp/Mimic-CI-B-20261027/native")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        #expect(m.ciSettings.connection == nil)
+        for mode in ["mini", "full", "expanded"] {
+            for dark in [false, true] {
+                m.returnHome(source: .keyboard)
+                let width: CGFloat = mode == "mini" ? 258 : 528
+                let content = VStack(alignment: .leading, spacing: 8) {
+                    Label("CI", systemImage: "checkmark.seal").mimicFont(.heading)
+                    if mode == "expanded" {
+                        CISection(state: m.ci, settings: m.ciSettings, openSettings: { m.openSettings(group: .ci) },
+                                  showsHeader: false, expanded: .constant(true))
+                    } else {
+                        CICompactSummaryView(state: m.ci, settings: m.ciSettings, full: mode == "full",
+                                             openSettings: { m.openSettings(group: .ci) }, open: { _ in Issue.record("Empty CI opened a run") })
+                    }
+                }.padding(16).frame(width: width, height: 160, alignment: .topLeading)
+                    .background(Color(nsColor: MimicTheme.native("surface", dark: dark)))
+                    .environment(\.mimicPanelAppearance, .tileGrid).environment(\.colorScheme, dark ? .dark : .light)
+                let window = self.window(); defer { window.close() }
+                window.setContentSize(NSSize(width: width, height: 160))
+                window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let host = NSHostingView(rootView: content); window.contentView = host
+                host.frame = NSRect(x: 0, y: 0, width: width, height: 160)
+                try await self.layout(host)
+                let setup = NSHostingView(rootView: CIConnectionSetupView(full: mode != "mini", openSettings: {})
+                    .frame(width: width - 32).environment(\.mimicPanelAppearance, .tileGrid))
+                #expect(setup.fittingSize.height <= 108)
+                #expect(host.fittingSize.width == width)
+                let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                host.cacheDisplay(in: host.bounds, to: bitmap)
+                try #require(bitmap.representation(using: .png, properties: [:]))
+                    .write(to: output.appendingPathComponent("\(mode)-\(dark ? "dark" : "light").png"))
+                #expect(m.ciSettings.enteredToken.isEmpty && m.jenkinsSettings.enteredToken.isEmpty)
+                #expect(m.records.isEmpty && m.builds.records.isEmpty)
+            }
+        }
+        #expect(await f.http.requests.isEmpty)
+    }
+
     @Test func backPreservesHomeAndCancelsBothDocumentsWithoutCancellingWork() throws {
         let f = try SettingsFixture(); defer { f.cleanUp() }
         let m = f.model
@@ -157,7 +200,7 @@ struct SettingsPageTests {
             #expect(m.jenkinsSettings.enteredToken == "fixture-jenkins-draft")
             #expect(m.aiSettings.settings.codexModel == "fixture-model")
         }
-        #expect(presentations == 2 && f.credentials.values.isEmpty)
+        #expect(presentations == PanelAppearance.allCases.count && f.credentials.values.isEmpty)
         #expect(await f.http.requests.isEmpty)
     }
 
@@ -268,6 +311,7 @@ struct SettingsPageTests {
         let f = try SettingsFixture(); defer { f.cleanUp() }
         let m = f.model
         m.appearance.select(appearance)
+        m.panelVisibilityChanged(true)
         m.activeProfile = try Profile11Fixture.snapshot(directory: f.directory)
         m.motionSettings.reduceMotionOverride = true
         m.revealSection(.tasks, source: .keyboard)
@@ -289,19 +333,23 @@ struct SettingsPageTests {
         let homeOffset = home.contentView.bounds.origin
         m.openSettings(group: .aiIntegrations, source: .keyboard)
         try await self.layout(host)
+        try await self.wait("show settings") { home.isHidden && !settings.isHidden }
         #expect(home.isHidden && !settings.isHidden)
         #expect(home.superview?.isHiddenOrHasHiddenAncestor == true)
         #expect(settings.superview?.isHiddenOrHasHiddenAncestor == false)
         settings.contentView.scroll(to: NSPoint(x: 0, y: 160)); settings.reflectScrolledClipView(settings.contentView)
         let settingsOffset = settings.contentView.bounds.origin
         m.returnHome(source: .keyboard); try await self.layout(host)
+        try await self.wait("restore home offset") { !home.isHidden && settings.isHidden && home.contentView.bounds.origin == homeOffset }
         #expect(!home.isHidden && settings.isHidden && home.contentView.bounds.origin == homeOffset)
         m.openSettings(source: .keyboard); try await self.layout(host)
+        try await self.wait("restore settings offset") { !settings.isHidden && settings.contentView.bounds.origin == settingsOffset }
         #expect(settings.contentView.bounds.origin == settingsOffset)
         #expect(home === self.scroll(in: host, id: "page.home") && settings === self.scroll(in: host, id: "page.settings"))
         m.motionSettings.reduceMotionOverride = false
         m.revealSection(.tool(.format), source: .pointer); try await self.layout(host)
         m.openSettings(source: .keyboard); try await self.layout(host)
+        try await self.wait("freeze hidden home") { home.isHidden && m.panelScrollTarget.isEmpty }
         let frozen = home.contentView.bounds.origin
         try await Task.sleep(for: .milliseconds(240))
         #expect(home.contentView.bounds.origin == frozen && m.panelScrollTarget.isEmpty)
@@ -367,9 +415,9 @@ struct SettingsPageTests {
         #expect(await f.http.requests.isEmpty)
     }
 
-    private func wait(_ condition: () -> Bool) async throws {
+    private func wait(_ label: String = "", _ condition: () -> Bool) async throws {
         for _ in 0..<300 { if condition() { return }; try await Task.sleep(for: .milliseconds(5)) }
-        try #require(condition())
+        try #require(condition(), "\(label)")
     }
     private func window() -> NSWindow {
         _ = NSApplication.shared

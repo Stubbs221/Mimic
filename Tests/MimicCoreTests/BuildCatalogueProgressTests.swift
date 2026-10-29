@@ -14,12 +14,17 @@ struct BuildCatalogueProgressTests {
         for reuse in [false, true] {
             var base = BuildCatalogue(); base.schemes = ["Fixture"]; base.configurations = ["Debug"]
             var events: [BuildCatalogueProgress] = []
-            _ = try BuildCatalogue.inspect(project: project, scheme: "Fixture", includeTestPlans: tests, timeout: 120, baseCatalogue: reuse ? base : nil, progress: { events.append(.init(phase: $0, completed: $1, total: $2)) }) { args, _, _ in
+            _ = try BuildCatalogue.inspect(project: project, scheme: "Fixture", includeTestPlans: tests, timeout: 120, baseCatalogue: reuse ? base : nil, configurations: { path in
+                #expect(path.hasSuffix("/Fixture.xcodeproj/project.pbxproj"))
+                #expect(events.last?.phase == .configurations && events.last?.completed == 1)
+                return ["Debug"]
+            }, progress: { events.append(.init(phase: $0, completed: $1, total: $2)) }) { args, _, _ in
+                #expect(!args.contains("-project"))
                 if args.contains("-showdestinations") { #expect(events.last?.phase == .destinations); return (0, "") }
                 if args.contains("-showTestPlans") { #expect(events.last?.phase == .testPlans); return (0, "Test plans associated with the scheme:\n    Selected\n") }
                 if args.contains("-workspace") { #expect(events.last?.completed == 0); return (0, #"{"workspace":{"schemes":["Fixture"]}}"#) }
-                #expect(events.last?.completed == 1)
-                return (0, #"{"project":{"configurations":["Debug"]}}"#)
+                Issue.record("Unexpected Xcode query")
+                return (1, "")
             }
             let phases: [BuildCatalogueProgress.Phase] = (reuse ? [] : [.schemes, .configurations]) + [.destinations] + (tests ? [.testPlans] : []) + [.verifying]
             #expect(events.map(\.phase) == phases)
@@ -32,7 +37,7 @@ struct BuildCatalogueProgressTests {
     @Test func failedStepNeverAdvancesAndProjectQueryCombinesMetadata() throws {
         var events: [BuildCatalogueProgress] = []
         #expect(throws: BuildError.catalogueResponse) {
-            try BuildCatalogue.inspect(project: project, scheme: "Fixture", includeTestPlans: false, timeout: 120, progress: { events.append(.init(phase: $0, completed: $1, total: $2)) }) { args, _, _ in
+            try BuildCatalogue.inspect(project: project, scheme: "Fixture", includeTestPlans: false, timeout: 120, configurations: { _ in throw BuildError.catalogueResponse }, progress: { events.append(.init(phase: $0, completed: $1, total: $2)) }) { args, _, _ in
                 (0, args.contains("-workspace") ? #"{"workspace":{"schemes":["Fixture"]}}"# : "invalid")
             }
         }

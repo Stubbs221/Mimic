@@ -16,12 +16,24 @@ import MimicCore
     MimicCLI build --scheme NAME --configuration Debug --destination UUID [--platform ios|tvos] [--checkout PATH] [--request-id UUID] [--detach]
     MimicCLI test --scheme NAME --configuration Debug --destination UUID --only-testing Target/Class[/method] [--test-plan NAME] [--detach]
     MimicCLI status|logs|cancel ID
+    MimicCLI workflow METHOD --arguments /absolute/path/request.json
     Xcode MCP: build|test --backend xcodeMCP --workspace-tab TAB --confirm-ios-simulator
     """
     @MainActor static func run() async throws {
         var args = Array(CommandLine.arguments.dropFirst())
         if args.isEmpty || args == ["--help"] { print(usage); return }
         let verb = args.removeFirst()
+        if verb == "workflow" {
+            guard args.count == 3, args[1] == "--arguments", args[2].hasPrefix("/"),
+                  (WorkflowContract.tools + ["get_agent_state", "start_test_catalogue", "get_test_catalogue", "validate_selected_tests", "run_verified_tests"]).contains(args[0]) else { throw CLIError.arguments }
+            let path = URL(fileURLWithPath: args[2])
+            guard let size = try path.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1024 * 1024 else { throw CLIError.arguments }
+            let parameters = try JSONDecoder().decode([String: BridgeValue].self, from: Data(contentsOf: path))
+            if WorkflowContract.tools.contains(args[0]) { try WorkflowContract.validate(parameters, method: args[0]) }
+            try await ensureNativeApp()
+            let result = try await call(args[0], parameters); printJSON(result)
+            if result["status"] == .string("blocked") { exit(2) }; return
+        }
         if ["status", "logs", "cancel"].contains(verb) {
             guard args.count == 1, let id = UUID(uuidString: args[0]) else { throw CLIError.arguments }
             try await ensureNativeApp()
@@ -30,10 +42,11 @@ import MimicCore
             printJSON(value); return
         }
         guard ["build", "test"].contains(verb) else { throw CLIError.arguments }
-        var options: [String: String] = [:], tests: [String] = [], detach = false, confirmed = false
-        let allowed = Set(["--scheme", "--configuration", "--destination", "--checkout", "--request-id", "--backend", "--workspace-tab", "--only-testing", "--test-plan", "--platform"])
+        var options: [String: String] = [:], tests: [String] = [], detach = false, confirmed = false, enqueue = false
+        let allowed = Set(["--scheme", "--configuration", "--destination", "--checkout", "--request-id", "--backend", "--workspace-tab", "--only-testing", "--test-plan", "--platform", "--workflow-id"])
         while !args.isEmpty {
             let key = args.removeFirst()
+            if key == "--enqueue" { guard !enqueue else { throw CLIError.arguments }; enqueue = true; continue }
             if key == "--detach" { guard !detach else { throw CLIError.arguments }; detach = true; continue }
             if key == "--confirm-ios-simulator" { guard !confirmed else { throw CLIError.arguments }; confirmed = true; continue }
             guard allowed.contains(key), !args.isEmpty else { throw CLIError.arguments }
@@ -52,14 +65,16 @@ import MimicCore
         let path = URL(fileURLWithPath: options["--checkout"] ?? FileManager.default.currentDirectoryPath).resolvingSymlinksInPath().path
         guard context["checkoutId"].string == path else { throw CLIError.context }
         var payload = try BridgeValue.encode(parameters).object ?? [:]; payload["operation"] = nil
-        let value = try await call(verb == "build" ? "cli_build_project" : "cli_run_selected_tests", ["requestID": .string(id.uuidString), "context": context, "parameters": .object(payload), "simulatorConfirmed": .bool(confirmed)])
+        var admission: [String: BridgeValue] = ["requestID": .string(id.uuidString), "context": context, "parameters": .object(payload), "simulatorConfirmed": .bool(confirmed), "enqueue": .bool(enqueue)]
+        if let workflow = options["--workflow-id"] { guard UUID(uuidString: workflow) != nil else { throw CLIError.arguments }; admission["workflowID"] = .string(workflow) }
+        let value = try await call(verb == "build" ? "cli_build_project" : "cli_run_selected_tests", admission)
         guard let activityID = value["id"].string.flatMap(UUID.init(uuidString:)) else { throw CLIError.bridge("invalid reply") }
         if detach { print(activityID.uuidString); return }
         FileHandle.standardError.write(Data((activityID.uuidString + "\n").utf8))
         try await observe(activityID, wait: true)
     }
     static func call(_ method: String, _ parameters: [String: BridgeValue]) async throws -> BridgeValue {
-        let reply = try await MimicSocket.call(.init(method: method, parameters: parameters))
+        let reply = try await MimicSocket.call(.init(method: method, parameters: parameters, clientName: "Terminal", helperIdentity: .current))
         guard reply.error == nil else { throw CLIError.bridge(reply.message ?? reply.error ?? "unavailable") }; return reply.result
     }
     @MainActor static func observe(_ id: UUID, wait: Bool) async throws {

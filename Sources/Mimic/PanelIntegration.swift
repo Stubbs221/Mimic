@@ -96,13 +96,15 @@ extension MimicIntegration {
             return .object(["accepted": .bool(true)])
         case "panel_branches":
             guard let current = project(threadID) else { throw failure("context") }
-            return .object(["branches": try BridgeValue.encode(try await model.panelBranches(current))])
+            let branches = try await model.panelBranches(current)
+            return .object(["branches": .array(branches.map { .string($0.id) }),
+                            "branchChoices": .array(branches.map { .object(["id": .string($0.id), "name": .string($0.name), "isRemote": .bool($0.isRemote)]) })])
         case "panel_switch_branch":
             guard let branch = p["branch"]?.string, !branch.isEmpty, branch.utf8.count <= 1024 else { throw failure("arguments") }
             guard let id = p["requestID"]?.string.flatMap(UUID.init(uuidString:)) else { throw failure("arguments") }
             // A lost reply can be retried after checkout has changed the current context.
             if let old = try? model.branchSwitch.operation(id) {
-                guard old.sourceThreadID == threadID, old.target == branch,
+                guard old.sourceThreadID == threadID, old.selectionID == branch,
                       project(threadID)?.path == old.source.path,
                       p["context"]?["checkoutId"].string == old.source.path,
                       p["context"]?["branch"].string == old.source.branch,

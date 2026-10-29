@@ -17,6 +17,7 @@ import MimicCore
     @Published private(set) var submitting = false
     @Published private(set) var message: String?
     @Published private(set) var branches: [String] = []
+    @Published private(set) var searchingBranches = false
     @Published var branch = ""
     @Published var plan: UITestPlan = .smoke
     @Published var gates: [QualityGate: Bool] = [:]
@@ -39,6 +40,32 @@ import MimicCore
     private var frozenProject: ProjectContext?
     private(set) var reviewedContract: ProfileRemoteContract?
     private var requestID = UUID()
+
+    private struct Draft {
+        let project: ProjectContext
+        let snapshot: ProfileSnapshot?
+        let contract: ProfileRemoteContract
+        let branch: String
+        let verifiedBranch: String?
+        let plan: UITestPlan
+        let gates: [QualityGate: Bool]
+        let requestID: UUID
+        let connectionID: UUID?
+        let jenkinsID: UUID?
+    }
+    private var drafts: [RemoteCIKind: Draft] = [:]
+    private var verifiedBranch: String?
+
+    var canSubmit: Bool {
+        !self.submitting && !self.branch.isEmpty && self.branch == self.verifiedBranch &&
+        (self.selected != .uiTests || self.availablePlans.contains(self.plan))
+    }
+
+    /// Only a server result becomes the launch selection; search input remains separate.
+    func chooseBranch(_ branch: String) {
+        guard self.branches.contains(branch) else { return }
+        self.branch = branch; self.verifiedBranch = branch
+    }
 
     init(preferences: CILaunchPreferences, settings: JenkinsSettings, gitlabSettings: CISettingsModel, coordinator: ProfileRemoteCoordinator, snapshot: @escaping @MainActor () -> ProfileSnapshot?,
          submitProfile: @escaping @MainActor (ProfileSnapshot, ActionDefinition, [String: String], UUID, ProfileRemoteContract, ProjectContext) async throws -> ProfileRemoteRun,
@@ -79,7 +106,7 @@ import MimicCore
         }
     }
     func contextChanged() {
-        self.close(); self.contracts = [:]; self.capabilityErrors = [:]; self.refreshCapabilities()
+        self.close(preservingDraft: false); self.drafts = [:]; self.contracts = [:]; self.capabilityErrors = [:]; self.refreshCapabilities()
     }
     func refreshCapabilities() {
         self.revision = UUID(); self.capabilityTask?.cancel(); self.checking = []
@@ -110,8 +137,14 @@ import MimicCore
         guard !self.submitting, self.preferences.kinds.contains(kind), let contract = self.contracts[kind], let project = self.project() else { return }
         if self.selected == kind { self.close(); return }
         self.close(); self.selected = kind; self.frozenProject = project; self.frozenSnapshot = self.snapshot(); self.reviewedContract = contract
-        self.plan = .smoke; self.branch = ""; self.requestID = UUID(); self.message = nil
+        self.plan = .smoke; self.branch = ""; self.verifiedBranch = nil; self.requestID = UUID(); self.message = nil
         self.applyDefaults(kind, contract: contract)
+        if let draft = self.drafts[kind], draft.project == project, draft.snapshot == self.frozenSnapshot,
+           draft.contract == contract, draft.connectionID == self.gitlabSettings.connection?.id, draft.jenkinsID == self.settings.connection?.id {
+            self.branch = draft.branch; self.verifiedBranch = draft.verifiedBranch; self.plan = draft.plan
+            self.gates = draft.gates; self.requestID = draft.requestID
+            self.searchBranches(""); return
+        }
         let revision = self.branchRevision
         self.branchTask = Task { [weak self] in
             guard let self, let connection = self.gitlabSettings.connection else { return }
@@ -121,7 +154,7 @@ import MimicCore
                 if project.branch.isEmpty { exists = false }
                 else { exists = try await self.gitlab.branchExists(connection: connection, branch: project.branch, token: token) }
                 guard self.branchRevision == revision, self.selected == kind, !Task.isCancelled else { return }
-                if exists { self.branch = project.branch }
+                if exists { self.branch = project.branch; self.verifiedBranch = project.branch }
                 self.searchBranches(self.branch)
             } catch {
                 guard self.branchRevision == revision, !Task.isCancelled else { return }
@@ -129,7 +162,15 @@ import MimicCore
             }
         }
     }
-    func close() {
+    func close(preservingDraft: Bool = true) {
+        if let kind = self.selected, let project = self.frozenProject, let contract = self.reviewedContract {
+            if preservingDraft {
+                self.drafts[kind] = Draft(project: project, snapshot: self.frozenSnapshot, contract: contract,
+                                         branch: self.branch, verifiedBranch: self.verifiedBranch, plan: self.plan,
+                                         gates: self.gates, requestID: self.requestID, connectionID: self.gitlabSettings.connection?.id, jenkinsID: self.settings.connection?.id)
+            } else { self.drafts[kind] = nil }
+        }
+        self.searchingBranches = false
         self.selected = nil; self.reviewedContract = nil; self.frozenProject = nil; self.frozenSnapshot = nil; self.message = nil
         self.branchRevision = UUID(); self.branchTask?.cancel(); self.branchTask = nil; self.branches = []
     }
@@ -137,8 +178,10 @@ import MimicCore
         self.branchTask?.cancel(); self.branchRevision = UUID(); self.branches = []
         guard self.selected != nil, let connection = self.gitlabSettings.connection else { return }
         let revision = self.branchRevision
+        self.searchingBranches = true
         self.branchTask = Task { [weak self] in
             guard let self else { return }
+            defer { if self.branchRevision == revision { self.searchingBranches = false } }
             do {
                 try await Task.sleep(for: .milliseconds(250))
                 let branches = try await self.gitlab.branches(connection: connection, search: query, token: self.gitlabSettings.token(for: connection))
@@ -154,7 +197,7 @@ import MimicCore
     // MARK: - Explicit submission
 
     func submit() {
-        guard !self.submitting, let kind = self.selected, self.preferences.kinds.contains(kind),
+        guard self.canSubmit, let kind = self.selected, self.preferences.kinds.contains(kind),
               let project = self.frozenProject, let contract = self.reviewedContract,
               let jenkins = self.settings.connection, self.gitlabSettings.connection != nil else { return }
         let branch = self.branch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -178,7 +221,7 @@ import MimicCore
                 guard self.snapshot() == snapshot, self.project() == project, self.preferences.kinds.contains(kind) else { throw ProfileError.revision }
                 try await self.validate(project)
                 _ = try await self.submitProfile(snapshot, action, execution.parameters, requestID, contract, project)
-                self.close()
+                self.close(preservingDraft: false)
             } catch JenkinsConnectionError.contractChanged {
                 do {
                     let current = try await self.coordinator.contract(action: action, connection: jenkins)

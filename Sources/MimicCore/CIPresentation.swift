@@ -38,8 +38,16 @@ public struct CIProgressSummary: Sendable {
     public let bridges: [CIBridge]
     public let complete: Bool
     public let commitTitle: String?
+    /// Optional downstream branches must not surface their mandatory children as blocking failures.
+    public let optionalJobIDs: Set<Int>
+    public let optionalBridgeIDs: Set<Int>
     public var running: [CIJob] { self.jobs.filter { $0.status == "running" } }
     public var failed: [CIJob] { self.jobs.filter { $0.status == "failed" && !$0.allowFailure }.sorted { $0.id < $1.id } }
+    public var analysisFailures: [CIFailedCheck] {
+        self.failed.filter { !self.optionalJobIDs.contains($0.id) }.map { CIFailedCheck(id: $0.id, name: $0.name, url: $0.webURL) }
+        + self.bridges.filter { !self.optionalBridgeIDs.contains($0.id) && $0.allowFailure != true && ($0.downstreamPipeline?.status ?? $0.status) == "failed" }
+            .map { CIFailedCheck(id: $0.id, name: $0.name, url: $0.downstreamPipeline?.webURL ?? $0.webURL) }
+    }
     public var waitingForManual: Bool {
         self.jobs.contains { $0.status == "manual" && !$0.allowFailure } || self.bridges.contains { $0.status == "manual" && $0.allowFailure != true }
     }
@@ -50,11 +58,12 @@ public struct CIProgressSummary: Sendable {
         let terminal = ["success", "failed", "canceled", "skipped"]
         return self.countedJobs.filter { terminal.contains($0.status) }.count + self.countedBridges.filter { terminal.contains($0.downstreamPipeline?.status ?? $0.status) }.count
     }
-    public init(jobs: [CIJob], bridges: [CIBridge] = [], complete: Bool = true, commitTitle: String? = nil) {
+    public init(jobs: [CIJob], bridges: [CIBridge] = [], complete: Bool = true, commitTitle: String? = nil, optionalJobIDs: Set<Int> = [], optionalBridgeIDs: Set<Int> = []) {
         var seen = Set<Int>()
         self.jobs = jobs.sorted { $0.id > $1.id }.filter { seen.insert($0.id).inserted }
         self.bridges = bridges; self.complete = complete
         self.commitTitle = commitTitle
+        self.optionalJobIDs = optionalJobIDs; self.optionalBridgeIDs = optionalBridgeIDs
     }
 }
 
@@ -76,13 +85,15 @@ extension GitLabService {
             if case .rateLimited = failure { throw failure }
         }
         var jobs = root.jobs, bridges: [CIBridge] = []
+        var optionalJobIDs = Set<Int>(), optionalBridgeIDs = Set<Int>()
         var complete = root.bridgeError == nil
-        var queue = root.bridges.filter { !failedOnly || $0.status == "failed" || $0.downstreamPipeline?.status == "failed" }.map { ($0, 1) }
+        var queue = root.bridges.filter { !failedOnly || $0.status == "failed" || $0.downstreamPipeline?.status == "failed" }.map { ($0, 1, $0.allowFailure == true) }
         var seen: Set<String> = ["\(connection.projectID):\(pipelineID)"]
         var children = 0
         while !queue.isEmpty {
             try Task.checkCancellation()
-            let (bridge, depth) = queue.removeFirst()
+            let (bridge, depth, optional) = queue.removeFirst()
+            if optional { optionalBridgeIDs.insert(bridge.id) }
             guard let child = bridge.downstreamPipeline else { bridges.append(bridge); continue }
             let projectID = child.projectID ?? connection.projectID
             let identity = "\(projectID):\(child.id)"
@@ -97,7 +108,8 @@ extension GitLabService {
                 if let loadChild { details = try await loadChild(childConnection, child.id) }
                 else { details = try await self.details(connection: childConnection, pipelineID: child.id, token: token) }
                 jobs += details.jobs; complete = complete && details.bridgeError == nil
-                queue += details.bridges.filter { !failedOnly || $0.status == "failed" || $0.downstreamPipeline?.status == "failed" }.map { ($0, depth + 1) }
+                if optional { optionalJobIDs.formUnion(details.jobs.map(\.id)) }
+                queue += details.bridges.filter { !failedOnly || $0.status == "failed" || $0.downstreamPipeline?.status == "failed" }.map { ($0, depth + 1, optional || $0.allowFailure == true) }
             } catch is CancellationError { throw CancellationError() }
             catch {
                 if let failure = error as? CIError, failure.pausesPolling && failure != .forbidden { throw failure }
@@ -105,6 +117,6 @@ extension GitLabService {
                 complete = false; bridges.append(bridge)
             }
         }
-        return CIProgressSummary(jobs: jobs, bridges: bridges, complete: complete, commitTitle: root.jobs.first(where: { $0.commit != nil })?.commit?.title)
+        return CIProgressSummary(jobs: jobs, bridges: bridges, complete: complete, commitTitle: root.jobs.first(where: { $0.commit != nil })?.commit?.title, optionalJobIDs: optionalJobIDs, optionalBridgeIDs: optionalBridgeIDs)
     }
 }

@@ -13,8 +13,9 @@ import MimicCore
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let model: TaskCoordinator
     private var status: NSStatusItem!
+    private var statusIconAnimator: StatusIconAnimator!
     private let expressMenu = ExpressMenuController()
-    private var panel: NSPanel!
+    private var panel: MimicPopover!
     private var panelMotion: MimicWindowMotion!
     private var interfaceMapWindow: NSWindow?
     private var setupWindow: NSWindow?
@@ -61,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         edit.addItem(NSMenuItem(title: text("paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
         NSApp.mainMenu = rootMenu
         self.status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        self.statusIconAnimator = StatusIconAnimator(settings: self.model.motionSettings)
         self.status.button?.target = self; self.status.button?.action = #selector(self.statusClicked)
         self.status.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         self.status.button?.setAccessibilityLabel(text("app.name"))
@@ -79,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #endif
         self.panel.level = .floating; self.panel.hidesOnDeactivate = false; self.panel.delegate = self
         self.panelMotion.visibilityChanged = { [weak self] in self?.model.panelVisibilityChanged($0) }
-        (self.panel as? MimicPopover)?.dismiss = { [weak self] in self?.hidePanels(source: .keyboard) }
+        self.panel.dismiss = { [weak self] in self?.hidePanels(source: .keyboard) }
         self.buildPanel = BuildActivityPanel(model: self.model)
         self.buildPanel.anchor = { [weak self] in self?.panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame }
         self.activityPanel = BootstrapActivityPanel(model: self.model)
@@ -108,6 +110,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.model.showQuickActivity = { [weak self] in self?.showQuickActivity() }
         self.model.stateChanged = { [weak self] in self?.updateStatus() }
         self.model.afterStopped = { [weak self] in self?.allowExit = true; NSApp.reply(toApplicationShouldTerminate: true) }
+        let branchWorkspaces = XcodeBranchWorkspaces()
+        self.model.branchSwitch.prepareCheckout = { try await branchWorkspaces.prepare($0) }
+        self.model.branchSwitch.restoreCheckout = { try await branchWorkspaces.restore($0) }
+        Task { [weak self] in
+            guard let self, branchWorkspaces.hasPending else { return }
+            await self.model.branchSwitch.restoreCompletedPresentation()
+        }
         let integration = MimicIntegration(model: self.model)
         integration.developmentExit = { NSApp.terminate(nil) }
         self.model.integration = integration
@@ -156,10 +165,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func updateStatus() {
         self.activityPanel?.update()
         self.buildPanel?.update()
-        let marker: StatusIcon.Marker = self.model.bootstrapIsBlocked ? .paused : self.model.unreadFailure ? .failed : .none
+        let activity = StatusIconActivity(model: self.model)
         if let button = self.status.button {
-            let health = text(self.model.bootstrapIsBlocked ? "bootstrap.xcode.waiting" : (self.model.busy || self.model.analysis.isActive) ? "status.running" : self.model.unreadFailure ? "status.failed" : "status.idle")
-            AIUsageStatusPresentation.apply(button: button, usage: self.model.aiUsage, marker: marker, health: health)
+            let health = text(activity.healthKey)
+            self.statusIconAnimator.update(button: button, working: activity.working, marker: activity.marker)
+            AIUsageStatusPresentation.apply(button: button, usage: self.model.aiUsage, marker: activity.marker, health: health, icon: self.statusIconAnimator.image)
         }
     }
 
@@ -169,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// Route deactivation through the same visibility owner instead of AppKit ordering out behind it.
-    func applicationDidResignActive(_: Notification) { self.hidePanels(source: .automatic); expressMenu.close(returnFocus: false) }
+    func applicationDidResignActive(_: Notification) { self.hidePanelsForExternalInteraction(source: .automatic); expressMenu.close(returnFocus: false) }
 
     // MARK: - Status item and anchored panels
 
@@ -272,6 +282,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.panelMotion.setVisible(false, source: source)
     }
 
+    /// Keep the editor and draft available while the user retrieves a value from another window.
+    private func hidePanelsForExternalInteraction(source: MimicMotionSource) {
+        guard !self.panel.hasActiveTextInput else { return }
+        self.hidePanels(source: source)
+    }
+
     private func installClickMonitors() {
         // Hosting views may consume cancelOperation; the panel owns Escape even during a fade.
         self.keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -290,11 +306,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         self.clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            Task { @MainActor in self?.hidePanels(source: .pointer) }
+            Task { @MainActor in self?.hidePanelsForExternalInteraction(source: .pointer) }
         }
         self.localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self else { return event }
-            if event.window !== self.panel, event.window !== self.activityPanel.window, event.window !== self.status.button?.window, !AIUsageTrendPopoverController.owns(event.window), !NativeRetroPopupRegistry.owns(event.window) { self.hidePanels() }
+            self.panel.releaseTextInputFocus(for: event)
+            if event.window !== self.panel, event.window !== self.activityPanel.window, event.window !== self.status.button?.window, !AIUsageTrendPopoverController.owns(event.window), !NativeRetroPopupRegistry.owns(event.window) { self.hidePanelsForExternalInteraction(source: .pointer) }
             return event
         }
     }
@@ -360,6 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_: Notification) {
+        self.statusIconAnimator?.stop()
         self.model.aiUsage.stop()
         expressMenu.close(returnFocus: false)
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
@@ -377,6 +395,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 /// Escape dismisses the menu without changing any task's lifetime.
 final class MimicPopover: NSPanel {
     var dismiss: (() -> Void)?
+    /// A window retains its first responder when another app becomes active; key-window status is irrelevant.
+    /// Text fields (including secure fields) normally expose their shared NSTextView field editor here.
+    var hasActiveTextInput: Bool {
+        if let editor = self.firstResponder as? NSTextView { return editor.isEditable && editor.window === self }
+        if let field = self.firstResponder as? NSTextField { return field.isEditable && field.isEnabled && field.window === self }
+        return false
+    }
+
+    /// SwiftUI backgrounds and buttons do not consistently end AppKit field editing themselves.
+    /// Only clicks inside this panel release input; external clicks keep the copy-and-return workflow.
+    func releaseTextInputFocus(for event: NSEvent) {
+        guard event.window === self, event.type == .leftMouseDown || event.type == .rightMouseDown,
+              self.hasActiveTextInput, let root = self.contentView else { return }
+        let point = root.convert(event.locationInWindow, from: nil)
+        guard root.bounds.contains(point) else { return }
+        // hitTest expects the receiver's superview coordinates, including for flipped hosting views.
+        let hitPoint = root.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
+        var target = root.hitTest(hitPoint)
+        while let view = target {
+            if let field = view as? NSTextField, field.isEditable && field.isEnabled { return }
+            if let editor = view as? NSTextView, editor.isEditable { return }
+            if view is NSScroller { return }
+            target = view.superview
+        }
+        self.makeFirstResponder(nil)
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func cancelOperation(_ sender: Any?) { self.dismiss?() }

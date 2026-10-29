@@ -73,6 +73,9 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 .panel-block[data-block="ci"]{position:relative;overflow:hidden}
 .panel-block[data-block="ci"]>.block-title .block-name{flex:0 0 auto}
 .ci-project{display:flex;min-width:0;color:var(--muted);font-size:11px;font-weight:400;align-self:center}
+.ci-setup{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0}
+.ci-setup p{margin:0;color:var(--muted);overflow-wrap:anywhere}
+.ci-setup button{min-height:32px;flex:none}
 .ci-runs{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;margin-top:6px;overflow:visible}
 .ci-runs.ci-two-runs{grid-template-columns:repeat(2,minmax(0,1fr));position:relative}
 .ci-two-runs::after{content:"";position:absolute;width:1px;top:0;bottom:0;left:50%;background:var(--line);pointer-events:none}
@@ -403,6 +406,7 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 .build-card-controls[data-mode]:not([data-mode=extended]) .build-parameter-summary{min-height:0;padding:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .build-card-controls[data-mode=full] .build-full-controls>.quiet{min-height:0;padding:0}
 .build-card-controls .build-progress{flex:none}
+.build-card-controls .build-resource-reason{font-size:calc(11px * var(--bootstrap-text-scale,1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 
 /* Direct movement stays unsmoothed; only neighbour reflow uses the drag token. */
 :root{--motion-drag-geometry:160ms}.panel-grid.drag-active{--motion-geometry:var(--motion-drag-geometry)}
@@ -463,6 +467,15 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 .build-catalogue-progress .build-catalogue-counter{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}
 .build-catalogue-progress .build-phase{gap:8px}
 
+/* Origin/local markers follow approved Figma variant 3; labels also expose provenance without color. */
+.chrome-branch-options{display:flex;flex-direction:column;max-height:260px;overflow-y:auto;min-width:0}
+.panel-chrome button.chrome-branch-option{display:flex;align-items:center;gap:8px;min-width:0;width:100%;text-align:left;border:0;background:transparent;padding:9px 10px}
+.chrome-branch-marker{flex:0 0 6px;width:6px;height:6px;border-radius:50%;background:var(--mimic-branchLocal)}
+.chrome-branch-marker[data-source=origin]{background:var(--mimic-branchOrigin)}
+.chrome-branch-option-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace}
+.chrome-branch-source{flex-shrink:0;color:var(--muted);font-size:.846154rem}
+.panel-chrome button.chrome-branch-option:hover,.panel-chrome button.chrome-branch-option[aria-selected=true]{background:var(--mimic-accentSoft)}
+.panel-chrome button.chrome-branch-option:focus-visible{outline:2px solid var(--mimic-accent);outline-offset:-2px}
 /* Build B: the shared title stays in the grid; compact controls fill the remaining tile height. */
 .build-card-controls [hidden],.build-popover [hidden]{display:none!important}
 .build-card-controls[data-mode]:not([data-mode=extended]){gap:0;justify-content:center;height:100%;min-height:0}
@@ -489,3 +502,87 @@ main{max-width:520px;padding:16px}.panel-grid{position:relative;gap:12px;isolati
 .build-card-controls[data-mode=extended] .build-settings-fields label,.build-card-controls[data-mode=extended] .build-test-picker>label{display:grid;grid-template-columns:108px minmax(0,1fr);align-items:center;gap:12px;color:var(--muted)}
 .build-card-controls[data-mode=extended] .build-settings-fields select,.build-card-controls[data-mode=extended] .build-test-picker select{color:var(--color-text-primary,var(--mimic-ink,#232323));width:100%;min-width:0}
 .build-test-picker{border-top:1px solid var(--line);padding-top:16px}
+
+/* Approved CI R5: a shared header, two bounded columns, independent GitLab actions. */
+:root .panel-block[data-block="ci"]{padding:12px;gap:4px}
+:root .panel-block[data-block="ci"]>.block-title{min-height:20px;margin:0;flex:none;align-items:center}
+:root .panel-block[data-block="ci"] .block-name{flex:0 1 auto;white-space:nowrap;-webkit-line-clamp:1}
+.ci-account{max-width:110px;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--muted);font-size:11px;font-weight:400}
+:root .ci-runs{gap:12px;margin:0;overflow:visible;align-items:start}
+:root .ci-two-runs::after{display:none}
+.ci-run-card{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:0;height:100%;padding:8px;border-radius:10px}
+.ci-two-runs>.ci-run-card{background:var(--mimic-paper)}
+:root .ci-run{flex:none;min-height:0;display:block;width:100%;padding:0;border:0;background:transparent;border-radius:4px;text-align:left;font-weight:400}
+:root .ci-run>.ci-compact{height:auto;gap:2px}
+:root .ci-runs .ci-run-heading{height:19px;align-items:center}
+:root .ci-runs .ci-run-id{font-size:13px;font-weight:600;color:var(--mimic-ink)}
+:root .ci-runs .ci-compact-branch{height:17px;line-height:17px;font-family:ui-monospace,monospace}
+:root .ci-runs .ci-run-footer{margin:0;gap:2px}
+:root .ci-runs .ci-progress-group{height:4px;flex-direction:row;align-items:center;gap:6px}
+:root .ci-runs .ci-compact-progress{height:4px;flex:1;min-width:0}
+:root .ci-runs .ci-compact-timing{height:16px;line-height:16px}
+.ci-progress-caption{display:flex;align-items:center;gap:8px;min-width:0}
+.ci-progress-caption .ci-compact-current{flex:1;min-width:0}
+.ci-progress-caption .ci-compact-count{margin-left:auto;color:var(--muted);flex:none}
+:root .ci-runs .ci-progress-caption{height:16px;line-height:16px}
+:root .ci-runs .ci-compact-current{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted)}
+:root .ci-runs .ci-run .ci-compact-timing{display:none}
+.ci-compact-count[hidden],.ci-compact-current[hidden],.ci-progress-group[hidden]{display:none!important}
+/* Spare height belongs above the footer, never between the branch and timing. */
+.ci-context-row{height:28px;flex:none;display:flex;align-items:center;gap:4px;min-width:0;margin-top:auto}
+.ci-context-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11px;line-height:16px}
+.ci-gitlab{display:flex;align-items:center;justify-content:center;flex:0 0 28px;width:28px;height:28px;border-radius:8px;color:var(--muted)}
+.ci-gitlab svg{display:block;width:18px;height:18px;pointer-events:none}
+.ci-gitlab:focus-visible{outline:2px solid var(--accent);outline-offset:0}
+@media(hover:hover) and (pointer:fine){.ci-run-card:hover,.ci-gitlab:hover{background:var(--mimic-accentSoft)}}
+:root[data-large-text=true] .ci-runs .ci-run-card{gap:4px}
+:root[data-large-text=true] .ci-runs :is(.ci-run-heading,.ci-compact-branch,.ci-compact-timing){height:auto;min-height:1.4rem;line-height:1.4}
+:root[data-large-text=true] .ci-runs :is(.ci-run-id,.ci-context-label,.ci-account){font-size:1rem}
+:root[data-large-text=true] .ci-context-row{height:32px}
+
+.ci-launch-sections{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.ci-launch-section .tool-choice{display:flex;justify-content:space-between;width:100%;text-align:left;min-height:28px;border:0;background:transparent}
+.ci-launch-form{padding:8px;background:var(--mimic-paper);border-radius:10px}
+.ci-branch-trigger{width:100%;min-height:32px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ci-branch-popover{position:fixed;margin:0;width:min(360px,calc(100vw - 32px));max-height:min(340px,calc(100vh - 32px));padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--mimic-ink);box-shadow:0 8px 30px #0002}
+.ci-branch-popover input{width:100%}.ci-branch-results{max-height:240px;overflow:auto;margin-top:8px}
+.ci-branch-option{display:block;width:100%;min-height:32px;text-align:left;border:0;background:transparent;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace}
+.ci-branch-option:hover,.ci-branch-option[aria-pressed=true]{background:var(--mimic-accentSoft)}
+.ci-branch-option:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.ci-skeleton{display:flex;flex-direction:column;gap:10px;padding:8px 0;overflow:hidden}
+.ci-skeleton span{height:12px;position:relative;overflow:hidden;border-radius:4px;background:color-mix(in srgb,CanvasText 10%,transparent)}
+.ci-skeleton span:nth-child(2){width:75%}
+.ci-skeleton span::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,color-mix(in srgb,CanvasText 6%,transparent),transparent);transform:translateX(-100%);animation:ci-shimmer 1.4s linear infinite}
+@keyframes ci-shimmer{to{transform:translateX(100%)}}
+@media(prefers-reduced-motion:reduce){.ci-skeleton span::after{animation:none;display:none}}
+.panel-block:not(.expanded) .ci-inspection .ci-skeleton span::after{animation:none}
+.ci-inspection-body h4{font-size:11px;color:var(--muted);margin:8px 0 4px}
+.ci-inspection-body details{margin-top:12px}.ci-inspection-body summary{cursor:pointer;min-height:28px;font-size:11px}
+.ci-run-choices{display:flex;flex-direction:column;gap:8px}
+.ci-history-choice{display:flex;align-items:center;gap:8px;min-width:0;padding:8px;background:var(--mimic-paper);border-radius:10px}
+.ci-history-choice>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.ci-history-choice>button,.ci-disclosure{flex:none;width:28px;height:28px;min-height:28px;padding:0;border:0;background:transparent}
+@media(hover:hover) and (pointer:fine){.ci-history-choice:hover{background:var(--mimic-accentSoft)}}
+
+.panel-block .ci-loading{display:block;overflow:hidden}
+.ci-initiator{font-size:11px;color:var(--muted);margin-top:4px}
+
+/* The approved analysis action shares one footer baseline with timing and GitLab. */
+.ci-run-card{position:relative}
+:root .ci-context-row .ci-compact-timing{height:auto;min-width:0;flex:1;justify-content:flex-start;gap:8px}
+.ci-context-row .ci-compact-start{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.ci-context-row .ci-compact-elapsed{flex:none}
+:root .ci-context-row > button.ci-ai{display:flex;align-items:center;justify-content:center;gap:4px;flex:0 0 84px;width:84px;height:28px;min-height:28px;padding:0;border:0;border-radius:10px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);font-size:11px;font-weight:600;white-space:nowrap}
+.ci-ai svg{width:14px;height:14px;flex:none;pointer-events:none}
+.ci-ai:focus-visible{outline:2px solid var(--accent);outline-offset:0}
+.ci-ai:active{opacity:.75}
+@media(hover:hover) and (pointer:fine){:root .ci-context-row > button.ci-ai:hover{background:color-mix(in srgb,var(--accent) 20%,transparent)}}
+.ci-ai-message{position:absolute;z-index:5;right:8px;bottom:36px;max-width:calc(100% - 16px);padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--mimic-ink);box-shadow:0 4px 16px #0002;font-size:11px;overflow-wrap:anywhere}
+:root[data-large-text=true] .ci-runs .ci-progress-caption{height:auto;min-height:1.4rem}
+:root[data-large-text=true] .ci-context-row > button.ci-ai{width:auto;flex-basis:auto;min-width:100px;height:32px;padding:0 6px}
+
+/* CI workflow V1: one bounded context line keeps cancel available in every compact size. */
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-work-progress{gap:3px}
+.build-card-controls[data-mode]:not([data-mode=extended]) .build-current-work{gap:4px}
+.build-work-context,.build-case-coverage{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.build-work-context,.build-case-coverage{font-variant-numeric:tabular-nums}

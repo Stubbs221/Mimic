@@ -48,6 +48,9 @@ import MimicCore
     private var catalogueQueries: [UUID: CatalogueQuery] = [:]
     /// Connection bindings never enter the durable Codex workspace store.
     var clientCheckouts: [String: String] = [:]
+    var ciEvidenceQueries: [UUID: (owner: String?, snapshot: CIAnalysisSnapshot, task: Task<CIEvidence, Error>)] = [:]
+    var ciEvidenceResults: [UUID: Result<CIEvidence, Error>] = [:]
+    var artifactQueries: [String: Task<TestArtifactCatalogue, Error>] = [:]
     var agentSelections: [UUID: VerifiedTestSelection] = [:]
     var cleanupPreviews: [UUID: AgentCleanupPreview] = [:]
     var cleanupLedger: [String: BridgeValue] = [:]
@@ -110,6 +113,7 @@ import MimicCore
                 return .init(id: request.id, error: "branchSwitch", message: message)
             }
             catch let error as AtlassianError { return .init(id: request.id, error: error.rawValue, message: text("work.error." + error.rawValue)) }
+            catch let error as WorkflowFieldError { return .init(id: request.id, result: error.payload, error: error.code, message: text("build.error." + error.code)) }
             catch let error as BuildError { return .init(id: request.id, error: error.rawValue, message: text("build.error." + error.rawValue)) }
             catch let error as AppleSimulatorError { let code = String(describing: error); return .init(id: request.id, error: code, message: text("simulator.error." + code)) }
             catch let error as JenkinsConnectionError { return .init(id: request.id, error: error.localizationKey, message: text(error.localizationKey)) }
@@ -174,7 +178,12 @@ import MimicCore
     static func compactCI(_ summary: CICompactSummary?) -> BridgeValue {
         guard let summary else { return .null }
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
-        return (try? JSONDecoder().decode(BridgeValue.self, from: encoder.encode(summary))) ?? .null
+        guard var value = (try? JSONDecoder().decode(BridgeValue.self, from: encoder.encode(summary)))?.object else { return .null }
+        if summary.canAnalyze {
+            let snapshot = CIAnalysisSnapshot(summary: summary)
+            value["analysisPrompt"] = .string(snapshot.prompt(fragment: snapshot.text, comment: ""))
+        }
+        return .object(value)
     }
 
     private func state(threadID: String? = nil, includeAppearance: Bool = false, includeCodexAppearance: Bool = false) -> BridgeValue {
@@ -184,6 +193,7 @@ import MimicCore
         let ciContext = current.flatMap { project in self.model.ciSettings.connection(forCheckout: project.path, services: self.model.activeProfile?.profile.services).map { CIContext(project: project, connection: $0) } }
         let ciSummaries = threadID.map { self.model.ciMonitor.heartbeatSummaries(threadID: $0, context: ciContext) } ?? self.model.ci.compactSummaries
         let ciSummary = ciSummaries.first
+        let ciState = ciContext.flatMap { self.model.ciMonitor.state(for: $0) }
         let definitions = self.model.activeProfile?.profile.actions.filter { $0.allowsMCP } ?? []
         let actions: [BridgeValue] = definitions.map { .object(["id": .string($0.id), "title": .string($0.title), "presentation": .string($0.presentation.rawValue), "remote": .bool($0.remote != nil), "parameters": (try? BridgeValue.encode($0.parameters)) ?? .array([])]) }
         let simulatorQueue = model.simulatorScreen.records.filter { $0.status.isPending || $0.holdsQueue }.map { record -> BridgeValue in
@@ -192,7 +202,7 @@ import MimicCore
             item["title"] = .string(text("panel.block.simulators"))
             return .object(item)
         }
-        var fields: [String: BridgeValue] = ["branchRebase": .bool(current.map { model.branchSwitch.rebaseEnabled(path: $0.path) } ?? false), "branchSwitch": current.flatMap { model.branchSwitch.latest(path: $0.path) }.map(Self.branchMetadata) ?? .null, "checkoutLocked": .bool(model.switchingBranch), "toolsPreferences": (try? BridgeValue.encode(model.toolsPreferences.value)) ?? .null, "ciSummaries": .array(ciSummaries.map { Self.compactCI($0) }), "ciSummary": Self.compactCI(ciSummary), "notices": .array(current.map { notifications.poll(checkout: $0.path) } ?? []), "layout": (try? BridgeValue.encode(layoutStore.prepareForPresentation(.codex))) ?? .null, "workspace": threadID.flatMap { try? BridgeValue.encode(workspaceStore.load($0)) } ?? .null, "needsBinding": .bool(threadID != nil && current == nil), "queue": .array(self.model.records.filter { $0.status == .running || $0.status == .queued }.map(self.task) + self.model.builds.records.filter { $0.status == .running || $0.status == .queued || $0.status == .preparing }.map(BuildBridge.summary) + simulatorQueue), "simulator": self.model.simulatorScreen.viewerMetadata(thread: threadID, project: current), "context": current.map { Self.context($0, profile: self.model.activeProfile) } ?? .null, "version": .number(3), "profile": (try? BridgeValue.encode(self.model.activeProfile.map { ["id": $0.id, "revision": $0.revision, "title": $0.profile.title] })) ?? .null, "interface": (try? BridgeValue.encode(self.model.activeProfile?.profile.interface.map { interface in ProfileInterface(version: interface.version, bindings: interface.bindings.filter { binding in definitions.contains { $0.id == binding.actionID } }, toolTitles: interface.toolTitles, generatorTitles: interface.generatorTitles, toolDescriptions: interface.toolDescriptions, toolEffects: interface.toolEffects, generatorDescriptions: interface.generatorDescriptions) })) ?? .null, "actions": .array(actions), "builds": .array(self.model.builds.records.filter { current == nil ? threadID == nil : $0.project.path == current?.path }.suffix(100).reversed().map(BuildBridge.summary)), "tasks": .array(self.model.records.filter { current == nil ? threadID == nil : $0.project.path == current?.path }.suffix(100).reversed().map(self.task)), "runs": .array(self.model.profileRemote.runs.filter { current == nil ? threadID == nil : $0.checkout.path == current?.path }.prefix(100).map(self.profileRemoteSummary)), "jenkinsConfigured": .bool(self.model.jenkinsSettings.connection != nil), "progress": .string(self.model.branchSwitch.active.map { text("branch.phase." + $0.phase.rawValue) } ?? (self.model.bootstrapIsBlocked ? text("bootstrap.xcode.waiting") : self.model.busy ? text("status.running") : text("status.idle")))]
+        var fields: [String: BridgeValue] = ["branchRebase": .bool(current.map { model.branchSwitch.rebaseEnabled(path: $0.path) } ?? false), "branchSwitch": current.flatMap { model.branchSwitch.latest(path: $0.path) }.map(Self.branchMetadata) ?? .null, "checkoutLocked": .bool(model.switchingBranch), "toolsPreferences": (try? BridgeValue.encode(model.toolsPreferences.value)) ?? .null, "ciSummaries": .array(ciSummaries.map { Self.compactCI($0) }), "ciSummary": Self.compactCI(ciSummary), "notices": .array(current.map { notifications.poll(checkout: $0.path) } ?? []), "layout": (try? BridgeValue.encode(layoutStore.prepareForPresentation(.codex))) ?? .null, "workspace": threadID.flatMap { try? BridgeValue.encode(workspaceStore.load($0)) } ?? .null, "needsBinding": .bool(threadID != nil && current == nil), "queue": .array(self.model.records.filter { $0.status == .running || $0.status == .queued }.map(self.task) + self.model.builds.records.filter { $0.status == .running || $0.status == .queued || $0.status == .preparing }.map { BuildBridge.summary(self.model.builds.presentation($0)) } + simulatorQueue), "simulator": self.model.simulatorScreen.viewerMetadata(thread: threadID, project: current), "context": current.map { Self.context($0, profile: self.model.activeProfile) } ?? .null, "version": .number(3), "profile": (try? BridgeValue.encode(self.model.activeProfile.map { ["id": $0.id, "revision": $0.revision, "title": $0.profile.title] })) ?? .null, "interface": (try? BridgeValue.encode(self.model.activeProfile?.profile.interface.map { interface in ProfileInterface(version: interface.version, bindings: interface.bindings.filter { binding in definitions.contains { $0.id == binding.actionID } }, toolTitles: interface.toolTitles, generatorTitles: interface.generatorTitles, toolDescriptions: interface.toolDescriptions, toolEffects: interface.toolEffects, generatorDescriptions: interface.generatorDescriptions) })) ?? .null, "actions": .array(actions), "builds": .array(self.model.builds.records.filter { current == nil ? threadID == nil : $0.project.path == current?.path }.suffix(100).reversed().map { BuildBridge.summary(self.model.builds.presentation($0)) }), "tasks": .array(self.model.records.filter { current == nil ? threadID == nil : $0.project.path == current?.path }.suffix(100).reversed().map(self.task)), "runs": .array(self.model.profileRemote.runs.filter { current == nil ? threadID == nil : $0.checkout.path == current?.path }.prefix(100).map(self.profileRemoteSummary)), "jenkinsConfigured": .bool(self.model.jenkinsSettings.connection != nil), "progress": .string(self.model.branchSwitch.active.map { text("branch.phase." + $0.phase.rawValue) } ?? (self.model.bootstrapIsBlocked ? text("bootstrap.xcode.waiting") : self.model.busy ? text("status.running") : text("status.idle")))]
         if includeAppearance || includeCodexAppearance {
             let card = current.flatMap { model.builds.panelActivity(project: $0) }
             fields["buildCardActivityID"] = card.map { .string($0.id.uuidString) } ?? .null
@@ -206,6 +216,10 @@ import MimicCore
         }
         let services = model.activeProfile?.profile.serviceTools?.filter { tool in current.map { tool.matches($0.path) } ?? false } ?? []
         if let profile = model.activeProfile, let current { fields["layout"] = try? BridgeValue.encode(layoutStore.introduceServiceTools(services, profileID: profile.id, checkout: current.path, surface: .codex)) }
+        fields["ciConfigured"] = .bool(ciContext != nil)
+        fields["ciLoading"] = .bool(ciState?.loading == true && ciState?.loadedAt == nil)
+        fields["ciAccount"] = ciState?.user.map { .string($0.username) } ?? .null
+        fields["ciScopeID"] = ciContext.map { .string($0.connection.id.uuidString + ":" + String($0.connection.projectID) + ":" + (ciState?.user.map { String($0.id) } ?? "unknown")) } ?? .null
         fields["serviceToolCatalog"] = .array(services.filter(\.mcpAllowed).map { .object(["id": .string($0.id), "title": .string($0.title)]) })
         fields["serviceTools"] = .array(services.map { tool in
             var value = tool.catalog.object ?? [:]; value["block"] = .string(tool.block(profileID: model.activeProfile!.id).rawValue); return .object(value)
@@ -253,6 +267,10 @@ import MimicCore
             guard request.method != "open_panel", !PanelBridge.appTools.contains(request.method),
                   !(BranchSwitchBridge.tools + BranchSwitchBridge.appTools + SimulatorBridge.appTools).contains(request.method) else { throw failure("arguments") }
             return try await handle(.init(method: request.method, parameters: request.parameters, id: request.id, version: request.version, threadID: identity, presentationMetadataVersion: request.presentationMetadataVersion, clientName: request.clientName, helperIdentity: request.helperIdentity))
+        }
+        if let helper = request.helperIdentity, helper.toolSchemaRevision != AgentWorkflow.schemaRevision,
+           AgentWorkflow.mutations.contains(request.method) || ["build_project", "run_selected_tests", "cli_build_project", "cli_run_selected_tests", "cancel_build_activity"].contains(request.method) {
+            return .object(["status": .string("blocked"), "code": .string("incompatibleToolSchema"), "delivery": AgentWorkflow.delivery(helper)])
         }
         if (ServiceToolBridge.tools + ServiceToolBridge.appTools).contains(request.method) {
             guard !model.updateReserved || !["run_service_tool_action", "panel_service_run", "panel_service_save"].contains(request.method) else { throw failure("updating") }
@@ -306,8 +324,8 @@ import MimicCore
         self.activeRequests += 1
         defer { self.activeRequests -= 1 }
         if (SimulatorBridge.tools + SimulatorBridge.appTools + ["refresh_simulator_screen"]).contains(request.method) { return try await simulatorRequest(request) }
-        if AgentWorkflow.tools.contains(request.method) { return try await agentRequest(request) }
-        if BuildBridge.tools.contains(request.method) || ["get_build_log", "cli_build_project", "cli_run_selected_tests"].contains(request.method) { return try await buildRequest(request) }
+        if AgentWorkflow.tools.contains(request.method) { do { return try await agentRequest(request) } catch let error as WorkflowFieldError { return error.payload } }
+        if BuildBridge.tools.contains(request.method) || ["get_build_log", "cli_build_project", "cli_run_selected_tests"].contains(request.method) { do { return try await buildRequest(request) } catch let error as WorkflowFieldError { return error.payload } }
         let p = request.parameters
         if let method = ["preview_generator": "panel_preview_generator", "get_generator_preview": "panel_get_preview", "generate_files": "panel_generate"][request.method] {
             return try await panelRequest(.init(method: method, parameters: p, threadID: request.threadID))
@@ -315,7 +333,7 @@ import MimicCore
         if BranchSwitchBridge.tools.contains(request.method) { return try await branchRequest(request) }
         if BranchSwitchBridge.appTools.contains(request.method) { return try await panelBranchRequest(request) }
         if PanelBridge.appTools.contains(request.method) { return try await panelRequest(request) }
-        if request.method == "open_native_task", Set(p.keys) == ["taskID"], let id = p["taskID"]?.string.flatMap(UUID.init(uuidString:)), let record = model.builds.records.first(where: { $0.id == id }), canAccess(record.project, threadID: request.threadID) { model.showBuildResult(id); return BuildBridge.metadata(record) }
+        if request.method == "open_native_task", Set(p.keys) == ["taskID"], let id = p["taskID"]?.string.flatMap(UUID.init(uuidString:)), let record = model.builds.records.first(where: { $0.id == id }), canAccess(record.project, threadID: request.threadID) { model.showBuildResult(id); return BuildBridge.metadata(model.builds.presentation(record)) }
         let allowed: [String: Set<String>] = ["open_panel": ["checkout"], "bind_project": ["checkout"], "get_state": [], "get_task": ["taskID"], "get_task_diagnostic": ["taskID"], "cancel_local_task": ["taskID"], "open_native_task": ["taskID"], "list_remote_branches": ["query"], "run_local_action": ["actionID", "parameters", "context", "requestID"], "run_remote_action": ["actionID", "parameters", "context", "requestID"], "get_remote_run": ["runID"], "get_action_configuration": ["actionID"]]
         guard let keys = allowed[request.method], Set(p.keys).isSubset(of: keys), (["list_remote_branches", "open_panel"].contains(request.method) || Set(p.keys) == keys) else { throw self.failure("arguments") }
         switch request.method {
@@ -516,6 +534,13 @@ extension MimicIntegration {
         if let blocker = model.builds.readinessBlocker(project: project, parameters: parameters, simulatorConfirmed: confirmed) {
             return response("blocked", blocker.rawValue)
         }
+        let resources = try await model.refreshBuildResources(project: project, platform: parameters.platform ?? .ios)
+        _ = try expected(p["context"] ?? .null, threadID: threadID)
+        if resources.blocking {
+            var fields = response("blocked", "resourcesRequired").object ?? [:]
+            fields["resources"] = model.buildResourceMetadata(project: project, platform: parameters.platform ?? .ios, state: resources)
+            return .object(fields)
+        }
         let preparation = await model.preparationState(project: project, platform: parameters.platform ?? .ios)
         if preparation["blocking"] == .bool(true) { return response("blocked", "preparationRequired") }
         let developer: String
@@ -566,14 +591,14 @@ extension MimicIntegration {
         case "get_build_configuration": keys = ["context", "scheme"]
         case "start_build_configuration": keys = ["context", "scheme", "includeTestPlans"]
         case "get_build_configuration_state": keys = ["queryID"]
-        case "build_project", "run_selected_tests": keys = ["context", "requestID", "parameters", "simulatorConfirmed", "workflowID"]
+        case "build_project", "run_selected_tests": keys = ["context", "requestID", "parameters", "simulatorConfirmed", "workflowID", "enqueue"]
         case "get_build_activity", "cancel_build_activity", "get_build_diagnostic", "get_build_result": keys = ["activityID"]
         case "wait_build_activity": keys = ["activityID", "afterRevision", "timeoutMs"]
         case "get_build_readiness": keys = ["context", "operation", "parameters", "configurationQueryID", "simulatorConfirmed"]
         case "get_build_log": keys = ["activityID", "cursor"]
         default: throw BuildError.arguments
         }
-        let optional: Set<String> = method == "wait_build_activity" ? ["afterRevision", "timeoutMs"] : method == "get_build_readiness" ? ["configurationQueryID"] : ["build_project", "run_selected_tests"].contains(method) ? ["workflowID"] : []
+        let optional: Set<String> = method == "wait_build_activity" ? ["afterRevision", "timeoutMs"] : method == "get_build_readiness" ? ["configurationQueryID"] : ["build_project", "run_selected_tests"].contains(method) ? ["workflowID", "enqueue"] : []
         guard Set(p.keys).isSubset(of: keys), keys.subtracting(optional).isSubset(of: Set(p.keys)) else { throw BuildError.arguments }
         switch method {
         case "get_build_configuration", "start_build_configuration":
@@ -623,11 +648,12 @@ extension MimicIntegration {
             return .object(payload)
         case "get_build_readiness": return try await buildReadiness(p, threadID: threadID)
         case "build_project", "run_selected_tests":
+            guard p["enqueue"] == nil || p["enqueue"] == .bool(true) || p["enqueue"] == .bool(false) else { throw WorkflowFieldError("invalidBoolean", field: "enqueue") }
             guard let id = p["requestID"]?.string.flatMap(UUID.init(uuidString:)), case let .bool(confirmed) = p["simulatorConfirmed"] else { throw BuildError.arguments }
             let project = try self.expected(p["context"] ?? .null, threadID: threadID)
             let parameters = try BuildBridge.parameters(p["parameters"] ?? .null, operation: method == "build_project" ? .build : .test)
-            let record = try await model.builds.submit(id: id, project: project, parameters: parameters, source: request.method.hasPrefix("cli_") ? "Terminal" : request.clientName == "Claude Code" ? "Claude Code" : request.clientName == "MCP" ? "MCP" : "Codex", simulatorConfirmed: confirmed, workflowID: try workflowID(p["workflowID"]))
-            return BuildBridge.metadata(record)
+            let record = try await model.builds.submit(id: id, project: project, parameters: parameters, source: request.method.hasPrefix("cli_") ? "Terminal" : request.clientName == "Claude Code" ? "Claude Code" : request.clientName == "MCP" ? "MCP" : "Codex", simulatorConfirmed: confirmed, workflowID: try workflowID(p["workflowID"]), owner: threadID ?? (request.clientName == "Terminal" ? "terminal" : "desktop"), enqueue: p["enqueue"] == .bool(true))
+            return BuildBridge.metadata(model.builds.presentation(record))
         default:
             guard let id = p["activityID"]?.string.flatMap(UUID.init(uuidString:)), let record = model.builds.activity(id), canAccess(record.project, threadID: request.threadID) else { throw BuildError.notFound }
             if method == "wait_build_activity" {
@@ -635,21 +661,23 @@ extension MimicIntegration {
                       p["timeoutMs"] == nil || p["timeoutMs"]?.integer != nil else { throw BuildError.arguments }
                 let result = try await model.builds.waitForActivity(id, afterRevision: p["afterRevision"]?.integer, timeoutMs: p["timeoutMs"]?.integer ?? 25_000)
                 guard canAccess(result.activity.project, threadID: threadID) else { throw BuildError.notFound }
-                return .object(["activity": BuildBridge.metadata(result.activity), "timedOut": .bool(result.timedOut)])
+                return .object(["activity": BuildBridge.summary(model.builds.presentation(result.activity)), "timedOut": .bool(result.timedOut)])
             }
             if method == "get_build_result" {
-                let output = record.hasPrivateInput == true ? Data() : model.builds.output(id)
-                var result = await Task.detached { BuildResultReader.read(record: record, output: output) }.value
+                var result = try await model.builds.result(id)
                 let revision = try? await Task.detached { try SourceRevisionReader.capture(path: record.project.path, exclusions: record.sourceExclusions ?? []) }.value
                 result.sourceFreshness = revision == nil || record.sourceProvenance?.finished == nil ? "unknown" : revision == record.sourceProvenance?.finished ? "current" : "stale"
                 guard let current = model.builds.activity(id), canAccess(current.project, threadID: threadID), current.stateRevision == record.stateRevision else { throw BuildError.context }
                 var payload = try BridgeValue.encode(result).object ?? [:]
-                payload["activity"] = BuildBridge.metadata(current)
+                payload["diagnosticText"] = nil
+                payload["executions"] = nil
+                payload["verification"] = result.verification?.compactMetadata ?? .null
+                payload["activity"] = BuildBridge.summary(model.builds.presentation(current))
                 return .object(payload)
             }
             if method == "cancel_build_activity" {
                 guard record.canCancel else { throw BuildError.unsupported }; model.builds.cancel(id)
-                return model.builds.records.first(where: { $0.id == id }).map(BuildBridge.metadata) ?? BuildBridge.metadata(record)
+                return model.builds.records.first(where: { $0.id == id }).map(BuildBridge.metadata) ?? BuildBridge.metadata(model.builds.presentation(record))
             }
             if method == "get_build_diagnostic" {
                 let diagnostic = try model.builds.diagnosticPayload(id)
@@ -658,9 +686,9 @@ extension MimicIntegration {
             if method == "get_build_log" {
                 guard let cursor = p["cursor"]?.integer else { throw BuildError.arguments }
                 let slice = try model.builds.readLog(id, after: cursor)
-                return .object(["text": .string(slice.text), "nextCursor": .number(Double(slice.nextCursor)), "gap": .bool(slice.gap), "activity": BuildBridge.metadata(record)])
+                return .object(["text": .string(slice.text), "nextCursor": .number(Double(slice.nextCursor)), "gap": .bool(slice.gap), "activity": BuildBridge.metadata(model.builds.presentation(record))])
             }
-            return BuildBridge.metadata(record)
+            return BuildBridge.metadata(model.builds.presentation(record))
         }
     }
 }

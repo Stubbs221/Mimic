@@ -9,13 +9,14 @@ const {build}=require('esbuild');
 const {chromium}=require(process.env.MIMIC_PLAYWRIGHT_MODULE??'playwright');
 const sdk=`
 export class App {
- constructor(){window.fixtureApp=this;window.missing=['swiftformat'];window.calls=[];window.state={appearance:'tileGrid',needsBinding:false,context:{checkoutId:'/fixture/MobilePlatform',branch:'feature/infrastructure/dependency-registry-bootstrap-diagnostics',sha:'fixture',xcode:'/Applications/Xcode 27.0.app/Contents/Developer',appleTarget:null,profileID:null,profileRevision:null},actions:[{id:'format',title:'Format',parameters:[],presentation:'regular',remote:false}],interface:{version:1,bindings:[{role:'format',actionID:'format',fields:{}}]},tasks:[],runs:[],builds:[],queue:[],workspace:{drafts:location.pathname==='/restore'?{builds:{backend:'xcodeMCP',workspaceTab:'window',simulatorConfirmed:'true'}}:{}},jenkinsConfigured:false};}
+ constructor(){window.fixtureApp=this;window.missing=['swiftformat'];window.calls=[];window.buildDraft={operation:'build',backend:'cli',scheme:'',configuration:'Debug',destinationID:'',testPlan:'',testTarget:null,testIdentifiers:[],workspaceTab:''};window.state={appearance:'tileGrid',needsBinding:false,context:{checkoutId:'/fixture/MobilePlatform',branch:'feature/infrastructure/dependency-registry-bootstrap-diagnostics',sha:'fixture',xcode:'/Applications/Xcode 27.0.app/Contents/Developer',appleTarget:null,profileID:null,profileRevision:null},actions:[{id:'format',title:'Format',parameters:[],presentation:'regular',remote:false}],interface:{version:1,bindings:[{role:'format',actionID:'format',fields:{}}]},tasks:[],runs:[],builds:[],queue:[],workspace:{drafts:location.pathname==='/restore'?{builds:{backend:'xcodeMCP',workspaceTab:'window',simulatorConfirmed:'true'}}:{}},jenkinsConfigured:false};}
  async connect(){} getHostContext(){return {};} getHostCapabilities(){return {};}
  async callServerTool({name,arguments:args}){
   window.calls.push({name,args});let value={};
   if(name==='get_state')value=window.state;
+  if(name==='panel_build_control'){if(args.operation==='get')value={context:window.state.context,developerDirectory:window.state.context.xcode,draft:window.buildDraft};else if(args.operation==='resources')value={blocking:false};else if(args.operation==='save'){window.buildDraft=structuredClone(args.parameters);value={saved:true};}else value={id:'fixture-build'};}
   if(name==='panel_branches')value={branches:['develop','feature/test']};
-  if(name==='start_build_configuration')value={status:'ready',queryID:'q',result:{context:window.state.context,cli:{schemes:['Fixture','Other'],configurations:['Debug'],destinations:args.scheme?[{id:'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',name:'iPhone Fixture'}]:[],testPlans:['Smoke']},xcode:{workspaces:{window:'Fixture.xcworkspace'}}}};
+  if(name==='start_build_configuration')value={status:'ready',queryID:'q',result:{context:window.state.context,cli:{schemes:['Fixture','Other'],configurations:['Debug'],destinations:args.scheme?[{id:'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA',name:'iPhone Fixture'}]:[],testPlans:['Smoke'],testTargets:[{name:'FixtureTests',testPlan:'Smoke'}]},xcode:{workspaces:{window:'Fixture.xcworkspace'}}}};
   if(name==='panel_get_tool_configuration'&&window.deferConfiguration){const missing=[...window.missing];await new Promise(resolve=>window.resolveConfiguration=resolve);value={missing,command:'fixture-format'};return {content:[],_meta:{'mimic/private':value}};}
   if(name==='start_build_configuration'&&window.deferCatalogue)await new Promise(resolve=>window.resolveCatalogue=resolve);
   if(name==='panel_save_workspace')value=args.workspace;if(name==='panel_get_tool_configuration')value={missing:window.missing,command:'fixture-format'};
@@ -43,47 +44,41 @@ try{
  await page.goto(base+'/mock');await page.getByRole('button',{name:'Локальная ветка',exact:true}).waitFor();
  // The branch picker opens immediately and reuses its controls.
  await page.getByRole('button',{name:'Локальная ветка',exact:true}).click();
- await page.getByRole('combobox',{name:'Локальная ветка',exact:true}).waitFor();
+ await page.getByRole('listbox',{name:'Выбрать ветку',exact:true}).waitFor();
  assert.equal(await page.locator('[data-action=branch-switch]').count(),1);
  await page.getByRole('button',{name:'Локальная ветка',exact:true}).click();
  await page.getByRole('button',{name:'Локальная ветка',exact:true}).click();
- await page.getByRole('combobox',{name:'Локальная ветка',exact:true}).waitFor();
+ await page.getByRole('listbox',{name:'Выбрать ветку',exact:true}).waitFor();
  assert.equal(await page.locator('[data-action=branch-switch]').count(),1);
  await page.keyboard.press('Escape');
- // Scheme selection discovers destinations without a second manual load.
- await page.getByRole('button',{name:'Сборки',exact:true}).click();
- await page.getByRole('button',{name:'Получить параметры сборки',exact:true}).click();
- await page.locator('#build-scheme').selectOption('Fixture');
- await page.locator('#build-destinationID option[value="AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"]').waitFor({state:'attached'});
- assert.equal(await page.evaluate(()=>window.calls.filter(x=>x.name==='start_build_configuration').length),2);
- await page.locator('.build-form details summary').click();
- await page.locator('#build-configuration').selectOption('Debug');
- await page.locator('#build-destinationID').selectOption('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA');
- await page.locator('#build-testPlan').selectOption('Smoke');
- await page.getByRole('button',{name:'Сборка',exact:true}).click();
- await page.waitForFunction(()=>window.calls.some(x=>x.name==='build_project'));
- assert(!Object.hasOwn(await page.evaluate(()=>window.calls.find(x=>x.name==='build_project').args.parameters),'testPlan'));
- await page.locator('#build-testIdentifiers').fill('FixtureTests/Smoke/testExample');
- await page.getByRole('button',{name:'Выбранные тесты',exact:true}).click();
- await page.waitForFunction(()=>window.calls.some(x=>x.name==='run_selected_tests'));
- assert.equal(await page.evaluate(()=>window.calls.find(x=>x.name==='run_selected_tests').args.parameters.testPlan),'Smoke');
- // Xcode confirmation belongs to the current context, including restored drafts.
- await page.locator('.build-form select[aria-label="Исполнитель"]').selectOption('xcodeMCP');
- await page.locator('#build-workspaceTab').selectOption('window');
- await page.locator('#build-simulatorConfirmed').check();
- await page.evaluate(()=>{window.state.context={...window.state.context,branch:'feature/changed',sha:'changed'};window.fixtureApp.ontoolresult({structuredContent:window.state});});
- assert(!await page.locator('#build-simulatorConfirmed').isChecked());
- assert(!await page.getByRole('button',{name:'Сборка',exact:true}).isEnabled());
+ // Retained build controls use the native draft contract and explicit catalogue refresh.
+ await page.locator('[data-block="builds"] .block-title').click();
+ const buildCard=page.locator('[data-block="builds"]');
+ const queriesBeforeRefresh=await page.evaluate(()=>window.calls.filter(x=>x.name==='start_build_configuration').length);
+ await buildCard.locator('[data-catalogue-refresh]').click();
+ const scheme=buildCard.locator('select[data-build-field="scheme"]');await scheme.selectOption('Fixture');
+ const destination=buildCard.locator('select[data-build-field="destinationID"]');
+ await destination.locator('option[value="AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"]').waitFor({state:'attached'});
+ assert.equal(await page.evaluate(()=>window.calls.filter(x=>x.name==='start_build_configuration').length),queriesBeforeRefresh+2);
+ await destination.selectOption('AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA');
+ await buildCard.getByRole('tab').first().click();await buildCard.locator('[data-build-action="build"]').click();
+ await page.waitForFunction(()=>window.calls.some(x=>x.name==='panel_build_control'&&x.args.operation==='build'));
+ assert.equal(await page.evaluate(()=>window.calls.find(x=>x.name==='panel_build_control'&&x.args.operation==='build').args.parameters.testPlan),'');
+ await buildCard.getByRole('tab').last().click();await buildCard.locator('select[data-build-field="testTarget"]').selectOption('FixtureTests');
+ await buildCard.locator('[data-build-action="tests"]').click();
+ const testCall=await page.evaluate(()=>window.calls.find(x=>x.name==='panel_build_control'&&x.args.operation==='tests'));
+ assert.equal(testCall.args.parameters.testPlan,'Smoke');assert.equal(testCall.args.parameters.testTarget,'FixtureTests');assert.deepEqual(testCall.args.parameters.testIdentifiers,[]);
  // A catalogue reply from the previous checkout must not re-enable a build.
  await page.evaluate(()=>window.deferCatalogue=true);
- await page.getByRole('button',{name:'Получить параметры сборки',exact:true}).click();
- await page.waitForFunction(()=>!!window.resolveCatalogue);
- await page.evaluate(()=>{window.state.context={...window.state.context,sha:'newer'};window.fixtureApp.ontoolresult({structuredContent:window.state});window.resolveCatalogue();});
- await page.waitForFunction(()=>document.querySelector('#app > div').getAttribute('aria-busy')==='false');
- assert(!await page.getByRole('button',{name:'Сборка',exact:true}).isEnabled(),'late catalogue cannot enable the new context');
- assert.equal(await page.locator('#build-workspaceTab').inputValue(),'');
+ await buildCard.locator('[data-catalogue-refresh]').click();await page.waitForFunction(()=>!!window.resolveCatalogue);
+ await page.evaluate(()=>{window.previousCatalogueReply=window.resolveCatalogue;window.state.context={...window.state.context,sha:'newer'};window.fixtureApp.ontoolresult({structuredContent:window.state});});
+ await page.waitForFunction(()=>window.calls.some(x=>x.name==='start_build_configuration'&&x.args.context.sha==='newer'));
+ await page.evaluate(()=>window.previousCatalogueReply());
+ assert(!await buildCard.locator('[data-build-action="tests"]').isEnabled(),'late catalogue cannot enable the new context');
+ await page.evaluate(()=>{window.deferCatalogue=false;window.resolveCatalogue();});
+ await page.waitForFunction(()=>!document.querySelector('[data-catalogue-refresh]')?.disabled);
  // Manual refresh invalidates environment readiness and ignores older in-flight replies.
- await page.getByRole('button',{name:'Сборки',exact:true}).click();
+ await page.locator('[data-block="builds"] .block-title').click();
  await page.evaluate(()=>window.deferConfiguration=true);
  await page.getByRole('button',{name:'SwiftFormat Форматирование Swift-кода',exact:true}).click();
  await page.waitForFunction(()=>!!window.resolveConfiguration);
@@ -102,9 +97,6 @@ try{
  assert.equal(await page.locator('[data-branch-picker]').count(),1);
  assert(await page.locator('[data-branch-picker]').isVisible());
  assert(await page.locator('[data-branch-picker] button').isDisabled());
- // Restored confirmation is deliberately untrusted on a new panel connection.
- await page.goto(base+'/restore');await page.getByRole('button',{name:'Сборки',exact:true}).click();
- assert(!await page.locator('#build-simulatorConfirmed').isChecked(),'restored confirmation requires a fresh user check');
  // Switching from inline Bootstrap analysis to a build keeps the diagnostic visible.
  await page.goto(base+'/?preview=1');
  await page.getByRole('button',{name:'Передать ошибку агенту',exact:true}).click();
@@ -128,5 +120,5 @@ try{
   if(width<=360)await bootstrap.screenshot({path:`/private/tmp/Mimic-N2-${width}-${colorScheme}.png`});
  }
  assert.deepEqual(errors,[]);
- console.log('PASS: branch picker in both appearances, automatic destinations, build/test plan separation, confirmation reset/restore, stale catalogue, readiness refresh/late reply, Bootstrap → build diagnostics, N2 widths/themes/text containment');
+ console.log('PASS: branch picker in both appearances, automatic destinations, native build draft and target scope, stale catalogue, readiness refresh/late reply, Bootstrap → build diagnostics, N2 widths/themes/text containment');
 }finally{await browser.close();server.close();}

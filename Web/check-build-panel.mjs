@@ -31,7 +31,7 @@ try{
  await page.waitForFunction(()=>window.mimicBuildFixture.calls().length===1);
  const call=(await page.evaluate(()=>window.mimicBuildFixture.calls()))[0];assert.equal(call.operation,'tests');assert.equal(call.parameters.testTarget,'FixtureTests');assert.deepEqual(call.parameters.testIdentifiers,[]);assert.equal(call.parameters.backend,'cli');
  await task('running','compilation');assert(!await card.locator('[data-build-action=tests]').isVisible());assert(await card.getByRole('progressbar').isVisible());await fit();
- await task('succeeded');assert(await card.locator('[data-build-action=tests]').isVisible());assert(!await card.getByRole('progressbar').isVisible());
+ await task('succeeded');assert(await card.getByRole('progressbar').isVisible());await card.locator('[data-build-action=tests]').waitFor({state:'visible',timeout:7000});assert(!await card.getByRole('progressbar').isVisible());
  await task('failed');assert(await card.getByRole('progressbar').isVisible());assert(!await card.locator('[data-build-action=tests]').isVisible());
  await card.locator('.build-current-work').press('Enter');await page.waitForFunction(()=>document.querySelector('[data-block="builds"] [data-build-action=tests]')?.offsetParent!==null);
  assert(!await card.getByRole('progressbar').isVisible());

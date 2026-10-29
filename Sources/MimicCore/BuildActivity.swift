@@ -35,7 +35,7 @@ public struct BuildParameters: Codable, Equatable, Sendable {
     public func validate() throws {
         if intent != nil, operation != .build || backend != .cli && intent != .run { throw BuildError.arguments }
         let fields = [scheme, configuration, destinationID, testPlan, workspaceTab] + testIdentifiers + [testTarget].compactMap { $0 }
-        guard fields.allSatisfy({ $0.utf8.count <= 1024 && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }), testIdentifiers.count <= 100 else { throw BuildError.arguments }
+        guard fields.allSatisfy({ $0.utf8.count <= 1024 && !$0.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) }), testIdentifiers.count <= WorkflowContract.maximumMethods else { throw BuildError.arguments }
         if backend == .cli || intent == .run {
             guard !scheme.isEmpty, !configuration.isEmpty, UUID(uuidString: destinationID) != nil, workspaceTab.isEmpty else { throw BuildError.arguments }
         } else {
@@ -71,7 +71,7 @@ public struct BuildParameters: Codable, Equatable, Sendable {
 }
 
 public enum BuildError: String, Error, Sendable {
-    case xcodeAccess, xcodeBusy, debuggerUnavailable, sourceChanged, sourceUnavailable, preparationRequired, selectionExpired, arguments, testsRequired, context, unavailable, unsupported, catalogue, catalogueTimeout, catalogueProcess, catalogueResponse, configuration, duplicate, capacity, notFound, diagnostic, stopped
+    case selectionTooLargeForToolchain, busy, xcodeAccess, xcodeAutomationAccess, xcodeDebuggerAccess, xcodeConnection, xcodeBusy, debuggerUnavailable, sourceChanged, sourceUnavailable, preparationRequired, resourcesRequired, selectionExpired, arguments, testsRequired, context, unavailable, unsupported, catalogue, catalogueTimeout, catalogueProcess, catalogueResponse, configuration, duplicate, capacity, notFound, diagnostic, stopped
 }
 
 /// Execution and observation have separate states: a broken connection never proves build failure.
@@ -85,6 +85,19 @@ public struct BuildActivity: Codable, Identifiable, Sendable {
     public var requestedTestCases: [String: [String]]?
     public var selectionID: UUID?
     public var sourceExclusions: [String]?
+    public var queuePosition: Int?
+    public var workflowPendingCount: Int?
+    public var toolchainEnvironment: BridgeValue?
+    public var verificationSummary: BuildVerificationSummary?
+    public var buildInputFingerprint: BuildInputFingerprint?
+    public var catalogueReusedFrom: UUID?
+    public var catalogueCacheReason: String?
+    public var processOutcome: String?
+    public var cancellationOutcome: String?
+    public var owner: String?
+    public var enqueue: Bool?
+    public var stageStartedAt: Date?
+    public var stageDurations: [String: Double]?
     public var stage: BuildStage?
     public var completedStages: Int?
     public var products: [BuildProduct]?
@@ -163,7 +176,7 @@ public struct BuildCatalogue: Codable, Sendable {
         }
     }
     /// All child queries consume one absolute budget; a slow first query cannot restart the deadline.
-    static func inspect(project: ProjectContext, scheme: String, includeTestPlans: Bool, timeout: TimeInterval, baseCatalogue: Self? = nil, progress: ((BuildCatalogueProgress.Phase, Int, Int) -> Void)? = nil,
+    static func inspect(project: ProjectContext, scheme: String, includeTestPlans: Bool, timeout: TimeInterval, baseCatalogue: Self? = nil, configurations readConfigurations: (String) throws -> [String] = XcodeProjectConfigurations.load, progress: ((BuildCatalogueProgress.Phase, Int, Int) -> Void)? = nil,
                         capture run: ([String], [String: String], TimeInterval) throws -> (Int32, String)) throws -> Self {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         var env = EnvironmentInspector.environment(project: project)
@@ -171,7 +184,9 @@ public struct BuildCatalogue: Codable, Sendable {
         func capture(_ args: [String]) throws -> String {
             let remaining = deadline - ProcessInfo.processInfo.systemUptime
             guard remaining > 0 else { throw BuildError.catalogueTimeout }
-            let result = try run(args + ["-disableAutomaticPackageResolution", "-onlyUsePackageVersionsFromResolvedFile"], env, remaining)
+            // Pinned versions alone still allow remote refreshes. Metadata queries must stay
+            // offline and use system Git without Xcode's interactive source-control state.
+            let result = try run(args + ["-disableAutomaticPackageResolution", "-onlyUsePackageVersionsFromResolvedFile", "-skipPackageUpdates", "-scmProvider", "system"], env, remaining)
             guard result.0 != ReadOnlyProcess.timeoutExitCode, ProcessInfo.processInfo.systemUptime < deadline else { throw BuildError.catalogueTimeout }
             guard result.0 == 0 else { throw BuildError.catalogueProcess }
             return result.1
@@ -197,9 +212,14 @@ public struct BuildCatalogue: Codable, Sendable {
             value.schemes = schemes.sorted()
             guard let configurationPath = targetFlag == "-project" ? Optional(target.path) : target.configurationProject else { throw BuildError.configuration }
             if targetFlag != "-project" { finish(); begin(.configurations) }
-            let projectObject = targetFlag == "-project" ? json : try object(capture(["-list", "-json", "-project", try ProfileValidation.checkoutPath(configurationPath, root: project.path)]))
-            guard let configurations = (projectObject["project"] as? [String: Any])?["configurations"] as? [String], !configurations.isEmpty else { throw BuildError.catalogueResponse }
-            value.configurations = configurations.sorted()
+            if targetFlag == "-project" {
+                guard let configurations = (json["project"] as? [String: Any])?["configurations"] as? [String], !configurations.isEmpty else { throw BuildError.catalogueResponse }
+                value.configurations = configurations.sorted()
+            } else {
+                let path = try ProfileValidation.checkoutPath(configurationPath + "/project.pbxproj", root: project.path)
+                value.configurations = try readConfigurations(path)
+                guard !value.configurations.isEmpty else { throw BuildError.catalogueResponse }
+            }
             finish()
         }
         if !scheme.isEmpty {
@@ -271,7 +291,10 @@ public struct BuildHistoryStore: Sendable {
         let ids = Set(records.map { $0.id.uuidString }).union(retainedIDs)
         for url in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
             let name = url.lastPathComponent
-            let owner = name.hasSuffix("-DerivedData") ? String(name.dropLast("-DerivedData".count)) : name.hasSuffix(".tests.json") ? String(name.dropLast(".tests.json".count)) : ["log", "xcresult"].contains(url.pathExtension) ? url.deletingPathExtension().lastPathComponent : ""
+            let suffixes = ["-DerivedData", ".tests.json", ".result.json", ".selection.txt", "-Attachments"]
+            let owner: String
+            if let suffix = suffixes.first(where: { name.hasSuffix($0) }) { owner = String(name.dropLast(suffix.count)) }
+            else { owner = ["log", "xcresult"].contains(url.pathExtension) ? url.deletingPathExtension().lastPathComponent : "" }
             if UUID(uuidString: owner) != nil, !ids.contains(owner) { try FileManager.default.removeItem(at: url) }
         }
     }

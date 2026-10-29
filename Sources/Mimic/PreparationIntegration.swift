@@ -44,6 +44,7 @@ extension TaskCoordinator {
 
     /// Successful process completion is required; failed/interrupted/external operations cannot mint a receipt.
     func finishAgentMetadata(_ record: TaskRecord) async {
+        await finishBuildResourceRecovery(record)
         if let execution = record.profileExecution, execution.snapshot.profile.panel(forAction: execution.actionID) != nil { return }
         let after = try? await Task.detached { try GitActivitySnapshot.capture(path: record.project.path) }.value
         let changes = agentChangeSnapshots.removeValue(forKey: record.id).flatMap { before in after.map { before.changes(after: $0) } }

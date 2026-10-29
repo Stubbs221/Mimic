@@ -39,7 +39,7 @@ struct AIMimicIntegrationTests {
         #expect(session.fragment.contains("unique-diagnostic-marker")); #expect(!session.fragment.contains("fixture-only"))
         #expect(session.snapshot.project.branch == "original"); #expect(session.snapshot.project.commit == "original-sha")
         #expect(!model.diagnosticUnavailable(id: record.id)); #expect(model.replay(id: record.id).isEmpty)
-        for file in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) {
+        for file in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) where !file.hasDirectoryPath {
             let data = try Data(contentsOf: file)
             #expect(!String(decoding: data, as: UTF8.self).contains("unique-diagnostic-marker"))
         }
@@ -77,7 +77,8 @@ struct AIMimicIntegrationTests {
         defer { try? FileManager.default.removeItem(at: root); defaults.removePersistentDomain(forName: suite) }
         let runner = HoldingAIRunner(), analysis = AnalysisCoordinator(makeRunner: { runner })
         let model = TaskCoordinator(directory: root, defaults: defaults, analysis: analysis), record = self.record()
-        model.records = [record]; model.gitSummary = GitSummary(porcelain: "")
+        model.records = [record]; model.projects = [record.project]; model.selectedProjectPath = record.project.path
+        model.gitSummary = GitSummary(porcelain: "")
         model.prepareAnalysis(record); model.analysis.submit(id: record.id, settings: AISettings(codexPath: "/bin/echo"))
         for _ in 0 ..< 1000 {
             if runner.completion != nil { break }; await Task.yield()
@@ -85,8 +86,8 @@ struct AIMimicIntegrationTests {
         #expect(model.analysis.isActive); #expect(!model.busy); #expect(model.canSwitchBranch)
         var exitReplies = 0; model.afterStopped = { exitReplies += 1 }
         model.stopAndExit()
-        for _ in 0 ..< 1000 {
-            if !model.analysis.isActive { break }; await Task.yield()
+        for _ in 0 ..< 400 {
+            if exitReplies == 1 { break }; try await Task.sleep(for: .milliseconds(5))
         }
         #expect(exitReplies == 1); #expect(model.analysis.sessions.isEmpty)
     }

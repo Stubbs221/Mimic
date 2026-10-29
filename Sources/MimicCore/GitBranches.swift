@@ -16,10 +16,13 @@ public struct GitCheckoutState: Sendable {
     }
 }
 
+/// A picker entry. Remote IDs use full refs so a local branch named origin/foo stays distinct.
 public struct LocalBranch: Identifiable, Equatable, Sendable {
-    public var id: String { self.name }
+    public var id: String { self.isRemote ? "refs/remotes/origin/" + self.name : self.name }
     public let name: String
-    public init(name: String) { self.name = name }
+    public let isRemote: Bool
+    public var displayName: String { self.isRemote ? "origin/" + self.name : self.name }
+    public init(name: String, isRemote: Bool = false) { self.name = name; self.isRemote = isRemote }
 }
 
 public enum BranchError: Error, Equatable {
@@ -44,7 +47,7 @@ public struct LocalGitBranchService: GitBranchService {
     }
 
     public func branches(_ project: ProjectContext) async throws -> [LocalBranch] {
-        try await Task.detached { try Self.localBranches(project) }.value
+        try await Task.detached { try Self.availableBranches(project) }.value
     }
 
     public func switchBranch(_ name: String, project: ProjectContext) async throws -> GitCheckoutState {
@@ -53,8 +56,13 @@ public struct LocalGitBranchService: GitBranchService {
             let state = try Self.snapshot(project)
             guard state.isClean else { throw BranchError.dirty }
             guard !state.hasOperation else { throw BranchError.operation }
-            guard try Self.localBranches(project).contains(where: { $0.name == name }) else { throw BranchError.missing }
-            try Self.git(project, ["switch", "--no-guess", "--", name], timeout: 60)
+            let branches = try Self.availableBranches(project)
+            guard let selected = branches.first(where: { $0.id == name }) else { throw BranchError.missing }
+            if selected.isRemote && !branches.contains(where: { !$0.isRemote && $0.name == selected.name }) {
+                try Self.git(project, ["switch", "--no-overwrite-ignore", "--track=direct", "-c", selected.name, selected.id], timeout: 60)
+            } else {
+                try Self.git(project, ["switch", "--no-guess", "--no-overwrite-ignore", "--", selected.name], timeout: 60)
+            }
             return try Self.snapshot(project)
         }.value
     }
@@ -71,9 +79,18 @@ public struct LocalGitBranchService: GitBranchService {
         return GitCheckoutState(project: context, summary: GitSummary(porcelain: status), hasOperation: operation)
     }
 
-    private static func localBranches(_ project: ProjectContext) throws -> [LocalBranch] {
-        try self.git(project, ["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads/"])
-            .split(separator: "\n").map { LocalBranch(name: String($0)) }
+    /// Uses the fetched origin snapshot without network access; symbolic origin/HEAD is never a choice.
+    private static func availableBranches(_ project: ProjectContext) throws -> [LocalBranch] {
+        try self.git(project, ["for-each-ref", "--sort=-committerdate", "--format=%(refname)%09%(symref)", "refs/heads/", "refs/remotes/origin/"], trim: false)
+            .split(separator: "\n").compactMap { line in
+                let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+                guard fields.count == 2, fields[1].isEmpty else { return nil }
+                let ref = String(fields[0])
+                if ref.hasPrefix("refs/heads/") { return LocalBranch(name: String(ref.dropFirst("refs/heads/".count))) }
+                let name = String(ref.dropFirst("refs/remotes/origin/".count))
+                guard name != "HEAD" else { return nil }
+                return LocalBranch(name: name, isRemote: true)
+            }
     }
 
     /// Own the entire process group: a stalled fsmonitor/helper cannot retain

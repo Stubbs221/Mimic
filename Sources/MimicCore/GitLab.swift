@@ -285,7 +285,7 @@ public struct GitLabClient: GitLabService {
         return result
     }
 
-    private func request(baseURL: URL, credentialID: UUID? = nil, path: String, query: [URLQueryItem] = [], token: String) async throws -> CIHTTPResponse {
+    func request(baseURL: URL, credentialID: UUID? = nil, path: String, query: [URLQueryItem] = [], token: String) async throws -> CIHTTPResponse {
         guard !token.isEmpty, !token.contains("\n"), !token.contains("\r"),
               var components = try URLComponents(url: Self.baseURL(baseURL.absoluteString), resolvingAgainstBaseURL: false) else { throw CIError.invalidConfiguration }
         components.percentEncodedPath += "/api/v4/" + path
@@ -308,7 +308,7 @@ public struct GitLabClient: GitLabService {
         }
     }
 
-    private func decode<Item: Decodable>(_ type: Item.Type, data: Data) throws -> Item {
+    func decode<Item: Decodable>(_ type: Item.Type, data: Data) throws -> Item {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let value = try decoder.singleValueContainer().decode(String.self)
