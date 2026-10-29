@@ -1,10 +1,34 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
 --><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
-  <!-- Created by Василий Маслов on 22.10.2026. -->
+  <!-- Created by Василий Маслов on 29.10.2026. -->
   <channel>
     <title>Mimic</title>
     <link>https://github.com/Stubbs221/Mimic</link>
+    <item>
+      <title>Mimic 1.10.0</title>
+      <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 28.10.2026. --&gt;
+# Mimic 1.10.0
+
+Сборка 201 · Apple Silicon · macOS 14+
+
+- Обновлены карточки CI в приложении и панели Codex: выбор ветки, состояния загрузки, переход к GitLab и подготовка разбора обязательных ошибок в Codex.
+- Проверка выбранных тестов сохраняет методы, конфигурации, повторные попытки и параметризованные случаи. Результаты и вложения привязаны к операции; неполные данные не считаются полной успешной проверкой.
+- Улучшены очередь запросов агентов, защита от повторного запуска, отмена и восстановление результатов.
+- Отсутствующие ресурсы сборки можно восстановить отдельным действием прямо из карточки. Сборка после восстановления запускается пользователем. Добавлена установка отсутствующего Mint с продолжением подготовки.
+- Переключение ветки учитывает открытые рабочие пространства Xcode. Улучшены проверка исходных данных сборки, доступ к управлению Xcode и выбор конфигураций проекта.
+- Исправлены ожидание ввода терминала и фокус полей панели. Значок в строке меню показывает выполнение задач с учётом настройки уменьшения движения.
+- Главная страница и настройки сохраняют позицию прокрутки при переходах. Обычная сборка не наследует выбранный план тестов.
+
+Профиль команды поставляется отдельно. Для управления Xcode могут потребоваться разрешения macOS.
+</description>
+      <pubDate>Thu, 29 Oct 2026 04:29:24 GMT</pubDate>
+      <sparkle:version>201</sparkle:version>
+      <sparkle:shortVersionString>1.10.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <enclosure url="https://github.com/Stubbs221/Mimic/releases/download/v1.10.0/Mimic-1.10.0.zip" length="21206796" type="application/octet-stream" sparkle:edSignature="artasorbC2PRUgOSVIyF5AeCD7QzkgVNrX9n2xyvKqSVyA5RwsAASaSFrrfZ/fbLNdsKkJmr8ys2JSRsEGWCBQ=="></enclosure>
+    </item>
     <item>
       <title>Mimic 1.9.0</title>
       <description sparkle:format="plain-text">&lt;!-- Created by Василий Маслов on 22.10.2026. --&gt;
@@ -180,6 +204,6 @@ Apple-разработка под рукой — в macOS и внутри Codex.
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: TcntVfemyLNfQbe/BnMa00s+zjUjmKby3d6J1mscoRyvv392HZzLw+naREAiKkU0FapAqdqtt4SxpbRBs1X9DQ==
-length: 22571
+edSignature: M3FAXZCwMHw7Wh7EPlPF+uryZwXU/Cr8iq+1y3Mfwqo2sruCxqCWVNbAiWqTsRmNkGNNx2dfdnTdGprNOgB9Cg==
+length: 25613
 -->
