@@ -257,6 +257,7 @@
 "ci.error.network" = "GitLab недоступен. Проверьте сеть или VPN.";
 "ci.error.response" = "Не удалось прочитать ответ GitLab.";
 "ci.error.server" = "Ошибка сервера GitLab.";
+"ci.error.request" = "GitLab отклонил запрос (HTTP 400).";
 "ci.error.credential" = "Не удалось получить или сохранить токен в Keychain.";
 "ci.status.success" = "Успешно";
 "ci.status.failed" = "Ошибка";
@@ -498,6 +499,7 @@
 "jenkins.error.network" = "Jenkins недоступен. Проверьте сеть или корпоративный VPN.";
 "jenkins.error.response" = "Jenkins вернул ответ, который не удалось прочитать как описание задачи.";
 "jenkins.error.server" = "Ошибка сервера Jenkins. Повторите проверку позже.";
+"jenkins.error.request" = "Jenkins отклонил запрос (HTTP 400).";
 "jenkins.error.credential" = "Не удалось получить или сохранить API-токен Jenkins в Связке ключей.";
 "jenkins.error.parameters" = "Jenkins ответил, но параметры выбранной задачи не удалось подтвердить.";
 "jenkins.error.plans" = "Jenkins ответил, но для TEST_PLAN не удалось подтвердить варианты SMOKE, FUNCTIONAL, STATS и FULL. Это ошибка проверки параметров задачи.";

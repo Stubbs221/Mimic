@@ -64,7 +64,7 @@ import MimicCore
     /// Only a server result becomes the launch selection; search input remains separate.
     func chooseBranch(_ branch: String) {
         guard self.branches.contains(branch) else { return }
-        self.branch = branch; self.verifiedBranch = branch
+        self.branch = branch; self.verifiedBranch = branch; self.message = nil
     }
 
     init(preferences: CILaunchPreferences, settings: JenkinsSettings, gitlabSettings: CISettingsModel, coordinator: ProfileRemoteCoordinator, snapshot: @escaping @MainActor () -> ProfileSnapshot?,
@@ -178,7 +178,7 @@ import MimicCore
         self.branchTask?.cancel(); self.branchRevision = UUID(); self.branches = []
         guard self.selected != nil, let connection = self.gitlabSettings.connection else { return }
         let revision = self.branchRevision
-        self.searchingBranches = true
+        self.searchingBranches = true; self.message = nil
         self.branchTask = Task { [weak self] in
             guard let self else { return }
             defer { if self.branchRevision == revision { self.searchingBranches = false } }

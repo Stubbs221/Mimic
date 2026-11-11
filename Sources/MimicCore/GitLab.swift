@@ -18,6 +18,7 @@ public struct GitLabConnection: Codable, Equatable, Sendable {
 
 public enum CIError: Error, Equatable, Sendable {
     case invalidConfiguration
+    case invalidRequest
     case authentication
     case forbidden
     case notFound
@@ -29,6 +30,7 @@ public enum CIError: Error, Equatable, Sendable {
     public var localizationKey: String {
         switch self {
         case .invalidConfiguration: "ci.error.configuration"
+        case .invalidRequest: "ci.error.request"
         case .authentication: "ci.error.authentication"
         case .forbidden: "ci.error.forbidden"
         case .notFound: "ci.error.notFound"
@@ -238,6 +240,8 @@ public struct GitLabClient: GitLabService {
 
     /// Existence checks use the encoded branch endpoint, independent of search pagination or regular expressions.
     public func branchExists(connection: GitLabConnection, branch: String, token: String) async throws -> Bool {
+        // Git reports detached checkouts as HEAD; it is not a remote branch to verify.
+        guard branch != "HEAD" else { return false }
         guard !branch.isEmpty, branch.utf8.count <= 1024, let encoded = branch.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_."))) else { throw CIError.invalidConfiguration }
         do {
             let response = try await request(baseURL: connection.baseURL, credentialID: connection.id, path: "projects/\(connection.projectID)/repository/branches/" + encoded, token: token)
@@ -301,6 +305,7 @@ public struct GitLabClient: GitLabService {
         case 200 ... 299: return response
         case 301 ... 399,
              401: throw CIError.authentication
+        case 400: throw CIError.invalidRequest
         case 403: throw CIError.forbidden
         case 404: throw CIError.notFound
         case 429: throw CIError.rateLimited(max(1, response.retryAfter ?? 30))

@@ -92,6 +92,7 @@ public enum JenkinsConnectionError: Error, Equatable, Sendable {
         case .transport(let error):
             switch error {
             case .invalidConfiguration: "jenkins.error.configuration"
+            case .invalidRequest: "jenkins.error.request"
             case .authentication: "jenkins.error.authentication"
             case .forbidden: "jenkins.error.forbidden"
             case .notFound: "jenkins.error.notFound"

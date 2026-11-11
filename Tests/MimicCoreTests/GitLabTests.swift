@@ -99,18 +99,26 @@ struct GitLabTests {
         #expect(await fixture.requests.last?.url?.path.hasSuffix("/trigger_jobs") == true)
     }
 
-    @Test(arguments: [301, 401, 403, 404, 429, 500])
+    @Test(arguments: [301, 400, 401, 403, 404, 429, 500])
     func errorsDoNotDecodeAsSuccess(status: Int) async {
         let fixture = HTTPFixture([http("secret-looking-error-body", status: status)])
         let expected: CIError = switch status {
         case 301,
              401: .authentication
+        case 400: .invalidRequest
         case 403: .forbidden
         case 404: .notFound
         case 429: .rateLimited(120)
         default: .server
         }
         await #expect(throws: expected) { try await GitLabClient(transport: fixture).pipelines(connection: connection, branch: "main", token: "fixture-token") }
+    }
+
+    @Test func detachedHEADIsNotRequestedAsRemoteBranch() async throws {
+        let fixture = HTTPFixture([])
+        let exists = try await GitLabClient(transport: fixture).branchExists(connection: self.connection, branch: "HEAD", token: "fixture-token")
+        #expect(!exists)
+        #expect(await fixture.requests.isEmpty)
     }
 
     @Test

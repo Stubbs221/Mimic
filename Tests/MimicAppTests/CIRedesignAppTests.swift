@@ -22,7 +22,9 @@ private actor LaunchHTTP: CIHTTPTransport {
     private(set) var posts = 0
     private(set) var submittedBranches: [String] = []
     private var qualityDenied = false
+    private var branchSearchStatus = 200
     func denyQualityGates() { self.qualityDenied = true }
+    func setBranchSearchStatus(_ status: Int) { self.branchSearchStatus = status }
     func send(_ request: URLRequest) async throws -> CIHTTPResponse {
         let path = request.url!.path; self.paths.append(path)
         if path.hasSuffix("/whoAmI/api/json") { return CIHTTPResponse(data: Data(#"{"authenticated":true,"anonymous":false}"#.utf8), status: 200) }
@@ -36,6 +38,8 @@ private actor LaunchHTTP: CIHTTPTransport {
         }
         if path.contains("/queue/item/") { return CIHTTPResponse(data: Data(#"{"why":"Waiting for executor"}"#.utf8), status: 200) }
         if path.hasSuffix("/repository/branches/develop") { return CIHTTPResponse(data: Data(#"{"name":"develop"}"#.utf8), status: 200) }
+        if path.hasSuffix("/repository/branches/HEAD") { return CIHTTPResponse(data: Data(), status: 400) }
+        if path.hasSuffix("/repository/branches"), self.branchSearchStatus != 200 { return CIHTTPResponse(data: Data(), status: self.branchSearchStatus) }
         if path.hasSuffix("/repository/branches") { return CIHTTPResponse(data: Data(#"[{"name":"develop"},{"name":"feature/vmaslov/APP-00001-synthetic-navigation-and-interface-layout-fixturexxxxx"}]"#.utf8), status: 200) }
         if self.qualityDenied, path.contains("ios_launch_qualitygates") { return CIHTTPResponse(data: Data(), status: 403) }
         var definitions: [[String: Any]] = []
@@ -110,6 +114,50 @@ private actor CIAppClient: GitLabService {
     private func wait(_ label: String = "fixture state", until condition: () -> Bool) async throws {
         for _ in 0 ..< 500 { if condition() { return }; try await Task.sleep(for: .milliseconds(5)) }
         try #require(condition(), "Timed out waiting for \(label)")
+    }
+
+    @Test(arguments: ["HEAD", ""])
+    func detachedCheckoutLoadsRemoteBranchesAndRecoversAfterSearchFailure(branch: String) async throws {
+        let suite = "CILaunchBranches-" + UUID().uuidString, defaults = try #require(UserDefaults(suiteName: suite))
+        let directory = URL(fileURLWithPath: "/private/tmp/" + suite)
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        let connection = GitLabConnection(baseURL: URL(string: "https://gitlab.example.invalid")!, projectID: 272, projectPath: "team/mobile")
+        let store = DefaultsCIConfigurationStore(defaults: defaults)
+        var config = CIConfiguration(); config.connections = [connection]; config.checkouts["/fixture"] = connection.id; store.save(config)
+        let credentials = LaunchCredentials(); try credentials.save("fixture", for: connection.id)
+        let settings = CISettingsModel(credentials: credentials, store: store); settings.selectCheckout("/fixture")
+        let http = LaunchHTTP(), client = JenkinsClient(transport: http)
+        let jenkins = JenkinsSettings(defaults: defaults, credentials: credentials, client: client)
+        jenkins.address = "https://jenkins.example.invalid"; jenkins.username = "me"; jenkins.enteredToken = "fixture"; jenkins.check()
+        try await self.wait { !jenkins.checking }; try #require(jenkins.verified); jenkins.save()
+        let owner = ProfileRemoteCoordinator(directory: directory, jenkins: client, gitlab: GitLabClient(transport: http), jenkinsToken: { try jenkins.token(for: $0) }, gitlabToken: { try settings.token(for: $0) })
+        defer { owner.stop() }
+        let project = ProjectContext(path: "/fixture", branch: branch)
+        let launch = CILaunchModel(preferences: CILaunchPreferences(defaults: defaults), settings: jenkins, gitlabSettings: settings, coordinator: owner,
+            snapshot: { try? Profile11Fixture.snapshot(directory: directory, legacyCI: true) },
+            submitProfile: { _, _, _, _, _, _ in throw CIError.invalidConfiguration },
+            client: client, gitlab: GitLabClient(transport: http), project: { project }, validate: { _ in })
+        launch.setVisible(true); defer { launch.setVisible(false) }
+        try await self.wait { launch.checking.isEmpty }
+        try #require(launch.contracts[.uiTests] != nil)
+        launch.open(.uiTests)
+        try await self.wait("remote branches") { !launch.branches.isEmpty && !launch.searchingBranches }
+        #expect(launch.branch.isEmpty && !launch.canSubmit && launch.message == nil)
+        #expect(await http.paths.allSatisfy { !$0.hasSuffix("/repository/branches/HEAD") })
+
+        await http.setBranchSearchStatus(400)
+        launch.searchBranches("")
+        try await self.wait { !launch.searchingBranches }
+        #expect(launch.message == "ci.error.request" && launch.branches.isEmpty && !launch.canSubmit)
+        await http.setBranchSearchStatus(200)
+        launch.searchBranches("")
+        #expect(launch.message == nil)
+        try await self.wait { !launch.searchingBranches }
+        try #require(launch.branches.contains("develop"))
+        launch.chooseBranch("develop")
+        #expect(launch.branch == "develop" && launch.canSubmit && launch.message == nil)
+        #expect(await http.posts == 0)
+        #expect(owner.runs.isEmpty)
     }
 
     @Test func optionalCapabilitiesAndFormsDoNotFilterOrSubmitUntilExplicitAction() async throws {

@@ -277,6 +277,7 @@
   "ci.error.network": "GitLab недоступен. Проверьте сеть или VPN.",
   "ci.error.response": "Не удалось прочитать ответ GitLab.",
   "ci.error.server": "Ошибка сервера GitLab.",
+  "ci.error.request": "GitLab отклонил запрос (HTTP 400).",
   "ci.error.credential": "Не удалось получить или сохранить токен в Keychain.",
   "ci.status.success": "Успешно",
   "ci.status.failed": "Ошибка",
